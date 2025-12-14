@@ -1,0 +1,81 @@
+{
+  "name": "ionify",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A web infrastructure intelligence engine",
+  "bin": {
+    "ionify": "./dist/cli/index.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
+      "require": "./dist/cli/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts && cp native/ionify_core.node dist/",
+    "prepublishOnly": "pnpm build",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "build-engine",
+    "bundler",
+    "rust",
+    "vite",
+    "rollup",
+    "ionify",
+    "typescript",
+    "javascript"
+  ],
+  "author": "Khaled Salem",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ionifyjs/ionify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ionifyjs/ionify/issues"
+  },
+  "homepage": "https://ionify.cloud",
+  "dependencies": {
+    "@swc/core": "^1.7.14",
+    "chalk": "^5.6.2",
+    "commander": "^12.1.0",
+    "es-module-lexer": "^1.5.2",
+    "esbuild": "^0.25.11",
+    "postcss": "^8.4.47",
+    "postcss-load-config": "^4.0.2",
+    "postcss-modules": "^4.3.1",
+    "react-refresh": "^0.14.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@jridgewell/trace-mapping": "^0.3.25",
+    "@types/node": "^22.0.0",
+    "esbuild-plugin-alias": "^0.2.1",
+    "eslint": "^9.14.0",
+    "tsconfig-paths": "^4.2.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.12.0",
+    "vitest": "^4.0.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

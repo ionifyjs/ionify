@@ -1,0 +1,32 @@
+# Development files
+src/
+tests/
+docs/
+examples/
+sandbox/
+scripts/
+
+# Build artifacts
+target/
+.ionify/
+*.log
+
+# Configuration
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+eslint.config.js
+Cargo.toml
+Cargo.lock
+build.rs
+pnpm-workspace.yaml
+test-endpoints.mjs
+
+# Git
+.git/
+.gitignore
+.vscode/
+
+# Misc
+.DS_Store
+node_modules/
