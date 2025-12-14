@@ -1,3 +1,14 @@
+/**
+{
+  "description": "Ionify native file watcher (optimized). Watches files known to Graph using hybrid fs.watch + fs.watchFile. Debounced and minimal CPU usage.",
+  "phase": 1.5,
+  "todo": [
+    "Emit unified change events with type (added/changed/deleted).",
+    "Integrate with Graph invalidation to trigger incremental rebuild."
+  ]
+}
+*/
+
 import fs from "fs";
 import path from "path";
 import { EventEmitter } from "events";
@@ -79,3 +90,6 @@ export class IonifyWatcher extends EventEmitter {
   }
 }
 
+// ===== Next Phase TODOs =====
+// Phase 2: recursive dependency invalidation + batch change queues.
+// Phase 3: HMR bridge + graph visualization integration.

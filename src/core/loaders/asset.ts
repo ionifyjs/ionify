@@ -1,3 +1,15 @@
+/**
+{
+  "description": "Asset loader for images/fonts/svg. If requested with '?import', returns a JS module exporting the asset URL; else streams the raw file.",
+  "phase": 2,
+  "todo": [
+    "Return JS module for ESM imports (export default 'url')",
+    "Serve binary for direct requests",
+    "Future: inline small assets as data URI"
+  ]
+}
+*/
+
 import path from "path";
 import { publicPathForFile } from "@core/utils/public-path";
 

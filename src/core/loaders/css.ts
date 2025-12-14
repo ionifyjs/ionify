@@ -1,3 +1,15 @@
+/**
+{
+  "description": "CSS loader. Compiles CSS through PostCSS, supports CSS modules, and emits JS modules for inline imports.",
+  "phase": 2,
+  "todo": [
+    "Load PostCSS plugins from config.",
+    "Generate scoped CSS modules tokens.",
+    "Inject styles with HMR-friendly module output."
+  ]
+}
+*/
+
 import path from "path";
 import crypto from "crypto";
 import postcss, { AcceptedPlugin, ProcessOptions } from "postcss";

@@ -1,3 +1,17 @@
+/**
+{
+  "description": "Module resolver. Normalizes import paths, resolves node_modules and workspace aliases, and ensures consistent file lookup for Graph builder.",
+  "phase": 0,
+  "todo": [
+    "Resolve relative and absolute import paths.",
+    "Support tsconfig paths and aliases.",
+    "Detect extensions (.ts, .tsx, .js, .jsx, .json).",
+    "Handle workspace symlinks and node_modules resolution.",
+    "Expose resolvePath(importee, importer)."
+  ]
+}
+*/
+
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
@@ -289,7 +303,7 @@ export function resetResolverAliasCache() {
   resolvePathCache.clear();
 }
 
-/** Resolve a module specifier to an absolute path. */
+/** Resolve a module specifier to an absolute path (relative-only in Phase 1). */
 export function resolveImport(specifier: string, importerAbs: string): string | null {
   const cacheKey = `${importerAbs}\u0000${specifier}`;
   if (resolvePathCache.has(cacheKey)) {
@@ -368,3 +382,7 @@ export function resolveImports(specs: string[], importerAbs: string): string[] {
   return Array.from(new Set(abs));
 }
 
+// ===== Next Phase TODOs =====
+// Phase 2: Integrate caching of resolved paths.
+// Phase 3: Add conditional exports resolution.
+// Phase 5: Provide resolver insights in Analyzer.

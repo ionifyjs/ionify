@@ -1,3 +1,15 @@
+/**
+{
+  "description": "Ionify HMR core using Server-Sent Events (SSE). Manages client connections and broadcasts reload events on file changes.",
+  "phase": 2,
+  "todo": [
+    "Create SSE channel at /__ionify_hmr",
+    "Broadcast { type:'reload', file } on changes",
+    "Expose injectHMRClient(html) helper to inject client script into served pages"
+  ]
+}
+*/
+
 import type { ServerResponse, IncomingMessage } from "http";
 
 type WatchReason = "changed" | "dependent" | "deleted";

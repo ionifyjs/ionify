@@ -1,3 +1,15 @@
+/**
+{
+  "description": "JS/TS loader. Uses SWC for transpilation, injects React Refresh HMR hooks, and auto-accepts modules for hot updates. Parser mode (oxc/swc/hybrid) affects import extraction only.",
+  "phase": 2,
+  "todo": [
+    "Transpile TS/TSX/JSX to vanilla JS via SWC",
+    "Enable React Fast Refresh during development",
+    "Fallback accept handler for non-React modules"
+  ]
+}
+*/
+
 import { transform as swcTransform } from "@swc/core";
 import { init, parse } from "es-module-lexer";
 import type { Loader } from "@core/transform";

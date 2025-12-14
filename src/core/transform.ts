@@ -1,3 +1,14 @@
+/**
+{
+  "description": "Ionify Transform Engine (optimized). Executes transform plugins only when file hash differs from cached entry. Supports plugin chaining.",
+  "phase": 1.5,
+  "todo": [
+    "Integrate SWC/ESBuild in next phase.",
+    "Implement thread-based transform workers."
+  ]
+}
+*/
+
 export interface TransformContext {
   path: string;
   code: string;
@@ -203,3 +214,6 @@ export class TransformEngine {
   }
 }
 
+// ===== Next Phase TODOs =====
+// Phase 2: integrate SWC for TS/JSX transforms + source maps.
+// Phase 3: plugin loader from ionify.config.ts for user extensions.
