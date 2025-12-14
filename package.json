@@ -1,5 +1,5 @@
 {
-  "name": "ionify",
+  "name": "@ionify/ionify",
   "version": "0.1.0",
   "type": "module",
   "description": "A web infrastructure intelligence engine",
