@@ -194,8 +194,8 @@ By unifying the build pipeline and persisting the dependency graph, Ionify creat
 ## Links
 
 - **Website:** [ionify.cloud](https://ionify.cloud)
-- **GitHub:** [github.com/khaledM-salem/Ionify](https://github.com/khaledM-salem/Ionify)
-- **Issues:** [github.com/khaledM-salem/Ionify/issues](https://github.com/khaledM-salem/Ionify/issues)
+- **GitHub:** [github.com/ionifyjs/ionify](https://github.com/ionifyjs/ionify)
+- **Issues:** [github.com/ionifyjs/ionify/issues](https://github.com/ionifyjs/ionify/issues)
 - **Contact:** contact@ionify.cloud
 
 ---

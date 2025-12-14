@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { logInfo, logError } from "./utils/logger.js";
+import { startDevServer } from "./commands/dev.js";
+import { runBuildCommand } from "./commands/build.js";
 import { runAnalyzeCommand } from "./commands/analyze.js";
 
 const program = new Command();
@@ -11,21 +13,29 @@ program
 
 program
   .command("dev")
-  .description("Start Ionify development server (coming in full release)")
+  .description("Start Ionify development server")
   .option("-p, --port <port>", "Port to run the server on", "5173")
-  .action(async () => {
-    logError("Dev server is not available in this release. Stay tuned!");
-    process.exit(1);
+  .action(async (options) => {
+    try {
+      await startDevServer(options);
+    } catch (err: any) {
+      logError(`Dev server failed: ${err.message}`);
+      process.exit(1);
+    }
   });
 
 program
   .command("build")
-  .description("Build for production (coming in full release)")
+  .description("Build for production")
   .option("-o, --outDir <dir>", "Output directory", "dist")
   .option("-l, --level <level>", "Optimization level (0-4)", "3")
-  .action(async () => {
-    logError("Build command is not available in this release. Stay tuned!");
-    process.exit(1);
+  .action(async (options) => {
+    try {
+      await runBuildCommand(options);
+    } catch (err: any) {
+      logError(`Build failed: ${err.message}`);
+      process.exit(1);
+    }
   });
 
 program
