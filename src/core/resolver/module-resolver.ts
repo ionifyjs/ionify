@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { native } from '@native/index';
 
 export interface ResolveOptions {
   baseUrl?: string;
@@ -17,6 +18,7 @@ const DEFAULT_MAIN_FIELDS = ['module', 'main'];
 export class ModuleResolver {
   private options: Required<ResolveOptions>;
   private rootDir: string;
+  private metadataByPath = new Map<string, ModuleResolutionMeta>();
 
   constructor(rootDir: string, options: ResolveOptions = {}) {
     this.rootDir = rootDir;
@@ -50,6 +52,10 @@ export class ModuleResolver {
 
     // Handle bare module specifiers
     return this.resolveBareModule(importSpecifier, importer);
+  }
+
+  getMetadata(resolvedPath: string): ModuleResolutionMeta | undefined {
+    return this.metadataByPath.get(resolvedPath);
   }
 
   private resolveAlias(specifier: string): string | null {
@@ -97,6 +103,41 @@ export class ModuleResolver {
   }
 
   private resolveBareModule(specifier: string, importer: string): string | null {
+    const nativeResolved = native?.resolveModule?.(specifier, importer);
+    if (nativeResolved?.kind) {
+      const fsPath =
+        (nativeResolved as any).fsPath ??
+        (nativeResolved as any).fs_path ??
+        null;
+      const kind = normalizeResolveKind(nativeResolved.kind);
+      if (kind === 'pkg_cjs') {
+        if (fsPath) {
+          this.metadataByPath.set(fsPath, {
+            format: 'cjs',
+            needsInterop: true,
+          });
+        }
+        if (process.env.IONIFY_DEBUG) {
+          const name = nativeResolved.pkg?.name ?? specifier;
+          console.log(`[resolver] CJS package detected: ${name} (conversion deferred)`);
+        }
+      }
+
+      if (kind === 'pkg_esm' && fsPath) {
+        return fsPath;
+      }
+
+      if (kind === 'pkg_cjs' && fsPath) {
+        return fsPath;
+      }
+
+      if (kind === 'local' && fsPath) {
+        return fsPath;
+      }
+
+      return null;
+    }
+
     // Try node_modules resolution
     const parts = specifier.split('/');
     const packageName = parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0];
@@ -202,4 +243,25 @@ export class ModuleResolver {
 
     return null;
   }
+}
+
+export interface ModuleResolutionMeta {
+  format?: 'cjs' | 'esm';
+  needsInterop?: boolean;
+}
+
+type NativeResolveKind = 'PkgEsm' | 'PkgCjs' | 'Builtin' | 'Virtual' | 'Local';
+
+function normalizeResolveKind(kind: string): string {
+  const mapping: Record<NativeResolveKind, string> = {
+    PkgEsm: 'pkg_esm',
+    PkgCjs: 'pkg_cjs',
+    Builtin: 'builtin',
+    Virtual: 'virtual',
+    Local: 'local',
+  };
+  if (kind in mapping) {
+    return mapping[kind as NativeResolveKind];
+  }
+  return kind.toLowerCase();
 }

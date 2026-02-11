@@ -8,11 +8,12 @@ export type LoaderRegistration = (
   config?: IonifyConfig | null
 ) => void | Promise<void>;
 
-const registry: LoaderRegistration[] = [];
+const registry = new Set<LoaderRegistration>();
 
 export function registerLoader(registration: LoaderRegistration) {
-  registry.push(registration);
+  registry.add(registration);
 }
+
 
 export async function applyRegisteredLoaders(
   engine: TransformEngine,
@@ -31,10 +32,10 @@ export async function applyRegisteredLoaders(
       }
       if (plugin.setup) {
         const context = {
-          registerLoader: (loader: IonifyLoader) => {
-            engine.useLoader(loader);
-          },
+          config: config ?? null,
+          registerLoader: (loader: IonifyLoader) => engine.useLoader(loader),
         };
+
         await plugin.setup(context);
       }
     }

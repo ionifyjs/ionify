@@ -16,11 +16,11 @@ import fs from "fs";
 import path from "path";
 import { logInfo, logError } from "@cli/utils/logger";
 import { loadIonifyConfig } from "@cli/utils/config";
-import { resolveMinifier, applyMinifierEnv, type MinifierChoice } from "@cli/utils/minifier";
-import { resolveTreeshake, applyTreeshakeEnv } from "@cli/utils/treeshake";
+import { resolveMinifier, type MinifierChoice } from "@cli/utils/minifier";
+import { resolveTreeshake } from "@cli/utils/treeshake";
 import { native, computeGraphVersion } from "@native/index";
 import { getCasArtifactPath } from "@core/utils/cas";
-import { resolveScopeHoist, applyScopeHoistEnv } from "@cli/utils/scope-hoist";
+import { resolveScopeHoist } from "@cli/utils/scope-hoist";
 import { resolveOptimizationLevel, getOptimizationPreset } from "@cli/utils/optimization-level";
 import { resolveParser, applyParserEnv } from "@cli/utils/parser";
 import { generateBuildPlan, writeBuildManifest, emitChunks, writeAssetsManifest } from "@core/bundler";
@@ -35,6 +35,8 @@ interface BuildOptions {
 export async function runBuildCommand(options: BuildOptions = {}) {
   try {
     const config = await loadIonifyConfig();
+    // Phase 5.4.2: Use root from config
+    const rootDir = config?.root || process.cwd();
     
     // Check if optimization level is specified (overrides individual settings)
     const optLevel = resolveOptimizationLevel(config?.optimizationLevel, {
@@ -70,16 +72,16 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       });
     }
 
-    applyMinifierEnv(minifier);
+    // Apply parser env only (parser requires env for native binding selection)
     applyParserEnv(parserMode);
-    applyTreeshakeEnv(treeshake);
-    applyScopeHoistEnv(scopeHoist);
+    // Do not apply minifier/treeshake/scopeHoist env vars; resolved values are used in config hashing.
+    // Avoiding process.env mutation ensures deterministic builds and test isolation.
     
     // Get entries from config and resolve to absolute paths BEFORE canonicalization
-    const entries = config?.entry 
-      ? [config.entry.startsWith('/') 
-          ? path.join(process.cwd(), config.entry)
-          : path.resolve(process.cwd(), config.entry)]
+    const entries = config?.entry
+      ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) =>
+          entry.startsWith("/") ? path.join(rootDir, entry) : path.resolve(rootDir, entry),
+        )
       : undefined;
     
     if (entries) {
@@ -153,7 +155,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
                 const transformedHash = getCacheKey(parsed.code);
                 moduleHashes.set(filePath, transformedHash);
                 // Ensure CAS has the cached transform so native bundler can read it.
-                const casRoot = path.join(process.cwd(), ".ionify", "cas");
+                const casRoot = path.join(rootDir, ".ionify", "cas");
                 const cacheDir = getCasArtifactPath(casRoot, configHash, transformedHash);
                 if (!fs.existsSync(path.join(cacheDir, "transformed.js"))) {
                   fs.mkdirSync(cacheDir, { recursive: true });
@@ -199,7 +201,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         // Wave U1: write transformed code under unified CAS layout
         const transformedHash = getCacheKey(result.code);
         const moduleHash = transformedHash;
-        const casRoot = path.join(process.cwd(), ".ionify", "cas");
+        const casRoot = path.join(rootDir, ".ionify", "cas");
         const versionHash = configHash;
         const cacheDir = getCasArtifactPath(casRoot, versionHash, moduleHash);
         fs.mkdirSync(cacheDir, { recursive: true });
@@ -236,7 +238,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     const absOutDir = path.resolve(outDir);
 
-    const casRoot = path.join(process.cwd(), ".ionify", "cas");
+    const casRoot = path.join(rootDir, ".ionify", "cas");
     const { artifacts, stats } = await emitChunks(absOutDir, plan, moduleOutputs, {
       casRoot,
       versionHash: configHash,

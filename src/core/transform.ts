@@ -14,6 +14,11 @@ export interface TransformContext {
   code: string;
   ext: string;
   /**
+   * Optional Ionify config for loaders that need it (e.g. React Refresh entry detection).
+   * Type-only to avoid runtime coupling.
+   */
+  config?: import("../types/config").IonifyConfig | null;
+  /**
    * Optional precomputed module hash (IR hash). When provided, CAS + cache will
    * be keyed on this hash to stay aligned with the bundler/graph.
    */

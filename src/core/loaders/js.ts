@@ -15,20 +15,110 @@ import { init, parse } from "es-module-lexer";
 import type { Loader } from "@core/transform";
 import { resolveImport } from "@core/resolver";
 import { publicPathForFile, MODULE_REQUEST_PREFIX } from "@core/utils/public-path";
-import { tryBundleNodeModule, tryNativeTransform } from "@native/index";
+import { native, tryBundleNodeModule, tryNativeTransform } from "@native/index";
+import { registerDepEntry, computeSubpathFromEntryPath } from "@core/deps/registry";
+import { instrumentReactRefresh } from "@core/refresh/reactRefreshInstrumentation";
+import { isEntryModule } from "@core/refresh/entryDetection";
+import { shouldUseReactRefresh } from "@core/refresh/refreshEligibility";
+import fs from "fs";
+import path from "path";
 
-const JS_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx"]);
-
-function needsReactRefresh(ext: string) {
-  if (ext === ".jsx" || ext === ".tsx") return true;
-  if (!ext.endsWith("x")) return false;
-  return false;
-}
+// Must include ESM/CJS variants from node_modules (e.g. Radix ships .mjs),
+// otherwise bare imports like "react" won't be rewritten and the browser will throw.
+const JS_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
 
 function shouldTransform(ext: string, filePath: string): boolean {
   if (!JS_EXTENSIONS.has(ext)) return false;
   if (filePath.endsWith(".d.ts")) return false;
   return true;
+}
+
+/**
+ * Compute subpath for dependency registration.
+ * Always computes from actual file path for consistency.
+ * We ignore pkg.subpath from resolver because it's the logical subpath (".")
+ * but we need the physical subpath ("dist/es2015") to match optimizer.
+ */
+function computeSubpathForDep(fsPath: string, pkg?: any): string | null {
+  const computed = computeSubpathFromEntryPath(fsPath);
+
+  // In tests/mocked environments, the dependency path may not exist on disk,
+  // so computing a physical subpath will fail. Fall back to resolver-provided
+  // logical subpath when available.
+  if (!computed && !fs.existsSync(fsPath) && pkg && typeof pkg.subpath === "string") {
+    const raw = pkg.subpath;
+    const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (cleaned && cleaned !== "." && cleaned !== "index") {
+      return cleaned;
+    }
+  }
+  
+  // Debug logging to trace subpath computation
+  if (process.env.DEBUG_DEPS) {
+    console.log(`[computeSubpathForDep] fsPath: ${fsPath}`);
+    console.log(`[computeSubpathForDep] pkg.name: ${pkg?.name}, pkg.subpath: ${pkg?.subpath}`);
+    console.log(`[computeSubpathForDep] computed: "${computed}"`);
+  }
+  
+  return computed || null;
+}
+
+function looksLikeCjsWrapperSource(source: string): boolean {
+  const sample = source.slice(0, 16 * 1024);
+  return (
+    sample.includes("module.exports") ||
+    sample.includes("exports.") ||
+    sample.includes("Object.defineProperty(exports") ||
+    sample.includes("Object.defineProperty(module.exports") ||
+    sample.includes("require(") ||
+    sample.includes("require (")
+  );
+}
+
+function looksLikeEsmSource(source: string): boolean {
+  const sample = source.slice(0, 16 * 1024);
+  // Heuristic: enough to avoid running the CJS bundler on pure ESM libraries like Radix.
+  return (
+    sample.includes("import ") ||
+    sample.includes("export ") ||
+    sample.includes("import{") ||
+    sample.includes("export{") ||
+    sample.includes("import(")
+  );
+}
+
+function findNearestPackageJson(filePath: string): string | null {
+  let current = path.dirname(filePath);
+  for (let i = 0; i < 25; i++) {
+    const candidate = path.join(current, "package.json");
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function makeDepsProxyForFile(filePath: string, code: string): string | null {
+  if (!looksLikeCjsWrapperSource(code)) return null;
+  const pkgJsonPath = findNearestPackageJson(filePath);
+  if (!pkgJsonPath) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+    const fileName = registerDepEntry({
+      entryPath: filePath,
+      packageName: pkg?.name ?? "dep",
+      packageVersion: pkg?.version ?? "0.0.0",
+      subpath: null,
+    }).fileName;
+    return (
+      `import * as __ionify_dep__ from "/@deps/${fileName}";\n` +
+      `export default __ionify_dep__;\n` +
+      `export * from "/@deps/${fileName}";\n`
+    );
+  } catch {
+    return null;
+  }
 }
 
 async function swcTranspile(
@@ -91,25 +181,44 @@ export const jsLoader: Loader = {
   name: "js",
   order: 0,
   test: ({ ext, path: filePath }) => shouldTransform(ext, filePath),
-  transform: async ({ path: filePath, code, ext }) => {
+  transform: async ({ path: filePath, code, ext, config }) => {
     const isNodeModules = filePath.includes("node_modules");
+    const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
     
     let output = code;
     
     // Try native bundler for node_modules files (handles CommonJS, tree-shaking, etc.)
     if (isNodeModules) {
-      const bundled = tryBundleNodeModule(filePath, code);
-      if (bundled) {
-        // Native bundler succeeded - use its ESM output
-        output = bundled;
+      const depsProxy = makeDepsProxyForFile(filePath, code);
+      if (depsProxy) {
+        // Avoid serving obvious CJS wrappers to the browser (even if the extension is .mjs).
+        // Route through /@deps/ so the CJS optimizer produces valid browser ESM.
+        output = depsProxy;
       } else {
-        // Native bundler unavailable/failed - use original code as-is
-        // (may fail in browser if it's CommonJS, but that's expected without bundler)
-        output = code;
+        // Architecture intent: only run the native (CJS-focused) bundler when needed.
+        // Pure ESM deps should be served as-is with import rewriting (no bundling).
+        const shouldAttemptBundle =
+          ext === ".cjs" ||
+          looksLikeCjsWrapperSource(code) ||
+          (!looksLikeEsmSource(code) && ext !== ".mjs");
+
+        if (shouldAttemptBundle) {
+          const bundled = tryBundleNodeModule(filePath, code);
+          if (bundled) {
+            // Native bundler succeeded - use its ESM output
+            output = bundled;
+          } else {
+            // Native bundler unavailable/failed - use original code as-is
+            output = code;
+          }
+        } else {
+          output = code;
+        }
       }
     } else {
       // Regular transpilation for user code (non-node_modules)
-      const reactRefresh = needsReactRefresh(ext);
+      const isDev = process.env.NODE_ENV !== "production";
+      const reactRefresh = shouldUseReactRefresh({ ext, code, isDev, config });
       const mode = currentMode();
       const nativeResult = tryNativeTransform(mode, code, {
         filename: filePath,
@@ -124,11 +233,33 @@ export const jsLoader: Loader = {
       }
 
       if (reactRefresh) {
-        const prologue =
-          `import { setupReactRefresh } from "/__ionify_react_refresh.js";\n` +
-          `const __ionifyRefresh__ = setupReactRefresh(import.meta.hot, import.meta.url);\n`;
-        const epilogue = `\n__ionifyRefresh__?.finalize?.();\n\nif (import.meta.hot) {\n  import.meta.hot.accept((newModule) => {\n    __ionifyRefresh__?.refresh?.(newModule);\n  });\n  import.meta.hot.dispose(() => {\n    __ionifyRefresh__?.dispose?.();\n  });\n}\n`;
-        output = prologue + output + epilogue;
+        // Use dedicated instrumentation layer (Phase 5.6.2.1)
+        const isEntry = isEntryModule(filePath, config ?? undefined);
+        
+        // Debug: Log entry detection (enable with IONIFY_REFRESH_DEBUG=1)
+        if (process.env.IONIFY_REFRESH_DEBUG === "1") {
+          console.log(`[Refresh] ${filePath} → isEntry=${isEntry}, ext=${ext}`);
+        }
+        
+        const result = await instrumentReactRefresh({
+          code: output,
+          filePath,
+          ext,
+          isDev,
+          isEntry,
+        });
+
+        if (process.env.IONIFY_REFRESH_DEBUG === "1") {
+          console.log(
+            `[Refresh] instrument=${result.shouldInstrument} ${filePath} → isEntry=${isEntry}`,
+          );
+        }
+        
+        if (result.shouldInstrument) {
+          output = result.prologue + output + result.registrations + result.epilogue;
+        } else {
+          output += `\nif (import.meta.hot) import.meta.hot.accept();\n`;
+        }
       } else {
         output += `\nif (import.meta.hot) {\n  import.meta.hot.accept();\n}\n`;
       }
@@ -136,10 +267,13 @@ export const jsLoader: Loader = {
 
     // Rewrite imports to resolved paths with query parameters for CSS/assets
     // This applies to ALL files (user code, node_modules ESM, and converted CommonJS)
-    await init;
+    await init; // Ensure es-module-lexer is initialized before parsing
     const [imports] = parse(output);
+    if (rewriteDebug && ext === ".mjs" && isNodeModules) {
+      console.warn(`[Ionify][rewrite] scanning ${imports.length} import(s) in ${filePath}`);
+    }
     if (imports.length) {
-      const rootDir = process.cwd();
+      const rootDir = config?.root ? path.resolve(config.root) : process.cwd();
       let rewritten = "";
       let lastIndex = 0;
       let mutated = false;
@@ -168,9 +302,119 @@ export const jsLoader: Loader = {
           suffix = spec.slice(splitIndex);
         }
 
-        // Resolve the import path
+        const isBare =
+          !pathPart.startsWith(".") &&
+          !pathPart.startsWith("/") &&
+          !pathPart.startsWith("http://") &&
+          !pathPart.startsWith("https://");
+
+        if (isBare && native?.resolveModule) {
+          const resolvedNative = native.resolveModule(pathPart, filePath);
+          const kind = resolvedNative?.kind;
+          const fsPath =
+            (resolvedNative as any)?.fsPath ??
+            (resolvedNative as any)?.fs_path ??
+            null;
+          
+          // CJS deps must go through /@deps/ so they become valid browser ESM.
+          if (kind === "PkgCjs" && fsPath) {
+            const pkg = resolvedNative?.pkg;
+            const fileName = registerDepEntry({
+              entryPath: fsPath,
+              packageName: pkg?.name ?? pathPart,
+              packageVersion: pkg?.version ?? "0.0.0",
+              subpath: computeSubpathForDep(fsPath, pkg),
+            }).fileName;
+            const replacement = `/@deps/${fileName}`;
+            if (!mutated) {
+              mutated = true;
+            }
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement;
+              lastIndex = record.e;
+            }
+            continue;
+          }
+
+          // ESM deps can be served directly; just rewrite to an absolute public path.
+          // This avoids routing pure ESM (e.g. Radix `.mjs`) through the CJS optimizer,
+          // which can produce invalid output for certain patterns.
+          if (kind === "PkgEsm" && fsPath) {
+            try {
+              const resolvedCode = fs.readFileSync(fsPath, "utf8");
+              if (looksLikeCjsWrapperSource(resolvedCode)) {
+                const pkg = resolvedNative?.pkg;
+                const fileName = registerDepEntry({
+                  entryPath: fsPath,
+                  packageName: pkg?.name ?? pathPart,
+                  packageVersion: pkg?.version ?? "0.0.0",
+                  subpath: computeSubpathForDep(fsPath, pkg),
+                }).fileName;
+                const replacement = `/@deps/${fileName}`;
+                if (!mutated) mutated = true;
+                if (record.t === 2) {
+                  rewritten += output.slice(lastIndex, record.s + 1);
+                  rewritten += replacement;
+                  rewritten += output[record.e - 1];
+                  lastIndex = record.e;
+                } else {
+                  rewritten += output.slice(lastIndex, record.s);
+                  rewritten += replacement;
+                  lastIndex = record.e;
+                }
+                continue;
+              }
+            } catch {
+              // If reading fails, route through optimizer anyway
+            }
+
+            // Route all ESM through optimizer for nested dependency resolution
+            const pkg = resolvedNative?.pkg;
+            const fileName = registerDepEntry({
+              entryPath: fsPath,
+              packageName: pkg?.name ?? pathPart,
+              packageVersion: pkg?.version ?? "0.0.0",
+              subpath: computeSubpathForDep(fsPath, pkg),
+            }).fileName;
+            const replacement = `/@deps/${fileName}`;
+            if (!mutated) mutated = true;
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement;
+              lastIndex = record.e;
+            }
+            continue;
+          }
+          
+          // Builtin (fs, path, crypto, etc.) and Virtual (HMR client, etc.) don't need rewriting
+          if (kind === "Builtin" || kind === "Virtual") {
+            continue;
+          }
+          
+          // Only NotFound falls through to TypeScript resolver (for aliases)
+        }
+
+        // Resolve the import path (handles aliases, relative paths, etc.)
         const resolved = resolveImport(pathPart, filePath);
-        if (!resolved) continue;
+        if (!resolved) {
+          if (rewriteDebug) {
+            console.warn(
+              `[Ionify][rewrite] FAILED to resolve '${pathPart}' from '${filePath}'`,
+            );
+          }
+          continue;
+        }
         
         // Check file extension from the resolved path
         const resolvedExt = resolved.slice(resolved.lastIndexOf("."));
@@ -217,6 +461,15 @@ export const jsLoader: Loader = {
       if (mutated) {
         rewritten += output.slice(lastIndex);
         output = rewritten;
+      } else if (rewriteDebug && isNodeModules) {
+        const sample = imports
+          .slice(0, 8)
+          .map((r) => r.n)
+          .filter(Boolean)
+          .join(", ");
+        console.warn(
+          `[Ionify][rewrite] no rewrites applied for ${filePath}; first imports: ${sample}`,
+        );
       }
     }
 

@@ -1,3 +1,16 @@
+/**
+{
+  "description": "Utility for loading, validating, and merging user ionify.config.ts files. Provides default values for missing fields.",
+  "phase": 0,
+  "todo": [
+    "Implement loadConfig() to read ionify.config.ts.",
+    "Add schema validation for core fields (entry, output, alias).",
+    "Merge user config with defaults.",
+    "Expose getConfig() for CLI commands."
+  ]
+}
+*/
+
 import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -85,7 +98,8 @@ export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfi
 
   const configPath = findConfigFile(cwd);
   if (!configPath) {
-    cachedConfig = null;
+    // Phase 5.4.2: Even without config file, create default config with root
+    cachedConfig = { root: cwd };
     configureResolverAliases(undefined, cwd);
     return cachedConfig;
   }
@@ -107,6 +121,34 @@ export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfi
       resolved = await (resolved as unknown as Promise<IonifyConfig>);
     }
     if (resolved && typeof resolved === "object") {
+      // Phase 5.4.2: Normalize and validate root option
+      if (resolved.root) {
+        const rootPath = path.isAbsolute(resolved.root) 
+          ? resolved.root 
+          : path.resolve(path.dirname(configPath), resolved.root);
+        
+        if (!fs.existsSync(rootPath)) {
+          logError(`Config error: root directory does not exist: ${rootPath}`);
+          throw new Error(`Invalid root: ${rootPath}`);
+        }
+        
+        if (!fs.statSync(rootPath).isDirectory()) {
+          logError(`Config error: root must be a directory: ${rootPath}`);
+          throw new Error(`Invalid root: ${rootPath}`);
+        }
+        
+        resolved.root = rootPath;
+        logInfo(`Using project root: ${path.relative(cwd, rootPath)}`);
+      } else {
+        // Default to config file's directory (or cwd if no config)
+        resolved.root = path.dirname(configPath);
+      }
+      
+      // Phase 5.4.2: Warn about unsupported esbuildOptions
+      if (resolved.optimizeDeps?.esbuildOptions) {
+        logWarn("optimizeDeps.esbuildOptions is not supported in Ionify (uses native Rust optimizer). This option will be ignored.");
+      }
+      
       cachedConfig = resolved;
       const baseDir = path.dirname(configPath);
       const aliases = resolved?.resolve?.alias;
@@ -139,3 +181,6 @@ export function resetIonifyConfigCache() {
 
 
 
+// ===== Next Phase TODOs =====
+// Phase 4: Add migration hints for Vite/Rollup configs.
+// Phase 5: Add Analyzer configuration hooks.

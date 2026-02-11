@@ -35,6 +35,17 @@ export interface NativeBinding {
   graphDependents?(target: string): string[];
   graphCollectAffected?(targets: string[]): string[];
   plannerPlanBuild?(entries: string[]): BuildPlan;
+  resolveModule?(specifier: string, fromPath: string): {
+    kind: string;
+    fsPath?: string | null;
+    fs_path?: string | null;
+    id: string;
+    pkg?: {
+      name: string;
+      version?: string | null;
+      subpath?: string | null;
+    };
+  };
   
   // Wave 3 & 7: AST Cache functions
   getCachedAst?(id: string, source: string): string | null;
@@ -59,6 +70,26 @@ export interface NativeBinding {
     map_bytes?: number;
     assets?: Array<{ source: string; fileName?: string; file_name?: string }>;
   }[];
+  optimizeDependency?(entryPath: string, depsHash: string, enableSourcemap?: boolean, bundleEsm?: boolean): {
+    out_path: string;
+    map_path?: string | null;
+  };
+  optimizeDependencyWithManifest?(entryPath: string, rootDir: string): Promise<{
+    outFile?: string;
+    out_file?: string;
+    outputCode?: string;
+    package?: string;
+    hasSourcemap?: boolean;
+  }>;
+  optimizeDependenciesBatch?(
+    entries: Array<{ entryPath: string; depsHash: string }>
+  ): Array<{
+    out_path?: string;
+    outPath?: string;
+    map_path?: string | null;
+    mapPath?: string | null;
+    error?: string | null;
+  }>;
 }
 
 function resolveCandidates(): string[] {
@@ -200,6 +231,9 @@ export function tryNativeTransform(mode: "oxc" | "swc" | "hybrid", code: string,
     }
   }
 
+  if (options.filename?.includes('Counter.jsx')) {
+    console.log('[TASK1 DEBUG] ⚠️  No native transform available, returning null');
+  }
   return null;
 }
 

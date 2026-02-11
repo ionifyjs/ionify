@@ -16,9 +16,13 @@ import postcss, { AcceptedPlugin, ProcessOptions } from "postcss";
 import postcssLoadConfig from "postcss-load-config";
 import postcssModules from "postcss-modules";
 import { getCacheKey } from "@core/cache";
-import { transformCache } from "@core/transform";
 
 type CssTokens = Record<string, string>;
+
+export type CssDependency = {
+  filePath: string;
+  kind: "dependency";
+};
 
 interface CompileCssOptions {
   code: string;
@@ -30,6 +34,7 @@ interface CompileCssOptions {
 export interface CompileCssResult {
   css: string;
   tokens?: CssTokens;
+  deps: CssDependency[];
 }
 
 interface RenderCssModuleOptions {
@@ -63,19 +68,6 @@ export async function compileCss({
   rootDir,
   modules = false,
 }: CompileCssOptions): Promise<CompileCssResult> {
-  const loaderHash = getCacheKey(JSON.stringify({ modules, filePath: filePath.replace(/\\+/g, "/") }));
-  const contentHash = getCacheKey(code);
-  const cacheKey = `${contentHash}-${loaderHash}`;
-  const cached = transformCache.get(cacheKey);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached.transformed) as CompileCssResult;
-      return parsed;
-    } catch {
-      // fall through
-    }
-  }
-
   const { plugins, options } = await getPostcssConfig(rootDir);
   const pipeline = [...plugins];
   let tokens: CssTokens | undefined;
@@ -104,17 +96,44 @@ export async function compileCss({
     map: false,
   });
 
+  const deps: CssDependency[] = [];
+  const seen = new Set<string>();
+  const addDep = (depPath: string) => {
+    const normalized = depPath.replace(/\\+/g, "/");
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    deps.push({ filePath: depPath, kind: "dependency" });
+  };
+
+  // PostCSS plugin dependency messages (e.g. postcss-import, tailwind, etc.)
+  for (const message of result.messages || []) {
+    const anyMsg = message as any;
+    if (anyMsg?.type === "dependency" && typeof anyMsg.file === "string") {
+      addDep(anyMsg.file);
+    }
+  }
+
+  // Lightweight @import discovery (covers plain CSS without postcss-import plugin)
+  // Note: This is best-effort; external URLs are ignored.
+  const importRe =
+    /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
+  let match: RegExpExecArray | null;
+  while ((match = importRe.exec(code))) {
+    const spec = (match[1] || match[2] || match[3] || "").trim();
+    if (!spec) continue;
+    if (/^(data:|https?:|\/\/)/i.test(spec)) continue;
+    // Root-relative in CSS is treated as project-root relative (Vite-style).
+    const resolved = spec.startsWith("/")
+      ? path.resolve(rootDir, "." + spec)
+      : path.resolve(path.dirname(filePath), spec);
+    addDep(resolved);
+  }
+
   const compiled: CompileCssResult = {
     css: result.css,
     tokens,
+    deps,
   };
-
-  transformCache.set(cacheKey, {
-    hash: contentHash,
-    loaderHash,
-    transformed: JSON.stringify(compiled),
-    timestamp: Date.now(),
-  });
 
   return compiled;
 }
@@ -129,6 +148,7 @@ export function renderCssModule({
   const tokensJson = tokens ? JSON.stringify(tokens) : "null";
 
   return `
+// ionify:css
 const cssText = ${cssJson};
 const styleId = ${JSON.stringify(styleId)};
 let style = document.querySelector(\`style[data-ionify-id="\${styleId}"]\`);
@@ -149,5 +169,23 @@ if (import.meta.hot) {
     if (existing) existing.remove();
   });
 }
+`.trim();
+}
+
+export function renderCssRawStringModule(cssText: string): string {
+  return `
+// ionify:css
+const css = ${JSON.stringify(cssText)};
+export { css };
+export default css;
+`.trim();
+}
+
+export function renderCssUrlModule(url: string): string {
+  return `
+// ionify:css
+const url = ${JSON.stringify(url)};
+export { url };
+export default url;
 `.trim();
 }

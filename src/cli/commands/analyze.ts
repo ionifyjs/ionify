@@ -1,3 +1,17 @@
+/**
+{
+  "description": "Implements the 'analyze' CLI command for visualizing Ionify build statistics, cache hits, dependency graph size, and performance metrics.",
+  "phase": 0,
+  "todo": [
+    "Create analyzeCommand() entry point.",
+    "Load and summarize graph + cache metrics.",
+    "Print analysis summary to terminal.",
+    "Prepare JSON output for later Analyzer UI integration.",
+    "Integrate with logger and spinner utilities."
+  ]
+}
+*/
+
 import fs from "fs";
 import path from "path";
 import { native } from "@native/index";
@@ -144,3 +158,6 @@ export async function runAnalyzeCommand(options: AnalyzeOptions = {}) {
 
 
 
+// ===== Next Phase TODOs =====
+// Phase 5: Connect to Analyzer dashboard React UI.
+// Phase 6: Enable AI-based recommendations for optimization.

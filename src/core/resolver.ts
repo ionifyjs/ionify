@@ -233,9 +233,13 @@ function buildAliasEntries(
     const replacements = Array.isArray(value) ? value : [value];
     const targets = replacements
       .filter((rep) => typeof rep === "string" && rep.trim().length > 0)
-      .map((rep) =>
-        path.isAbsolute(rep) ? rep : path.resolve(baseDir, rep)
-      );
+      .map((rep) => {
+        // Paths starting with '/' are project-relative (like Vite), not OS-absolute
+        if (rep.startsWith('/')) {
+          return path.resolve(baseDir, rep.slice(1));
+        }
+        return path.isAbsolute(rep) ? rep : path.resolve(baseDir, rep);
+      });
     if (!targets.length) continue;
     entries.push(createAliasEntry(pattern, targets));
   }
@@ -273,21 +277,47 @@ function loadTsconfigAliases(): AliasEntry[] {
 }
 
 function resolveFromEntries(entries: AliasEntry[], specifier: string): string | null {
+  const debug = process.env.IONIFY_RESOLVE_DEBUG === "1";
+  
   for (const entry of entries) {
     const candidates = entry.resolveCandidates(specifier);
+    if (debug && candidates.length > 0) {
+      console.log(`[RESOLVE] Candidates for ${specifier}:`, candidates);
+    }
     for (const candidate of candidates) {
       const resolved = tryWithExt(candidate);
-      if (resolved) return resolved;
+      if (resolved) {
+        if (debug) console.log(`[RESOLVE] Found: ${resolved}`);
+        return resolved;
+      }
     }
   }
   return null;
 }
 
 function resolveWithAliases(specifier: string): string | null {
+  const debug = process.env.IONIFY_RESOLVE_DEBUG === "1";
+  
+  if (debug) {
+    console.log(`[RESOLVE] Trying to resolve: ${specifier}`);
+    console.log(`[RESOLVE] Custom aliases count: ${customAliasEntries.length}`);
+  }
+  
   const custom = resolveFromEntries(customAliasEntries, specifier);
-  if (custom) return custom;
+  if (custom) {
+    if (debug) console.log(`[RESOLVE] ✅ Resolved via custom alias: ${custom}`);
+    return custom;
+  }
+  
   const tsconfigEntries = loadTsconfigAliases();
-  return resolveFromEntries(tsconfigEntries, specifier);
+  if (debug) console.log(`[RESOLVE] Tsconfig aliases count: ${tsconfigEntries.length}`);
+  
+  const result = resolveFromEntries(tsconfigEntries, specifier);
+  if (debug) {
+    if (result) console.log(`[RESOLVE] ✅ Resolved via tsconfig: ${result}`);
+    else console.log(`[RESOLVE] ❌ Not resolved`);
+  }
+  return result;
 }
 
 export function configureResolverAliases(
@@ -383,6 +413,14 @@ export function resolveImports(specs: string[], importerAbs: string): string[] {
 }
 
 // ===== Next Phase TODOs =====
-// Phase 2: Integrate caching of resolved paths.
-// Phase 3: Add conditional exports resolution.
-// Phase 5: Provide resolver insights in Analyzer.
+// ✅ Phase 2: COMPLETED - Caching implemented via resolvePathCache Map
+// ✅ Phase 5.4.1: COMPLETED - Alias resolution (custom + tsconfig paths)
+// ❌ Phase 3: TODO - Add conditional exports resolution (package.json exports field)
+// ❌ Phase 5: TODO - Provide resolver insights in Analyzer
+
+// ===== Known Minor Issues (Backlog) =====
+// 🔧 Performance: Unnecessary fallthrough to resolveWithAliases for node_modules packages
+//    - When native resolver returns NotFound from alias-resolved paths
+//    - Falls back to TS resolver (which correctly fails for non-alias imports)
+//    - Phase 5.2/5.3 catches these at serve time (works but inefficient)
+//    - Fix: Improve native resolver node_modules traversal from non-standard paths

@@ -12,6 +12,29 @@ const ERROR_URL = "/__ionify_hmr/error";
 const log = (...args) => console.log("[Ionify HMR]", ...args);
 const warn = (...args) => console.warn("[Ionify HMR]", ...args);
 
+// Surface runtime errors even when they don't occur during an HMR import().
+// This catches errors thrown during module evaluation and async rejections.
+globalThis.addEventListener?.("error", (event) => {
+  try {
+    const message = event?.message || "Runtime error";
+    const details = event?.error?.stack || event?.error?.message;
+    showErrorOverlay(message, details);
+  } catch {
+    // ignore
+  }
+});
+
+globalThis.addEventListener?.("unhandledrejection", (event) => {
+  try {
+    const reason = event?.reason;
+    const message = reason instanceof Error ? reason.message : "Unhandled promise rejection";
+    const details = reason instanceof Error ? reason.stack : String(reason ?? "");
+    showErrorOverlay(message, details);
+  } catch {
+    // ignore
+  }
+});
+
 // Establish SSE channel used to notify about pending graph diffs.
 const source = new EventSource(SSE_URL);
 
@@ -22,14 +45,15 @@ source.addEventListener("ready", () => {
 source.addEventListener("error", (e) => {
   warn("SSE error", e);
   // Show overlay if server streamed a structured error payload.
-  if (e?.data) {
+  const data = e && typeof e === "object" && "data" in e ? e.data : undefined;
+  if (data) {
     try {
-      const payload = JSON.parse(e.data);
+      const payload = JSON.parse(data);
       if (payload?.message) {
         showErrorOverlay(payload.message, payload.id ? `Update ${payload.id}` : undefined);
       }
     } catch {
-      showErrorOverlay(String(e.data || "HMR connection error"));
+      showErrorOverlay(String(data || "HMR connection error"));
     }
   }
 });
@@ -119,6 +143,18 @@ async function applyUpdate(payload) {
       return;
     }
   }
+
+  // If React Refresh runtime is present, trigger it after importing updated modules.
+  try {
+    const refreshRuntime = globalThis.__IONIFY_REACT_REFRESH__;
+    if (refreshRuntime?.performReactRefresh) {
+      refreshRuntime.performReactRefresh();
+      log("react refresh performed");
+    }
+  } catch (err) {
+    warn("React Refresh failed", err);
+  }
+
   log(`update ${payload?.id ?? "unknown"} applied`);
   clearErrorOverlay();
 }
