@@ -1,8 +1,33 @@
+/**
+{
+  "description": "Type definitions for ionify.config.ts user configuration including entry, output, alias, and plugin arrays.",
+  "phase": 2.5,
+  "todo": [
+    "Extend config schema for build planner options in Phase 3.",
+    "Add validation helpers for plugin ecosystems."
+  ]
+}
+*/
+
 import type { IonifyLoader, IonifyPlugin } from "./plugin";
 
 export interface IonifyResolveConfig {
   alias?: Record<string, string | string[]>;
+  /**
+   * File extensions to try when resolving imports.
+   * @default ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']
+   */
   extensions?: string[];
+  /**
+   * Conditions to use when resolving package.json "exports" field.
+   * @default ['import', 'module', 'browser', 'default']
+   */
+  conditions?: string[];
+  /**
+   * Fields to check in package.json for entry point resolution.
+   * @default ['module', 'jsnext:main', 'jsnext', 'main']
+   */
+  mainFields?: string[];
   [key: string]: unknown;
 }
 
@@ -51,14 +76,97 @@ export interface IonifyScopeHoistConfig {
 export type IonifyOptimizationLevel = 0 | 1 | 2 | 3;
 
 export interface IonifyOptimizeDepsConfig {
+  /**
+   * Dependencies to pre-optimize on server start.
+   * Useful for ensuring common dependencies are bundled before first request.
+   * @example ['react', 'react-dom', 'lodash']
+   */
   include?: string[];
+  /**
+   * Dependencies to skip optimizing (kept as-is in dev).
+   * Useful for large libs you want to debug or packages that are already browser-ready ESM.
+   */
+  exclude?: string[];
+  /**
+   * Generate sourcemaps for optimized dependencies.
+   * Disabled by default to speed up dependency optimization.
+   */
+  sourcemap?: boolean;
+  /**
+   * Bundle ESM dependencies instead of serving proxy modules.
+   * When `true` (default), ESM deps are bundled into self-contained files
+   * to eliminate request waterfalls. Set to `false` for debugging.
+   * @default true
+   */
+  bundleEsm?: boolean;
+  /**
+   * Phase 6.0: Enable shared-chunk prebundle for multi-entry deps sets (Ionify-native).
+   * - `"auto"` (default): enable when supported (native binding, `bundleEsm=true`, `sourcemap=false`)
+   * - `true`: force enable
+   * - `false`: disable
+   */
+  sharedChunks?: "auto" | boolean;
+  /**
+   * Phase 6.1: Vendor packs (few-request mode).
+   * Builds a larger shared-chunk group (the "app vendor pack") to collapse transitive `/@deps/*` waterfalls.
+   * - `"auto"`: select members via deterministic heuristics (requestCount/size/complexity) + persisted history
+   * - `true`: force pack building when supported
+   * - `{ [packName]: string[] }`: manual pack definitions (Phase 6.3)
+   * - `false`: disable (default)
+   *
+   * Note: vendor packs require Phase 6.0 shared chunking (`sharedChunks !== false`) to be effective.
+   */
+  vendorPacks?: "auto" | boolean | Record<string, string[]>;
+  /**
+   * Phase 5.5: Usage-driven pack slimming (Tree-Shaking v1).
+   * Builds usage-minimized variants of vendor packs/chunks in the background,
+   * then applies on next reload via deterministic routing.
+   *
+   * - `"auto"` (default): enable when vendor packs are active and native chunking is available
+   * - `true`: force enable
+   * - `false`: disable
+   */
+  packSlimming?: "auto" | boolean;
+  /**
+   * Phase 6.1: Cap auto-selected vendor pack size (uncompressed, in bytes).
+   * @default 614400 (600KB)
+   */
+  vendorPackMaxBytes?: number;
+  /**
+   * Phase 6.1: Cap auto-selected vendor pack members.
+   * @default 25
+   */
+  vendorPackMaxMembers?: number;
+  /**
+   * Build a framework "vendor preloader" module in dev to reduce cold-start waterfalls.
+   * - `'auto'` (default): detect framework deps from package.json and generate `vendor.<depsHash>.js`
+   * - `string[]`: explicit vendor specifiers (e.g. ['react','react-dom/client'])
+   * - `false`: disable vendor preloading
+   */
+  vendor?: "auto" | string[] | false;
+  /**
+   * @deprecated esbuildOptions are not supported in Ionify.
+   * Ionify uses native Rust optimizer. This option is ignored with a warning.
+   */
   esbuildOptions?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface IonifyConfig {
+  /**
+   * Project root directory. All paths are resolved relative to root.
+   * Affects: module resolution, watcher, public URLs, CAS location.
+   * @default process.cwd()
+   */
   root?: string;
-  entry?: string;
+  /**
+   * Entry point for the application (relative to root or absolute).
+    * Used for entry module detection and tooling (dev server, planner).
+   * @example './src/main.tsx'
+   * @example 'src/index.ts'
+    * @example ['src/main.tsx', 'src/admin.tsx']
+   */
+  entry?: string | string[];
   outDir?: string;
   loaders?: IonifyLoader[];
   plugins?: IonifyPlugin[];
@@ -114,7 +222,15 @@ export interface IonifyConfig {
    */
   optimizationLevel?: IonifyOptimizationLevel;
   optimizeDeps?: IonifyOptimizeDepsConfig;
+  /**
+   * Define global constant replacements.
+   * Values are JSON-stringified and replaced at compile time using AST transformation.
+   */
   define?: Record<string, unknown>;
+  /**
+   * Environment variables to expose to the client.
+   */
+  envPrefix?: string | string[];
   [key: string]: unknown;
 }
 

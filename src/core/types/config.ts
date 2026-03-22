@@ -38,6 +38,42 @@ export interface IonifyBuildConfig {
   outDir?: string;
   sourcemap?: boolean;
   minify?: boolean;
+  /**
+   * Phase 13: Emit precompressed sidecars (`.br` / `.gz`) during `ionify build`.
+   * - `true` (default): enable with defaults (threshold 1KB, brotli q=11, gzip level=9)
+   * - `false`: disable
+   * - object: override compression defaults
+   */
+  precompress?:
+    | boolean
+    | {
+        /**
+         * Only precompress assets at or above this size (in bytes).
+         * @default 1024
+         */
+        thresholdBytes?: number;
+        /**
+         * Gzip compression level.
+         * @default 9
+         */
+        gzipLevel?: number;
+        /**
+         * Brotli quality (0-11).
+         * @default 11
+         */
+        brotliQuality?: number;
+        /**
+         * Write `dist/manifest.compression.json` (useful for CI/CD checks).
+         * @default true
+         */
+        manifest?: boolean;
+        /**
+         * Max number of files compressed concurrently during the post-build compression phase.
+         * Compression remains in-process, but is measured separately from core build completion.
+         * @default os.availableParallelism() / os.cpus().length
+         */
+        concurrency?: number;
+      };
   rollupOptions?: {
     input?: string | string[] | Record<string, string>;
     external?: string[];
@@ -78,6 +114,15 @@ export interface IonifyConfig {
    * @default process.cwd()
    */
   root?: string;
+  /**
+   * Static public directory.
+   * - Served at `/` in dev (no transforms).
+   * - Copied into `build.outDir` on `ionify build`.
+   * - Set to `false` to disable.
+   *
+   * @default 'public'
+   */
+  publicDir?: string | false;
   /**
    * Entry point(s) for the application (relative to root or project-relative with leading '/').
    * Accepts a single entry or multiple entries.
@@ -127,6 +172,44 @@ export interface IonifyConfig {
      * @default true
      */
     bundleEsm?: boolean;
+    /**
+     * Phase 6.0: Enable shared-chunk prebundle for multi-entry deps sets (Ionify-native).
+     * - `"auto"` (default): enable when supported (native binding, `bundleEsm=true`, `sourcemap=false`)
+     * - `true`: force enable
+     * - `false`: disable
+     */
+    sharedChunks?: "auto" | boolean;
+    /**
+     * Phase 6.1: Vendor packs (few-request mode).
+     * Builds a larger shared-chunk group (the "app vendor pack") to collapse transitive `/@deps/*` waterfalls.
+     * - `"auto"`: select members via deterministic heuristics (requestCount/size/complexity) + persisted history
+     * - `true`: force pack building when supported
+     * - `{ [packName]: string[] }`: manual pack definitions (Phase 6.3)
+     * - `false`: disable (default)
+     *
+     * Note: vendor packs require Phase 6.0 shared chunking (`sharedChunks !== false`) to be effective.
+     */
+    vendorPacks?: "auto" | boolean | Record<string, string[]>;
+    /**
+     * Phase 5.5: Usage-driven pack slimming (Tree-Shaking v1).
+     * Builds usage-minimized variants of vendor packs/chunks in the background
+     * (no startup blocking), then applies on next reload via deterministic routing.
+     *
+     * - `"auto"` (default): enable when vendor packs are active and native chunking is available
+     * - `true`: force enable
+     * - `false`: disable
+     */
+    packSlimming?: "auto" | boolean;
+    /**
+     * Phase 6.1: Cap auto-selected vendor pack size (uncompressed, in bytes).
+     * @default 614400 (600KB)
+     */
+    vendorPackMaxBytes?: number;
+    /**
+     * Phase 6.1: Cap auto-selected vendor pack members.
+     * @default 25
+     */
+    vendorPackMaxMembers?: number;
     /**
      * Build a framework "vendor preloader" module in dev to reduce cold-start waterfalls.
      * - `'auto'` (default): detect framework deps from package.json and generate `vendor.<depsHash>.js`

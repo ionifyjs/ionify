@@ -1,0 +1,11 @@
+{
+  "name": "ionify-react-refresh-stable-id-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "*",
+    "react-dom": "*",
+    "react-refresh": "*"
+  }
+}
+

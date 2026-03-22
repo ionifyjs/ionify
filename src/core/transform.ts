@@ -109,7 +109,9 @@ export const transformCache = new TransformCache();
 export class TransformEngine {
   private loaders: Loader[] = [];
   private readonly cacheEnabled: boolean;
-  private readonly cacheVersion = "v1";
+  // Bump when the on-disk transform output format or semantics change.
+  // Included in CAS paths so restarts never serve stale transformed output.
+  private readonly cacheVersion = "v3";
   private readonly casRoot?: string;
   private readonly versionHash?: string;
 
@@ -129,14 +131,13 @@ export class TransformEngine {
     const { getCacheKey } = await import("@core/cache");
     const path = await import("path");
     const fs = await import("fs");
-    const { getCasArtifactPath } = await import("@core/utils/cas");
     const moduleHash = ctx.moduleHash || getCacheKey(ctx.code);
-    const loaderSig = this.loaders.map((l) => l.name || "loader").join("|");
+    const loaderSig = `${this.cacheVersion}|${this.loaders.map((l) => l.name || "loader").join("|")}`;
     const loaderHash = getCacheKey(loaderSig);
     const memKey = `${moduleHash}-${loaderHash}`;
     const casDir =
       this.casRoot && this.versionHash
-        ? getCasArtifactPath(this.casRoot, this.versionHash, moduleHash)
+        ? path.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash)
         : null;
     const casFile = casDir ? path.join(casDir, "transformed.js") : null;
     const casMapFile = casDir ? path.join(casDir, "transformed.js.map") : null;

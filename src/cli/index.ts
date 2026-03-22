@@ -4,6 +4,7 @@ import { logInfo, logError } from "./utils/logger.js";
 import { startDevServer } from "./commands/dev.js";
 import { runAnalyzeCommand } from "./commands/analyze.js";
 import { runBuildCommand } from "./commands/build.js";
+import { runAddCommand } from "./commands/add.js";
 
 const program = new Command();
 
@@ -16,10 +17,11 @@ program
   .command("dev")
   .description("Start Ionify development server")
   .option("-p, --port <port>", "Port to run the server on", "5173")
+  .option("-m, --mode <mode>", "Environment mode, loads .env.<mode> file (default: development)")
   .action(async (options) => {
     try {
       const port = parseInt(options.port, 10);
-      await startDevServer({ port });
+      await startDevServer({ port, mode: options.mode });
     } catch (err) {
       logError("Failed to start dev server", err);
       process.exit(1);
@@ -43,6 +45,26 @@ program
   .command("migrate")
   .description("Migrate from Vite/Rollup config (not implemented yet)")
   .action(() => logInfo("Migrate command coming soon..."));
+
+program
+  .command("add")
+  .description("Add a copy-paste component to your project (shadcn-style, Ionify-native)")
+  .argument("[component]", "Component name, e.g. button")
+  .option("--list", "List available components")
+  .option("-d, --dir <dir>", "Target directory", "src/components/ui")
+  .option("-f, --force", "Overwrite if file exists")
+  .action(async (component, options) => {
+    try {
+      await runAddCommand(component, {
+        list: !!options.list,
+        dir: options.dir,
+        force: !!options.force,
+      });
+    } catch (err) {
+      logError("Failed to add component", err);
+      process.exit(1);
+    }
+  });
 
 program
   .command("analyze")

@@ -11,6 +11,8 @@ export interface DepEntry {
 }
 
 const registry = new Map<string, DepEntry>();
+const manifestCache = new Map<string, { version?: string; peerDependencies?: Record<string, unknown> } | null>();
+const peerIdentityCache = new Map<string, string | null>();
 
 export function computeStableDepFileName(options: {
   entryPath: string;
@@ -21,18 +23,17 @@ export function computeStableDepFileName(options: {
   const pkgName = sanitizePackageName(options.packageName);
   const pkgVersion = options.packageVersion || "0.0.0";
   const subpath = normalizeSubpath(options.subpath);
-  
-  // Canonicalize path to ensure consistent hashes across symlinks (pnpm, etc.)
-  let canonicalPath = options.entryPath;
-  try {
-    canonicalPath = fs.realpathSync(options.entryPath);
-  } catch {
-    // If canonicalization fails, use original path
-  }
-  
+
+  const identity = buildDepIdentityFingerprint({
+    entryPath: options.entryPath,
+    packageName: options.packageName,
+    packageVersion: pkgVersion,
+    subpath,
+  });
+
   const hash = crypto
     .createHash("sha256")
-    .update(canonicalPath)
+    .update(identity)
     .digest("hex")
     .slice(0, 6);
   const subpathSuffix = subpath ? `__${subpath}` : "";
@@ -60,6 +61,29 @@ export function registerDepEntry(entry: Omit<DepEntry, "fileName">): DepEntry {
 
 export function getDepEntry(fileName: string): DepEntry | undefined {
   return registry.get(fileName);
+}
+
+export function isCoreSingletonDepFileName(fileName: string): boolean {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  return (
+    normalized.startsWith("react@") ||
+    normalized.startsWith("react-dom@") ||
+    normalized.startsWith("scheduler@") ||
+    normalized.startsWith("react-refresh@")
+  );
+}
+
+export function hasCoreSingletonPeerDeps(entryPath: string): boolean {
+  const packageRoot = findPackageRoot(realpathOrSelf(entryPath));
+  if (!packageRoot) return false;
+
+  const peerDeps = readPackageManifest(packageRoot)?.peerDependencies ?? {};
+  return (
+    Object.prototype.hasOwnProperty.call(peerDeps, "react") ||
+    Object.prototype.hasOwnProperty.call(peerDeps, "react-dom") ||
+    Object.prototype.hasOwnProperty.call(peerDeps, "scheduler") ||
+    Object.prototype.hasOwnProperty.call(peerDeps, "react-refresh")
+  );
 }
 
 /**
@@ -149,4 +173,97 @@ function normalizeSubpath(subpath?: string | null): string {
   // Normalize main entry variations to empty string
   if (!cleaned || cleaned === "." || cleaned === "index") return "";
   return cleaned.replace(/\//g, "__");
+}
+
+function buildDepIdentityFingerprint(options: {
+  entryPath: string;
+  packageName: string;
+  packageVersion: string;
+  subpath: string;
+}): string {
+  const canonicalPath = realpathOrSelf(options.entryPath);
+  const peerIdentity = resolvePeerIdentitySignature(canonicalPath);
+  if (!peerIdentity) {
+    return canonicalPath;
+  }
+
+  return [
+    "peer-aware:v1",
+    options.packageName,
+    options.packageVersion,
+    options.subpath,
+    peerIdentity,
+  ].join("|");
+}
+
+function resolvePeerIdentitySignature(entryPath: string): string | null {
+  const canonicalEntry = realpathOrSelf(entryPath);
+  if (peerIdentityCache.has(canonicalEntry)) {
+    return peerIdentityCache.get(canonicalEntry) ?? null;
+  }
+
+  const packageRoot = findPackageRoot(canonicalEntry);
+  if (!packageRoot) {
+    peerIdentityCache.set(canonicalEntry, null);
+    return null;
+  }
+
+  const manifest = readPackageManifest(packageRoot);
+  const peerNames = Object.keys(manifest?.peerDependencies ?? {}).sort();
+  if (!peerNames.length) {
+    peerIdentityCache.set(canonicalEntry, null);
+    return null;
+  }
+
+  const startDir = path.dirname(packageRoot);
+  const signature = peerNames
+    .map((peerName) => `${peerName}@${resolveInstalledPackageVersion(startDir, peerName) ?? "missing"}`)
+    .join("|");
+
+  peerIdentityCache.set(canonicalEntry, signature);
+  return signature;
+}
+
+function resolveInstalledPackageVersion(startDir: string, packageName: string): string | null {
+  let currentDir = startDir;
+  let previousDir = "";
+
+  while (currentDir && currentDir !== previousDir) {
+    const manifestPath = path.join(currentDir, "node_modules", packageName, "package.json");
+    if (fs.existsSync(manifestPath)) {
+      return readPackageManifest(path.dirname(manifestPath))?.version ?? null;
+    }
+    previousDir = currentDir;
+    currentDir = path.dirname(currentDir);
+  }
+
+  return null;
+}
+
+function readPackageManifest(packageRoot: string): { version?: string; peerDependencies?: Record<string, unknown> } | null {
+  const canonicalRoot = realpathOrSelf(packageRoot);
+  if (manifestCache.has(canonicalRoot)) {
+    return manifestCache.get(canonicalRoot) ?? null;
+  }
+
+  const manifestPath = path.join(canonicalRoot, "package.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      version?: string;
+      peerDependencies?: Record<string, unknown>;
+    };
+    manifestCache.set(canonicalRoot, parsed);
+    return parsed;
+  } catch {
+    manifestCache.set(canonicalRoot, null);
+    return null;
+  }
+}
+
+function realpathOrSelf(targetPath: string): string {
+  try {
+    return fs.realpathSync(targetPath);
+  } catch {
+    return targetPath;
+  }
 }

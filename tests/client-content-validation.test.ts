@@ -9,11 +9,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startDevServer, type DevServerHandle } from "../src/cli/commands/dev";
 import path from "path";
 import fs from "fs";
+import os from "os";
 
 describe("Client Runtime Content Validation", () => {
   let server: DevServerHandle;
   let port: number;
-  const testProjectDir = path.join(process.cwd(), "test-project-client-validation");
+  const testProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ionify-client-validation-"));
 
   beforeAll(async () => {
     // Create a minimal test project with react-refresh installed
@@ -29,6 +30,10 @@ describe("Client Runtime Content Validation", () => {
         }
       })
     );
+
+    // Ensure this fixture is treated as its own workspace (Phase 6.5+ workspace-scoped engine state),
+    // otherwise Ionify will detect the repo root workspace markers and place `.ionify/` there.
+    fs.writeFileSync(path.join(testProjectDir, "pnpm-workspace.yaml"), "packages:\n  - \"**\"\n");
 
     // Create node_modules symlink to actual react-refresh
     const nodeModulesDir = path.join(testProjectDir, "node_modules");

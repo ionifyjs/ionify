@@ -27,13 +27,15 @@ function parseEnvFile(source: string): EnvRecord {
   return env;
 }
 
+export function getModeAliases(mode: string): string[] {
+  const normalized = typeof mode === "string" ? mode.trim() : "";
+  return [normalized || "development"];
+}
+
 export function loadEnv(mode = "development", rootDir = process.cwd()): EnvRecord {
-  const candidates = [
-    ".env",
-    ".env.local",
-    `.env.${mode}`,
-    `.env.${mode}.local`,
-  ];
+  const [modeName] = getModeAliases(mode);
+  const candidates = [".env", ".env.local", `.env.${modeName}`, `.env.${modeName}.local`];
+
   const merged: EnvRecord = {};
   for (const name of candidates) {
     const filePath = path.resolve(rootDir, name);
@@ -46,7 +48,12 @@ export function loadEnv(mode = "development", rootDir = process.cwd()): EnvRecor
   }
 
   for (const [key, value] of Object.entries(merged)) {
-    process.env[key] = value;
+    // Do not override explicitly provided environment variables.
+    // This matches common tooling behavior (Vite, dotenv) and avoids clobbering
+    // flags like IONIFY_DEBUG set by the user/shell.
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
   }
 
   return {

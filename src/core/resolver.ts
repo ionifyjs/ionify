@@ -16,7 +16,7 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { pathToFileURL, fileURLToPath } from "url";
-import { native } from "@native/index";
+import { native, tryParseImports, tryParseModuleMetadata } from "@native/index";
 
 const SUPPORTED_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 const CONFIG_FILES = ["tsconfig.json", "jsconfig.json"];
@@ -44,6 +44,16 @@ export function extractImports(source: string, filename = "inline.ts"): string[]
     } catch {
       // Fall through to fallback
     }
+  }
+
+  // Prefer native metadata (fast + cacheable) when IR is unavailable.
+  const meta = tryParseModuleMetadata(source, filename);
+  if (meta && Array.isArray(meta.imports)) {
+    return meta.imports;
+  }
+  const nativeImports = tryParseImports(source, filename);
+  if (nativeImports && Array.isArray(nativeImports)) {
+    return nativeImports;
   }
 
   const deps = new Set<string>();
@@ -182,6 +192,12 @@ let customAliasEntries: AliasEntry[] = [];
 // Keyed by `${importerAbs}\u0000${specifier}` to avoid accidental collisions.
 const resolvePathCache = new Map<string, string | null>();
 
+function resolverRootDir(): string {
+  const fromEnv = process.env.IONIFY_PROJECT_ROOT;
+  if (fromEnv && path.isAbsolute(fromEnv)) return fromEnv;
+  return process.cwd();
+}
+
 function createAliasEntry(pattern: string, targets: string[]): AliasEntry {
   const hasWildcard = pattern.includes("*");
   if (hasWildcard) {
@@ -251,7 +267,7 @@ function loadTsconfigAliases(): AliasEntry[] {
     return cachedTsconfigAliases ?? [];
   }
 
-  const rootDir = process.cwd();
+  const rootDir = resolverRootDir();
   for (const configName of CONFIG_FILES) {
     const candidate = path.resolve(rootDir, configName);
     if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
@@ -348,6 +364,24 @@ export function resolveImport(specifier: string, importerAbs: string): string | 
       return aliasResolved;
     }
 
+    // Phase 6.6: Prefer native resolver for bare specifiers so dev/build/test share
+    // the same conditional-exports + pnpm-symlink aware resolution behavior.
+    if (native?.resolveModule) {
+      try {
+        const resolved = native.resolveModule(specifier, importerAbs) as any;
+        const kind = resolved?.kind;
+        if (kind && kind !== "Builtin" && kind !== "Virtual" && kind !== "NotFound") {
+          const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
+          if (typeof fsPath === "string" && fsPath.length > 0) {
+            resolvePathCache.set(cacheKey, fsPath);
+            return fsPath;
+          }
+        }
+      } catch {
+        // fall through to JS resolver
+      }
+    }
+
     try {
       // Try commonjs resolution
       const require = createRequire(importerAbs);
@@ -377,7 +411,7 @@ export function resolveImport(specifier: string, importerAbs: string): string | 
         }
         
         // 2. Try src-relative path (for projects following src/ convention)
-        const srcPath = path.join(process.cwd(), "src", specifier);
+        const srcPath = path.join(resolverRootDir(), "src", specifier);
         const resolvedSrc = tryWithExt(srcPath);
         if (resolvedSrc) {
           resolvePathCache.set(cacheKey, resolvedSrc);
@@ -385,7 +419,7 @@ export function resolveImport(specifier: string, importerAbs: string): string | 
         }
         
         // 3. Try workspace root-relative path
-        const rootPath = path.join(process.cwd(), specifier);
+        const rootPath = path.join(resolverRootDir(), specifier);
         const resolvedRoot = tryWithExt(rootPath);
         if (resolvedRoot) {
           resolvePathCache.set(cacheKey, resolvedRoot);

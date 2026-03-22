@@ -9,24 +9,26 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startDevServer, type DevServerHandle } from "../src/cli/commands/dev";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
 describe("Dev Server Client Endpoints", () => {
   let server: DevServerHandle;
   let port: number;
+  let testRoot: string;
 
   beforeAll(async () => {
     // Create a test project with react-refresh
-    const testRoot = path.join(process.cwd(), ".test-project-client-ep");
-    if (fs.existsSync(testRoot)) {
-      fs.rmSync(testRoot, { recursive: true, force: true });
-    }
-    fs.mkdirSync(testRoot, { recursive: true });
+    testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ionify-client-ep-"));
     
     // Create minimal package.json
     fs.writeFileSync(
       path.join(testRoot, "package.json"),
       JSON.stringify({ name: "test", dependencies: { "react-refresh": "^0.14.2" } })
     );
+
+    // Ensure this fixture is treated as its own workspace (Phase 6.5+ workspace-scoped engine state),
+    // otherwise Ionify will detect the repo root workspace markers and place `.ionify/` there.
+    fs.writeFileSync(path.join(testRoot, "pnpm-workspace.yaml"), "packages:\n  - \"**\"\n");
     
     // Create node_modules with react-refresh symlink
     const nmDir = path.join(testRoot, "node_modules");
@@ -56,8 +58,7 @@ describe("Dev Server Client Endpoints", () => {
     if (server) {
       await server.close();
     }
-    const testRoot = path.join(process.cwd(), ".test-project-client-ep");
-    if (fs.existsSync(testRoot)) {
+    if (testRoot && fs.existsSync(testRoot)) {
       fs.rmSync(testRoot, { recursive: true, force: true });
     }
   });

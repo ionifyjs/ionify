@@ -8,7 +8,6 @@
  * - parserMode, minifier (which parser/minifier to use)
  * - treeshake, scopeHoist (optimization settings)
  * - plugins (plugin names, sorted alphabetically)
- * - entry points (resolved absolute paths, sorted)
  * - cssOptions, assetOptions (loader configuration)
  * 
  * Critical Requirements:
@@ -33,6 +32,9 @@ import { createHash } from "node:crypto";
  * This shape is what gets hashed to produce the version string.
  */
 export interface CanonicalVersionInputs {
+  // Storage schema tag to force a clean cutover when persistent formats change.
+  // Phase 6.6 introduces deterministic ws:// module IDs across Graph/CAS.
+  storageSchema: string;
   parserMode: "oxc" | "swc" | "hybrid";
   minifier: "oxc" | "swc" | "auto";
   treeshake: {
@@ -46,9 +48,9 @@ export interface CanonicalVersionInputs {
     combineVariables: boolean;
   } | null;
   plugins: string[];  // plugin names, sorted alphabetically
-  entry: string[] | null;  // absolute paths, sorted
   cssOptions: Record<string, unknown> | null;
   assetOptions: Record<string, unknown> | null;
+  runtimeContracts: Record<string, unknown> | null;
 }
 
 /**
@@ -130,7 +132,15 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
   plugins?: any[];
   cssOptions?: any;
   assetOptions?: any;
+  runtimeContracts?: Record<string, unknown> | null;
 }): CanonicalVersionInputs {
+  // IMPORTANT (Phase 6.6):
+  // - `entry` is intentionally excluded from the shared engine version hash so Graph/CAS
+  //   are reusable across projects within the same workspace when config inputs match.
+  // - Storage schema changes MUST bump this tag for a clean cutover (no in-place migrations).
+  // v2: native bare-specifier resolution becomes the default for graph building (unified dev/build behavior).
+  const storageSchema = "phase6.6-ws-module-ids-v2";
+
   // Normalize parserMode and minifier with explicit defaults
   const parserMode = config.parserMode || "hybrid";
   const minifier = config.minifier || "auto";
@@ -147,16 +157,6 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
         .sort()
     : [];
   
-  // Normalize entry to sorted array of absolute paths or null
-  let entry: string[] | null = null;
-  if (config.entry) {
-    if (typeof config.entry === "string") {
-      entry = [config.entry];
-    } else if (Array.isArray(config.entry)) {
-      entry = [...config.entry].sort();
-    }
-  }
-  
   // Normalize CSS and asset options (empty object → null for consistency)
   const cssOptions = config.cssOptions && Object.keys(config.cssOptions).length > 0
     ? config.cssOptions
@@ -165,17 +165,33 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
   const assetOptions = config.assetOptions && Object.keys(config.assetOptions).length > 0
     ? config.assetOptions
     : null;
+  const runtimeContracts = config.runtimeContracts && Object.keys(config.runtimeContracts).length > 0
+    ? config.runtimeContracts
+    : null;
   
   return {
+    storageSchema,
     parserMode,
     minifier,
     treeshake,
     scopeHoist,
     plugins,
-    entry,
     cssOptions,
     assetOptions,
+    runtimeContracts,
   };
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (!val || typeof val !== "object") return val;
+    if (Array.isArray(val)) return val;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(val as Record<string, unknown>).sort()) {
+      out[key] = (val as Record<string, unknown>)[key];
+    }
+    return out;
+  });
 }
 
 /**
@@ -186,8 +202,8 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
  * @returns Version hash string (16 characters)
  */
 export function computeVersionHash(inputs: CanonicalVersionInputs): string {
-  // JSON.stringify with sorted keys for deterministic serialization
-  const json = JSON.stringify(inputs, Object.keys(inputs).sort());
+  // Deterministic serialization (stable key ordering at all object depths).
+  const json = stableStringify(inputs);
   const hash = createHash("sha256").update(json).digest("hex");
   return hash.slice(0, 16);
 }

@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Ionify — Instant, Intelligent, Unified Build Engine",
   "bin": {
-    "ionify": "./dist/cli/index.js"
+    "ionify": "dist/cli/index.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -63,7 +63,8 @@
     "postcss": "^8.4.47",
     "postcss-load-config": "^4.0.2",
     "postcss-modules": "^4.3.1",
-    "react-refresh": "^0.14.2"
+    "react-refresh": "^0.14.2",
+    "selfsigned": "^3.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

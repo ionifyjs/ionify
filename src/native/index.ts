@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
 import type { BuildPlan } from "../types/plan";
 import type { IonModule } from "../core/ir";
 import { computeVersionHash, computeCanonicalVersionInputs } from "../core/version";
@@ -14,6 +15,28 @@ export interface NativeGraphNode {
   config_hash?: string | null;
   origin?: "app" | "dep";
   format?: "esm" | "cjs";
+}
+
+export interface NativeBuildChunksTreeshakeOptions {
+  mode?: "off" | "safe" | "aggressive" | string;
+  include?: string[];
+  exclude?: string[];
+}
+
+export interface NativeBuildChunksScopeHoistOptions {
+  enable?: boolean;
+  inlineFunctions?: boolean;
+  constantFolding?: boolean;
+  combineVariables?: boolean;
+}
+
+export interface NativeBuildChunksOptions {
+  minifier?: "oxc" | "swc" | "auto" | string;
+  minify?: boolean;
+  mangle?: boolean;
+  treeshake?: NativeBuildChunksTreeshakeOptions;
+  scopeHoist?: NativeBuildChunksScopeHoistOptions;
+  enableSourcemaps?: boolean;
 }
 
 export interface NativeBinding {
@@ -61,7 +84,12 @@ export interface NativeBinding {
   };
   astCacheClear?(): void;
   astCacheWarmup?(): number;
-  buildChunks?(plan: BuildPlan, casRoot?: string | null, versionHash?: string | null): {
+  buildChunks?(
+    plan: BuildPlan,
+    casRoot?: string | null,
+    versionHash?: string | null,
+    options?: NativeBuildChunksOptions | null,
+  ): {
     id: string;
     file_name?: string;
     code: string;
@@ -70,7 +98,13 @@ export interface NativeBinding {
     map_bytes?: number;
     assets?: Array<{ source: string; fileName?: string; file_name?: string }>;
   }[];
-  optimizeDependency?(entryPath: string, depsHash: string, enableSourcemap?: boolean, bundleEsm?: boolean): {
+  optimizeDependency?(
+    entryPath: string,
+    depsHash: string,
+    enableSourcemap?: boolean,
+    bundleEsm?: boolean,
+    ionifyDir?: string | null,
+  ): {
     out_path: string;
     map_path?: string | null;
   };
@@ -81,8 +115,26 @@ export interface NativeBinding {
     package?: string;
     hasSourcemap?: boolean;
   }>;
+  optimizeDependenciesChunked?(
+    entries: Array<{ entryPath: string; depsHash: string; usedExports?: string[] }>,
+    ionifyDir?: string | null,
+  ): {
+    chunk_group?: string;
+    chunkGroup?: string;
+    chunk_files?: string[];
+    chunkFiles?: string[];
+    entries?: Array<{
+      entry_path?: string;
+      entryPath?: string;
+      out_path?: string;
+      outPath?: string;
+      map_path?: string | null;
+      mapPath?: string | null;
+    }>;
+  };
   optimizeDependenciesBatch?(
-    entries: Array<{ entryPath: string; depsHash: string }>
+    entries: Array<{ entryPath: string; depsHash: string }>,
+    ionifyDir?: string | null,
   ): Array<{
     out_path?: string;
     outPath?: string;
@@ -90,6 +142,23 @@ export interface NativeBinding {
     mapPath?: string | null;
     error?: string | null;
   }>;
+
+  // Phase 18C: Rust-native batch compression for JS chunk files.
+  // Each item is compressed independently (Rayon-parallel in Rust).
+  // `br` / `gz` are `null` when the compressed output would not be smaller than the input.
+  compressBatch?(
+    items: Array<{
+      id: string;
+      bytes: Buffer;
+      brotliQuality: number;
+      gzipLevel: number;
+    }>,
+  ): Array<{
+    id: string;
+    br?: Buffer | null;
+    gz?: Buffer | null;
+  }>;
+  depsOptimizerOutputVersion?(): number;
 }
 
 function resolveCandidates(): string[] {
@@ -98,10 +167,32 @@ function resolveCandidates(): string[] {
   const debugDir = path.resolve(cwd, "target", "debug");
   const nativeDir = path.resolve(cwd, "native");
   
-  // Also check relative to this module's location (for installed packages)
-  const moduleDir = path.dirname(new URL(import.meta.url).pathname);
-  const packageNativeDir = path.resolve(moduleDir, "..", "native");
-  const packageDistDir = path.resolve(moduleDir, "..");
+  // Also check relative to this module's location (for installed packages).
+  // NOTE: use fileURLToPath for correct path decoding on all platforms.
+  const modulePath = fileURLToPath(import.meta.url);
+  const moduleDir = path.dirname(modulePath);
+
+  const findPackageRoot = (startDir: string): string | null => {
+    let dir = startDir;
+    for (let i = 0; i < 6; i++) {
+      const pkgPath = path.join(dir, "package.json");
+      try {
+        if (fs.existsSync(pkgPath) && fs.statSync(pkgPath).isFile()) {
+          return dir;
+        }
+      } catch {
+        // ignore
+      }
+      const parent = path.dirname(dir);
+      if (!parent || parent === dir) break;
+      dir = parent;
+    }
+    return null;
+  };
+
+  const packageRoot = findPackageRoot(moduleDir);
+  const packageNativeDir = packageRoot ? path.join(packageRoot, "native") : null;
+  const packageDistDir = packageRoot ? path.join(packageRoot, "dist") : null;
 
   const platformFile = process.platform === "win32"
     ? "ionify_core.dll"
@@ -110,9 +201,13 @@ function resolveCandidates(): string[] {
       : "libionify_core.so";
 
   const candidates = [
-    // Installed package locations (checked first)
-    path.join(packageDistDir, "ionify_core.node"),
-    path.join(packageNativeDir, "ionify_core.node"),
+    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
+    path.join(moduleDir, "ionify_core.node"),
+    // Alternative installed layouts (fallback):
+    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
+    ...(packageNativeDir ? [path.join(packageNativeDir, "ionify_core.node")] : []),
+    ...(packageDistDir ? [path.join(packageDistDir, "ionify_core.node")] : []),
+    ...(packageRoot ? [path.join(packageRoot, "ionify_core.node")] : []),
     // Development locations
     path.join(nativeDir, "ionify_core.node"),
     path.join(releaseDir, "ionify_core.node"),
@@ -149,6 +244,12 @@ let nativeBinding: NativeBinding | null = null;
 })();
 
 export const native = nativeBinding;
+
+export function getDepsOptimizerOutputVersion(): number {
+  // 0 is not a real optimizer output version, so a missing native binding causes
+  // all cache lookups to miss rather than silently reusing stale artifacts.
+  return nativeBinding?.depsOptimizerOutputVersion?.() ?? 0;
+}
 
 function shouldUseSwcOnly(): boolean {
   return (process.env.IONIFY_PARSER ?? "").toLowerCase() === "swc";
@@ -231,19 +332,18 @@ export function tryNativeTransform(mode: "oxc" | "swc" | "hybrid", code: string,
     }
   }
 
-  if (options.filename?.includes('Counter.jsx')) {
-    console.log('[TASK1 DEBUG] ⚠️  No native transform available, returning null');
-  }
   return null;
 }
 
-export function ensureNativeGraph(graphPath?: string, version?: string) {
-  if (!nativeBinding?.graphInit) return;
+export function ensureNativeGraph(graphPath?: string, version?: string): boolean {
+  if (!nativeBinding?.graphInit) return false;
   try {
     nativeBinding.graphInit(graphPath, version);
+    return true;
   } catch (err) {
     console.error(`[Native] Failed to initialize graph: ${err}`);
     // ignore initialization errors; JS fallback will handle persistence
+    return false;
   }
 }
 
@@ -256,6 +356,7 @@ type ConfigHashInput = {
   plugins?: string[];
   cssOptions?: unknown;
   assetOptions?: unknown;
+  runtimeContracts?: Record<string, unknown> | null;
 };
 
 function normalizeValue(value: any): any {

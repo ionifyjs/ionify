@@ -4,6 +4,24 @@ let installed = false;
 const moduleInfo = new Map();
 const warnedClassModules = new Set();
 
+function warnAboutClassRefresh(stableModuleId) {
+  if (warnedClassModules.has(stableModuleId)) return;
+  const warning = `[Ionify] React Fast Refresh cannot preserve state for class components (module: ${stableModuleId}). State will reset after edits.`;
+  console.warn(warning);
+
+  if (typeof document !== "undefined") {
+    import("/__ionify_overlay.js")
+      .then((mod) => {
+        if (typeof mod?.showWarningOverlay === "function") {
+          mod.showWarningOverlay(warning, stableModuleId);
+        }
+      })
+      .catch(() => {});
+  }
+
+  warnedClassModules.add(stableModuleId);
+}
+
 export function normalizeRefreshModuleId(url) {
   if (typeof url !== "string") return "";
   if (!url.includes("?") && !url.includes("#")) return url;
@@ -70,24 +88,6 @@ export function setupReactRefresh(importMetaHot, moduleId) {
       record.hasReactExport = true;
       if (type.prototype && type.prototype.isReactComponent) {
         record.hasClassComponent = true;
-
-        // Show the warning even if a refresh never runs (e.g. first load),
-        // but dedupe per stable module id.
-        if (!warnedClassModules.has(stableModuleId)) {
-          const warning = `[Ionify] React Fast Refresh cannot preserve state for class components (module: ${stableModuleId}). State will reset after edits.`;
-          console.warn(warning);
-
-          if (typeof document !== "undefined") {
-            import("/__ionify_overlay.js")
-              .then((mod) => {
-                if (typeof mod?.showWarningOverlay === "function") {
-                  mod.showWarningOverlay(warning, stableModuleId);
-                }
-              })
-              .catch(() => {});
-          }
-          warnedClassModules.add(stableModuleId);
-        }
       }
     }
   };
@@ -104,6 +104,9 @@ export function setupReactRefresh(importMetaHot, moduleId) {
 
   const refresh = () => {
     if (!record.hasReactExport) return false;
+    if (record.hasClassComponent) {
+      warnAboutClassRefresh(stableModuleId);
+    }
     queueMicrotask(() => {
       runtime.performReactRefresh();
     });

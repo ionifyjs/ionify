@@ -3,7 +3,6 @@
  * Listens for graph-diff updates over SSE, then POSTs to fetch the payload.
  * For now, reloads the page when a module is deleted or update fails.
  */
-import { showErrorOverlay, clearErrorOverlay } from "/__ionify_overlay.js";
 
 const SSE_URL = "/__ionify_hmr";
 const APPLY_URL = "/__ionify_hmr/apply";
@@ -11,51 +10,122 @@ const ERROR_URL = "/__ionify_hmr/error";
 
 const log = (...args) => console.log("[Ionify HMR]", ...args);
 const warn = (...args) => console.warn("[Ionify HMR]", ...args);
+let overlayModulePromise = null;
 
-// Surface runtime errors even when they don't occur during an HMR import().
-// This catches errors thrown during module evaluation and async rejections.
-globalThis.addEventListener?.("error", (event) => {
+async function loadOverlayModule() {
+  if (!overlayModulePromise) {
+    overlayModulePromise = import("/__ionify_overlay.js").catch((error) => {
+      overlayModulePromise = null;
+      throw error;
+    });
+  }
+  return overlayModulePromise;
+}
+
+async function showErrorOverlay(message, details) {
   try {
+    const mod = await loadOverlayModule();
+    mod?.showErrorOverlay?.(message, details);
+  } catch {
+    // ignore overlay load failures
+  }
+}
+
+async function clearErrorOverlay() {
+  try {
+    const mod = await loadOverlayModule();
+    mod?.clearErrorOverlay?.();
+  } catch {
+    // ignore overlay load failures
+  }
+}
+
+async function showWarningOverlay(message, details) {
+  try {
+    const mod = await loadOverlayModule();
+    mod?.showWarningOverlay?.(message, details);
+  } catch {
+    // ignore overlay load failures
+  }
+}
+
+/**
+ * Returns true if the error stack contains a frame from an Ionify-managed URL
+ * (the deps bundle, an HMR-served module, or the overlay/hmr client itself).
+ * Third-party DevTools errors (SolidJS, React, etc.) originate from URLs that
+ * do NOT contain these prefixes and are intentionally excluded.
+ */
+function isIonifyManagedError(event) {
+  const stack = (event?.error?.stack ?? event?.reason?.stack ?? "");
+  const filename = event?.filename ?? "";
+  return (
+    stack.includes("/@deps/") ||
+    stack.includes("/__ionify_") ||
+    filename.includes("/@deps/") ||
+    filename.includes("/__ionify_")
+  );
+}
+
+// Surface runtime errors from Ionify-managed modules only.
+// Third-party devtools components (React Query DevTools, Redux DevTools, etc.)
+// may throw runtime TypeErrors due to API version mismatches; these should never
+// block the app with a full-screen overlay.
+globalThis.addEventListener?.("error", (event) => {
+  if (!isIonifyManagedError(event)) return;
+  void (async () => {
     const message = event?.message || "Runtime error";
     const details = event?.error?.stack || event?.error?.message;
-    showErrorOverlay(message, details);
-  } catch {
-    // ignore
-  }
+    await showErrorOverlay(message, details);
+  })();
 });
 
 globalThis.addEventListener?.("unhandledrejection", (event) => {
-  try {
+  if (!isIonifyManagedError(event)) return;
+  void (async () => {
     const reason = event?.reason;
     const message = reason instanceof Error ? reason.message : "Unhandled promise rejection";
     const details = reason instanceof Error ? reason.stack : String(reason ?? "");
-    showErrorOverlay(message, details);
-  } catch {
-    // ignore
-  }
+    await showErrorOverlay(message, details);
+  })();
 });
 
 // Establish SSE channel used to notify about pending graph diffs.
 const source = new EventSource(SSE_URL);
 
-source.addEventListener("ready", () => {
-  log("connected");
-});
-
 source.addEventListener("error", (e) => {
   warn("SSE error", e);
+  void (async () => {
   // Show overlay if server streamed a structured error payload.
   const data = e && typeof e === "object" && "data" in e ? e.data : undefined;
-  if (data) {
-    try {
-      const payload = JSON.parse(data);
-      if (payload?.message) {
-        showErrorOverlay(payload.message, payload.id ? `Update ${payload.id}` : undefined);
+    if (data) {
+      try {
+        const payload = JSON.parse(data);
+        if (payload?.message) {
+          await showErrorOverlay(payload.message, payload.id ? `Update ${payload.id}` : undefined);
+        }
+      } catch {
+        await showErrorOverlay(String(data || "HMR connection error"));
       }
-    } catch {
-      showErrorOverlay(String(data || "HMR connection error"));
     }
-  }
+  })();
+});
+
+// P19R: Non-blocking peer dependency version mismatch warnings from the deps optimizer.
+// Shown as a dismissible amber panel that does NOT block the app.
+source.addEventListener("peer-dep-warning", (event) => {
+  void (async () => {
+    const payload = JSON.parse(event.data);
+    const warnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
+    if (warnings.length === 0) return;
+    const message = warnings.join("\n");
+    warn("Peer dep version mismatch detected:\n" + message);
+    await showWarningOverlay(
+      `Peer dependency version mismatch (${warnings.length} issue${warnings.length > 1 ? "s" : ""})`,
+      message
+    );
+  })().catch(() => {
+    // ignore malformed payload
+  });
 });
 
 source.addEventListener("update", async (event) => {
@@ -71,7 +141,7 @@ source.addEventListener("update", async (event) => {
   }
 
   log(`update ${summary.id} received (${summary.modules?.length ?? 0} modules)`);
-  clearErrorOverlay();
+  void clearErrorOverlay();
 
   try {
     const response = await fetch(APPLY_URL, {
@@ -85,11 +155,11 @@ source.addEventListener("update", async (event) => {
     }
     const payload = await response.json();
     await applyUpdate(payload);
-    clearErrorOverlay();
+    await clearErrorOverlay();
   } catch (err) {
     await reportError(summary.id, err);
     const message = err instanceof Error ? err.message : String(err);
-    showErrorOverlay("Failed to apply update", message);
+    await showErrorOverlay("Failed to apply update", message);
     warn("apply failed", err);
   }
 });
@@ -138,7 +208,7 @@ async function applyUpdate(payload) {
     } catch (err) {
       await reportError(payload?.id, err);
       const message = err instanceof Error ? err.message : String(err);
-      showErrorOverlay(`Failed to refresh ${mod.url}`, message);
+      await showErrorOverlay(`Failed to refresh ${mod.url}`, message);
       warn(`failed to refresh ${mod.url}`, err);
       return;
     }
@@ -156,5 +226,5 @@ async function applyUpdate(payload) {
   }
 
   log(`update ${payload?.id ?? "unknown"} applied`);
-  clearErrorOverlay();
+  await clearErrorOverlay();
 }

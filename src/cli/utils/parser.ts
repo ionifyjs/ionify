@@ -1,4 +1,4 @@
-import type { IonifyConfig } from "@types/config";
+import type { IonifyConfig } from "../../types/config";
 
 export type ParserMode = "oxc" | "swc" | "hybrid";
 

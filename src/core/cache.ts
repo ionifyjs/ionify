@@ -3,19 +3,33 @@ import path from "path";
 import crypto from "crypto";
 import { native as nativeBinding } from "@native/index";
 
-const CACHE_DIR = path.join(process.cwd(), ".ionify", "cache");
+export type CacheKeyInput = string | Buffer | Uint8Array;
+
+function resolveIonifyDir(): string {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && path.isAbsolute(fromEnv)) return fromEnv;
+  const projectRoot = process.env.IONIFY_PROJECT_ROOT;
+  if (projectRoot && path.isAbsolute(projectRoot)) return path.join(projectRoot, ".ionify");
+  return path.join(process.cwd(), ".ionify");
+}
+
+function cacheDir(): string {
+  return path.join(resolveIonifyDir(), "cache");
+}
 
 function ensureCacheDir() {
-  if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  const dir = cacheDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
 /** Generate deterministic cache key for given content */
-export function getCacheKey(content: string): string {
+export function getCacheKey(content: CacheKeyInput): string {
   if (nativeBinding?.cacheHash) {
     try {
-      return nativeBinding.cacheHash(Buffer.from(content));
+      const data = typeof content === "string" ? Buffer.from(content) : content;
+      return nativeBinding.cacheHash(data);
     } catch {
       // fall through to JS hash
     }
@@ -26,19 +40,20 @@ export function getCacheKey(content: string): string {
 /** Write buffer or string to cache */
 export function writeCache(hash: string, data: Buffer | string) {
   ensureCacheDir();
-  const target = path.join(CACHE_DIR, hash);
+  const target = path.join(cacheDir(), hash);
   fs.writeFileSync(target, data);
 }
 
 /** Read cached file by hash if exists */
 export function readCache(hash: string): Buffer | null {
-  const target = path.join(CACHE_DIR, hash);
+  const target = path.join(cacheDir(), hash);
   return fs.existsSync(target) ? fs.readFileSync(target) : null;
 }
 
 /** Clear all cached data */
 export function clearCache() {
-  if (fs.existsSync(CACHE_DIR)) {
-    fs.rmSync(CACHE_DIR, { recursive: true, force: true });
+  const dir = cacheDir();
+  if (fs.existsSync(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }

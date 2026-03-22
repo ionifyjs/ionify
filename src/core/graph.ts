@@ -12,10 +12,10 @@
 }
 */
 
-
 import fs from "fs";
 import path from "path";
 import { native as nativeBinding, ensureNativeGraph, computeGraphVersion } from "@native/index";
+import { fromWsModuleId, resolveWorkspaceRoot, toWsModuleId } from "@core/module-id";
 
 export interface GraphNode {
   id: string;            // absolute path
@@ -28,23 +28,36 @@ export interface GraphNode {
 }
 
 export interface GraphSnapshot {
-  version: 1;
-  nodes: Record<string, GraphNode>; // key = absolute path
+  version: 2;
+  nodes: Record<string, StoredGraphNode>; // key = module ID
 }
 
-const IONIFY_DIR = path.join(process.cwd(), ".ionify");
-const GRAPH_FILE = path.join(IONIFY_DIR, "graph.json");
-const GRAPH_DB_FILE = path.join(IONIFY_DIR, "graph.db");
+function resolveIonifyDir(explicit?: string | null): string {
+  if (explicit) return path.resolve(explicit);
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && path.isAbsolute(fromEnv)) return fromEnv;
+  return path.join(process.cwd(), ".ionify");
+}
 
-function ensureIonifyDir() {
-  if (!fs.existsSync(IONIFY_DIR)) fs.mkdirSync(IONIFY_DIR, { recursive: true });
+interface StoredGraphNode {
+  id: string; // workspace module ID (ws://...)
+  hash: string | null;
+  deps: string[];
+  dynamicDeps?: string[];
+  kind?: string;
+  configHash?: string | null;
+  mtimeMs: number | null;
 }
 
 export class Graph {
-  private nodes: Map<string, GraphNode> = new Map();
+  private readonly ionifyDir: string;
+  private readonly graphFile: string;
+  private readonly graphDbPath: string;
+  private readonly workspaceRoot: string;
+  private nodes: Map<string, StoredGraphNode> = new Map();
   private dirty = false;
   private saveTimer: NodeJS.Timeout | null = null;
-  private readonly native = nativeBinding ?? null;
+  private native = nativeBinding ?? null;
   private nativeFlushTimer: NodeJS.Timeout | null = null;
 
   private queueSave() {
@@ -54,11 +67,26 @@ export class Graph {
     this.saveTimer = setTimeout(() => this.save(), 300);
   }
 
-  constructor(versionInputs?: Parameters<typeof computeGraphVersion>[0]) {
-    ensureIonifyDir();
+  constructor(
+    versionInputs?: Parameters<typeof computeGraphVersion>[0],
+    opts: { ionifyDir?: string | null } = {},
+  ) {
+    this.ionifyDir = resolveIonifyDir(opts.ionifyDir ?? null);
+    this.graphFile = path.join(this.ionifyDir, "graph.json");
+    this.graphDbPath = path.join(this.ionifyDir, "graph.db");
+    this.workspaceRoot = resolveWorkspaceRoot(null);
+
+    if (!fs.existsSync(this.ionifyDir)) {
+      fs.mkdirSync(this.ionifyDir, { recursive: true });
+    }
     if (this.native) {
       const version = versionInputs ? computeGraphVersion(versionInputs) : undefined;
-      ensureNativeGraph(GRAPH_DB_FILE, version);
+      const ok = ensureNativeGraph(this.graphDbPath, version);
+      if (!ok) {
+        // If the native graph can't be initialized (e.g. another process holds the sled lock),
+        // fall back to the JSON graph to avoid breaking the dev/build lifecycle.
+        this.native = null;
+      }
     }
     this.load();
   }
@@ -69,12 +97,19 @@ export class Graph {
         // Prefer sled snapshot when native bindings are available.
         const snapshot = this.native.graphLoad();
         for (const node of snapshot) {
-          const stat = fs.existsSync(node.id) ? fs.statSync(node.id) : null;
-          this.nodes.set(node.id, {
-            id: node.id,
+          const id = node.id;
+          const fsPath = fromWsModuleId(id, this.workspaceRoot);
+          const stat = fsPath && fs.existsSync(fsPath) ? fs.statSync(fsPath) : null;
+          const dynamicDeps = Array.isArray((node as any).dynamicDeps)
+            ? (node as any).dynamicDeps
+            : Array.isArray((node as any).dynamic_deps)
+              ? (node as any).dynamic_deps
+              : [];
+          this.nodes.set(id, {
+            id,
             hash: node.hash,
-            deps: node.deps,
-            dynamicDeps: node.dynamicDeps,
+            deps: Array.isArray(node.deps) ? node.deps : [],
+            dynamicDeps,
             kind: node.kind,
             configHash: (node as any).config_hash ?? (node as any).configHash ?? null,
             mtimeMs: stat ? stat.mtimeMs : null,
@@ -90,12 +125,13 @@ export class Graph {
   }
 
   private loadFromDisk() {
-    if (!fs.existsSync(GRAPH_FILE)) return;
+    if (!fs.existsSync(this.graphFile)) return;
     try {
-      const raw = fs.readFileSync(GRAPH_FILE, "utf8");
+      const raw = fs.readFileSync(this.graphFile, "utf8");
       const snap = JSON.parse(raw) as GraphSnapshot;
-      if (snap.version === 1 && snap.nodes) {
+      if (snap.version === 2 && snap.nodes) {
         for (const [id, node] of Object.entries(snap.nodes)) {
+          if (!id.startsWith("ws://")) continue;
           this.nodes.set(id, node);
         }
       }
@@ -126,10 +162,10 @@ export class Graph {
     if (this.native) return; // sled handles persistence
     try {
       const snap: GraphSnapshot = {
-        version: 1,
+        version: 2,
         nodes: Object.fromEntries(this.nodes.entries()),
       };
-      fs.writeFileSync(GRAPH_FILE, JSON.stringify(snap, null, 2), "utf8");
+      fs.writeFileSync(this.graphFile, JSON.stringify(snap, null, 2), "utf8");
       this.dirty = false;
     } catch {
       // swallow for now
@@ -141,38 +177,62 @@ export class Graph {
     }
   }
 
+  private moduleIdForPath(absPath: string): string | null {
+    return toWsModuleId(absPath, this.workspaceRoot);
+  }
+
+  private pathForModuleId(moduleId: string): string | null {
+    return fromWsModuleId(moduleId, this.workspaceRoot);
+  }
+
+  private depsToPaths(ids: string[]): string[] {
+    const out: string[] = [];
+    for (const id of ids) {
+      const abs = this.pathForModuleId(id);
+      if (abs) out.push(abs);
+    }
+    return out;
+  }
+
   /** Upsert a node and its deps; returns true if hash changed */
   recordFile(absPath: string, contentHash: string, depsAbs: string[], dynamicDeps?: string[], kind?: string): boolean {
+    const moduleId = this.moduleIdForPath(absPath);
+    if (!moduleId) return false;
     const stat = fs.existsSync(absPath) ? fs.statSync(absPath) : null;
     const mtimeMs = stat ? stat.mtimeMs : null;
     const configHash = process.env.IONIFY_CONFIG_HASH || null;
 
-    const prev = this.nodes.get(absPath);
+    const prev = this.nodes.get(moduleId);
     let changed = !prev || prev.hash !== contentHash;
 
-    const node: GraphNode = {
-      id: absPath,
+    const deps = Array.from(new Set(depsAbs.map((p) => this.moduleIdForPath(p)).filter((v): v is string => !!v)));
+    const dyn = dynamicDeps
+      ? Array.from(new Set(dynamicDeps.map((p) => this.moduleIdForPath(p)).filter((v): v is string => !!v)))
+      : undefined;
+
+    const node: StoredGraphNode = {
+      id: moduleId,
       hash: contentHash,
-      deps: Array.from(new Set(depsAbs)),
-      dynamicDeps: dynamicDeps ? Array.from(new Set(dynamicDeps)) : undefined,
+      deps,
+      dynamicDeps: dyn,
       kind: kind || this.inferKind(absPath),
       configHash,
       mtimeMs,
     };
-    this.nodes.set(absPath, node);
+    this.nodes.set(moduleId, node);
     if (this.native) {
       try {
         changed = this.native.graphRecord(
-          absPath,
+          moduleId,
           contentHash,
-          node.deps,
-          node.dynamicDeps || [],
+          deps,
+          dyn || [],
           node.kind,
           node.configHash ?? null
         );
         this.scheduleNativeFlush();
       } catch (err) {
-        console.error(`[Graph] Failed to record ${absPath}:`, err);
+        console.error(`[Graph] Failed to record ${moduleId}:`, err);
         // fall back to JS-determined change flag
       }
     }
@@ -183,7 +243,6 @@ export class Graph {
   /** Infer module kind from file extension */
   private inferKind(absPath: string): string {
     const ext = path.extname(absPath).toLowerCase();
-    if (/\.(module)\.css$/i.test(absPath)) return "css-module";
     if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].includes(ext)) return "js";
     if (ext === ".css") return "css";
     if ([".json"].includes(ext)) return "json";
@@ -191,20 +250,34 @@ export class Graph {
   }
 
   getNode(absPath: string): GraphNode | undefined {
-    return this.nodes.get(absPath);
+    const moduleId = this.moduleIdForPath(absPath);
+    if (!moduleId) return undefined;
+    const node = this.nodes.get(moduleId);
+    if (!node) return undefined;
+    return {
+      id: absPath,
+      hash: node.hash,
+      deps: this.depsToPaths(node.deps),
+      dynamicDeps: node.dynamicDeps ? this.depsToPaths(node.dynamicDeps) : undefined,
+      kind: node.kind,
+      configHash: node.configHash,
+      mtimeMs: node.mtimeMs,
+    };
   }
 
   getDeps(absPath: string): string[] {
-    return this.nodes.get(absPath)?.deps ?? [];
+    return this.getNode(absPath)?.deps ?? [];
   }
 
   /** Reverse edges: who depends on target? */
   getDependents(targetAbs: string): string[] {
+    const targetId = this.moduleIdForPath(targetAbs);
+    if (!targetId) return [];
     const candidates = new Set<string>();
     // Native path uses sled reverse index for O(1) lookups.
     if (this.native?.graphDependents) {
       try {
-        for (const dep of this.native.graphDependents(targetAbs) ?? []) {
+        for (const dep of this.native.graphDependents(targetId) ?? []) {
           candidates.add(dep);
         }
       } catch {
@@ -212,36 +285,55 @@ export class Graph {
       }
     }
     for (const [id, node] of this.nodes) {
-      if (node.deps.includes(targetAbs)) candidates.add(id);
+      if (node.deps.includes(targetId)) candidates.add(id);
     }
-    return Array.from(candidates);
+    const out: string[] = [];
+    for (const id of candidates) {
+      const abs = this.pathForModuleId(id);
+      if (abs) out.push(abs);
+    }
+    return out;
   }
 
   /** Collect dependents recursively (breadth-first) */
   collectDependentsDeep(targetAbs: string): string[] {
+    const targetId = this.moduleIdForPath(targetAbs);
+    if (!targetId) return [];
     const result = new Set<string>();
-    const queue: string[] = [targetAbs];
+    const queue: string[] = [targetId];
     while (queue.length) {
       const current = queue.shift()!;
-      for (const dep of this.getDependents(current)) {
-        if (!result.has(dep)) {
-          result.add(dep);
-          queue.push(dep);
+      const abs = this.pathForModuleId(current);
+      if (!abs) continue;
+      const deps = this.getDependents(abs);
+      for (const depAbs of deps) {
+        const depId = this.moduleIdForPath(depAbs);
+        if (!depId) continue;
+        if (!result.has(depId)) {
+          result.add(depId);
+          queue.push(depId);
         }
       }
     }
-    return Array.from(result);
+    const out: string[] = [];
+    for (const id of result) {
+      const abs = this.pathForModuleId(id);
+      if (abs) out.push(abs);
+    }
+    return out;
   }
 
   /** Includes changed files and all dependents */
   collectAffected(changed: string[]): string[] {
-    const result = new Set<string>();
+    const resultIds = new Set<string>();
+    const resultAbs = new Set<string>();
+    const changedIds = changed.map((p) => this.moduleIdForPath(p)).filter((v): v is string => !!v);
     let usedNative = false;
     if (this.native?.graphCollectAffected) {
       try {
-        const nativeList = this.native.graphCollectAffected(changed);
+        const nativeList = this.native.graphCollectAffected(changedIds);
         for (const item of nativeList ?? []) {
-          result.add(item);
+          resultIds.add(item);
         }
         usedNative = true;
       } catch {
@@ -249,35 +341,46 @@ export class Graph {
       }
     }
 
-    for (const target of changed) {
-      result.add(target);
+    for (const targetAbs of changed) {
+      resultAbs.add(targetAbs);
+      const id = this.moduleIdForPath(targetAbs);
+      if (id) resultIds.add(id);
     }
 
-    if (!usedNative || result.size === 0) {
+    if (!usedNative || resultIds.size === 0) {
       // Fallback to JS BFS to ensure correctness without native bindings.
-      for (const target of changed) {
-        result.add(target);
-        for (const dep of this.collectDependentsDeep(target)) {
-          result.add(dep);
+      for (const targetAbs of changed) {
+        const targetId = this.moduleIdForPath(targetAbs);
+        if (targetId) resultIds.add(targetId);
+        for (const depAbs of this.collectDependentsDeep(targetAbs)) {
+          resultAbs.add(depAbs);
+          const depId = this.moduleIdForPath(depAbs);
+          if (depId) resultIds.add(depId);
         }
       }
     }
 
-    return Array.from(result);
+    for (const id of resultIds) {
+      const abs = this.pathForModuleId(id);
+      if (abs) resultAbs.add(abs);
+    }
+    return Array.from(resultAbs);
   }
 
   /** Remove file from graph and clean up dependents lists */
   removeFile(absPath: string) {
-    const existed = this.nodes.delete(absPath);
+    const moduleId = this.moduleIdForPath(absPath);
+    if (!moduleId) return;
+    const existed = this.nodes.delete(moduleId);
     if (existed) {
       for (const node of this.nodes.values()) {
-        if (node.deps.includes(absPath)) {
-          node.deps = node.deps.filter((dep) => dep !== absPath);
+        if (node.deps.includes(moduleId)) {
+          node.deps = node.deps.filter((dep) => dep !== moduleId);
         }
       }
       if (this.native) {
         try {
-          this.native.graphRemove(absPath);
+          this.native.graphRemove(moduleId);
           this.scheduleNativeFlush();
         } catch {
           // ignore

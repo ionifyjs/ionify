@@ -16,8 +16,10 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { native, ensureNativeGraph, computeGraphVersion } from "@native/index";
+import type { NativeBuildChunksOptions } from "@native/index";
 import { logWarn, logInfo } from "@cli/utils/logger";
 import { getCacheKey } from "@core/cache";
+import { WS_MODULE_PREFIX, fromWsModuleId, resolveWorkspaceRoot, toWsModuleId } from "@core/module-id";
 import { extractImports, resolveImports } from "@core/resolver";
 import type { BuildPlan, BuildPlanChunk, BuildPlanModule, BuildPlanModuleKind } from "../types/plan";
 
@@ -32,12 +34,39 @@ type NativeChunkArtifact = {
   map_bytes: number;
 };
 
+type CssPipelineProfile = {
+  chunksWithCss: number;
+  cssModulesVisited: number;
+  cssFsFallbackReads: number;
+  cssDedupedModules: number;
+  cssFilesWritten: number;
+  cssInputBytes: number;
+  cssOutputBytes: number;
+  nsOrder: bigint;
+  nsMinify: bigint;
+  nsEmit: bigint;
+};
+
+export type EmittedOutputInfo = {
+  file: string;
+  bytes: number;
+  hash: string;
+};
+
 interface SnapshotNode {
   id: string;
   hash: string | null;
   deps: string[];
   dynamicDeps?: string[];
-  kind?: BuildPlanModuleKind;
+  kind?: string;
+}
+
+function resolveIonifyDir(): string {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && path.isAbsolute(fromEnv)) return fromEnv;
+  const projectRoot = process.env.IONIFY_PROJECT_ROOT;
+  if (projectRoot && path.isAbsolute(projectRoot)) return path.join(projectRoot, ".ionify");
+  return path.join(process.cwd(), ".ionify");
 }
 
 function readGraphSnapshot(): SnapshotNode[] {
@@ -51,7 +80,7 @@ function readGraphSnapshot(): SnapshotNode[] {
           hash: node.hash,
           deps: node.deps || [],
           dynamicDeps: (node as any).dynamicDeps || [],
-          kind: (node as any).kind as BuildPlanModuleKind | undefined,
+          kind: typeof (node as any).kind === "string" ? (node as any).kind : undefined,
         }));
       }
     } catch (err) {
@@ -60,16 +89,18 @@ function readGraphSnapshot(): SnapshotNode[] {
   }
   
   // Fallback to JSON file for backward compatibility
-  const file = path.join(process.cwd(), ".ionify", "graph.json");
+  const file = path.join(resolveIonifyDir(), "graph.json");
   if (!fs.existsSync(file)) return [];
   try {
     const raw = fs.readFileSync(file, "utf8");
     const snapshot = JSON.parse(raw);
-    if (snapshot?.version !== 1 || !snapshot?.nodes) return [];
+    if (snapshot?.version !== 2 || !snapshot?.nodes) return [];
     return Object.entries(snapshot.nodes).map(([id, node]: [string, any]) => ({
       id,
       hash: typeof node.hash === "string" ? node.hash : null,
       deps: Array.isArray(node.deps) ? node.deps : [],
+      dynamicDeps: Array.isArray(node.dynamicDeps) ? node.dynamicDeps : [],
+      kind: typeof node.kind === "string" ? node.kind : undefined,
     }));
   } catch (err) {
     logWarn(`Failed to read graph snapshot: ${String(err)}`);
@@ -81,7 +112,8 @@ const JS_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
 const CSS_EXTENSIONS = new Set([".css"]);
 
 function classifyModuleKind(id: string): BuildPlanModuleKind {
-  const ext = path.extname(id).toLowerCase();
+  const raw = id.startsWith(WS_MODULE_PREFIX) ? id.slice(WS_MODULE_PREFIX.length) : id;
+  const ext = path.posix.extname(raw.replace(/\\/g, "/")).toLowerCase();
   if (CSS_EXTENSIONS.has(ext)) return "css";
   if (JS_EXTENSIONS.has(ext)) return "js";
   return "asset";
@@ -91,6 +123,41 @@ const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
 const toPosix = (p: string) => p.split(path.sep).join("/");
+const isBundleProfileEnabled = () =>
+  process.env.IONIFY_BUNDLE_PROFILE === "1" ||
+  process.env.IONIFY_BUNDLE_PROFILE === "true";
+const nsToMs = (value: bigint) => Number(value) / 1_000_000;
+
+async function writeTextFileIfChanged(filePath: string, contents: string): Promise<boolean> {
+  const nextBytes = Buffer.byteLength(contents, "utf8");
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (stat.isFile() && stat.size === nextBytes) {
+      const existing = await fs.promises.readFile(filePath, "utf8");
+      if (existing === contents) return false;
+    }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, contents, "utf8");
+  return true;
+}
+
+async function writeBufferFileIfChanged(filePath: string, contents: Buffer): Promise<boolean> {
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (stat.isFile() && stat.size === contents.length) {
+      const existing = await fs.promises.readFile(filePath);
+      if (Buffer.compare(existing, contents) === 0) return false;
+    }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, contents);
+  return true;
+}
 
 function minifyCss(input: string): string {
   return input
@@ -134,6 +201,7 @@ function normalizeModules(rawModules: any[]): BuildPlanModule[] {
     if (typeof raw === "string") {
       modules.push({
         id: raw,
+        fsPath: null,
         hash: null,
         kind: classifyModuleKind(raw),
         deps: [],
@@ -144,8 +212,13 @@ function normalizeModules(rawModules: any[]): BuildPlanModule[] {
     if (!raw || typeof raw !== "object") continue;
     const id = typeof raw.id === "string" ? raw.id : null;
     if (!id) continue;
-    const rawKind = typeof raw.kind === "string" ? (raw.kind as BuildPlanModuleKind) : classifyModuleKind(id);
-    const kind: BuildPlanModuleKind = rawKind === "css" || rawKind === "asset" ? rawKind : "js";
+    const rawKind = typeof raw.kind === "string" ? raw.kind : classifyModuleKind(id);
+    const kind: BuildPlanModuleKind =
+      rawKind === "asset"
+        ? "asset"
+        : rawKind.startsWith("css")
+          ? "css"
+          : "js";
     const deps = Array.isArray(raw.deps) ? raw.deps.filter(isNonEmptyString) : [];
     const dynamicSource = Array.isArray(raw.dynamicDeps)
       ? raw.dynamicDeps
@@ -153,12 +226,19 @@ function normalizeModules(rawModules: any[]): BuildPlanModule[] {
         ? (raw as any).dynamic_deps
         : [];
     const dynamicDeps = dynamicSource.filter(isNonEmptyString);
+    const fsPath =
+      typeof (raw as any).fsPath === "string"
+        ? (raw as any).fsPath
+        : typeof (raw as any).fs_path === "string"
+          ? (raw as any).fs_path
+          : null;
     const hash =
       typeof raw.hash === "string" && raw.hash.length
         ? raw.hash
         : null;
     modules.push({
       id,
+      fsPath,
       hash,
       kind,
       deps,
@@ -212,6 +292,7 @@ function normalizePlan(plan: any): BuildPlan {
 }
 
 function fallbackPlan(entries?: string[]): BuildPlan {
+  const workspaceRoot = resolveWorkspaceRoot(null);
   const nodes = readGraphSnapshot();
   logInfo(`[Fallback] modules: ${nodes.length}, entries: ${entries?.length ?? 0}`);
   logInfo(`[Fallback] module IDs: ${nodes.map(n => n.id).join(', ')}`);
@@ -227,17 +308,27 @@ function fallbackPlan(entries?: string[]): BuildPlan {
     finalEntries = [modules[0]];
   }
 
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const planModules: BuildPlanModule[] = modules.map((id) => {
-    const node = nodeMap.get(id);
-    return {
-      id,
-      hash: node?.hash ?? null,
-      kind: node?.kind ?? classifyModuleKind(id),
-      deps: node?.deps ?? [],
-      dynamicDeps: node?.dynamicDeps ?? [],
-    };
-  });
+	  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+	  const planModules: BuildPlanModule[] = modules.map((id) => {
+	    const node = nodeMap.get(id);
+	    const fsPath = id.startsWith(WS_MODULE_PREFIX)
+	      ? fromWsModuleId(id, workspaceRoot)
+	      : path.isAbsolute(id)
+	        ? id
+	        : null;
+	    const rawKind =
+	      typeof node?.kind === "string" && node.kind.length > 0 ? node.kind : classifyModuleKind(id);
+	    const kind: BuildPlanModuleKind =
+	      rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
+	    return {
+	      id,
+	      fsPath,
+	      hash: node?.hash ?? null,
+	      kind,
+	      deps: node?.deps ?? [],
+	      dynamicDeps: node?.dynamicDeps ?? [],
+	    };
+	  });
   const css = planModules.filter((m) => m.kind === "css").map((m) => m.id);
   const assets = planModules.filter((m) => m.kind === "asset").map((m) => m.id);
 
@@ -261,16 +352,37 @@ export async function generateBuildPlan(
   entries?: string[],
   versionInputs?: Parameters<typeof computeGraphVersion>[0]
 ): Promise<BuildPlan> {
+  const workspaceRoot = resolveWorkspaceRoot(null);
+  const entryIds = Array.isArray(entries)
+    ? entries
+        .map((entry) => {
+          if (typeof entry !== "string" || entry.length === 0) return null;
+          if (entry.startsWith(WS_MODULE_PREFIX)) return entry;
+          if (!path.isAbsolute(entry)) return null;
+          return toWsModuleId(entry, workspaceRoot);
+        })
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+  const entryPaths = Array.isArray(entries)
+    ? entries
+        .map((entry) => {
+          if (typeof entry !== "string" || entry.length === 0) return null;
+          if (path.isAbsolute(entry)) return entry;
+          if (entry.startsWith(WS_MODULE_PREFIX)) return fromWsModuleId(entry, workspaceRoot);
+          return null;
+        })
+        .filter((p): p is string => typeof p === "string" && p.length > 0)
+    : [];
   const version = versionInputs ? computeGraphVersion(versionInputs) : undefined;
   logInfo(`Graph version: ${version || 'default'}`);
   
   // Use the same graph database path as Graph class
-  const graphDbPath = path.join(process.cwd(), ".ionify", "graph.db");
-  ensureNativeGraph(graphDbPath, version);
+  const graphDbPath = path.join(resolveIonifyDir(), "graph.db");
+  const nativeGraphReady = ensureNativeGraph(graphDbPath, version);
   
   // Try to load persisted graph first
   let moduleCount = 0;
-  if (native?.graphLoadMap) {
+  if (nativeGraphReady && native?.graphLoadMap) {
     try {
       const persistedGraph = native.graphLoadMap();
       const graphSize = persistedGraph ? Object.keys(persistedGraph).length : 0;
@@ -288,10 +400,10 @@ export async function generateBuildPlan(
   }
 
   // If graph is empty, rebuild from entries via BFS to avoid planner failure.
-  if (moduleCount === 0 && entries?.length && native) {
+  if (nativeGraphReady && moduleCount === 0 && entryPaths.length && native) {
     logWarn(`[Build] Graph is empty — rebuilding dependency graph from entries...`);
 
-    const queue = [...entries];
+    const queue = [...entryPaths];
     const seen = new Set(queue);
 
     while (queue.length) {
@@ -302,11 +414,15 @@ export async function generateBuildPlan(
       let hash = getCacheKey(code);
       let specs: string[] = [];
 
+      let dynamicSpecs: string[] = [];
       if (native.parseModuleIr) {
         try {
           const ir = native.parseModuleIr(file, code);
           hash = ir.hash;
-          specs = ir.dependencies.map((d: any) => d.specifier);
+          const staticDeps = ir.dependencies.filter((d: any) => d.kind !== "Dynamic");
+          const dynamicDeps = ir.dependencies.filter((d: any) => d.kind === "Dynamic");
+          specs = staticDeps.map((d: any) => d.specifier);
+          dynamicSpecs = dynamicDeps.map((d: any) => d.specifier);
         } catch {
           specs = extractImports(code, file);
         }
@@ -315,16 +431,25 @@ export async function generateBuildPlan(
       }
 
       const depsAbs = resolveImports(specs, file);
+      const dynamicAbs = resolveImports(dynamicSpecs, file);
+      const fileId = toWsModuleId(file, workspaceRoot);
+      if (!fileId) continue;
+      const depsIds = depsAbs
+        .map((dep) => toWsModuleId(dep, workspaceRoot))
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const dynamicIds = dynamicAbs
+        .map((dep) => toWsModuleId(dep, workspaceRoot))
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
 
-      // Register in native graph
+      // Register in native graph with dynamic deps populated
       if (typeof (native as any).graphRecord === "function") {
-        (native as any).graphRecord(file, hash, depsAbs, [], "module");
+        (native as any).graphRecord(fileId, hash, depsIds, dynamicIds, classifyModuleKind(fileId));
       } else if (typeof (native as any).recordFile === "function") {
-        (native as any).recordFile(file, hash, depsAbs, [], "module");
+        (native as any).recordFile(fileId, hash, depsIds, dynamicIds, classifyModuleKind(fileId));
       }
 
-      // BFS propagation
-      for (const dep of depsAbs) {
+      // BFS propagation — include dynamic import targets so they are also recorded
+      for (const dep of [...depsAbs, ...dynamicAbs]) {
         if (!seen.has(dep)) {
           seen.add(dep);
           queue.push(dep);
@@ -346,18 +471,18 @@ export async function generateBuildPlan(
     logInfo(`[Build] Dependency graph rebuilt: ${moduleCount} modules`);
   }
   
-  if (native?.plannerPlanBuild) {
+  if (nativeGraphReady && native?.plannerPlanBuild) {
     try {
       const start = Date.now();
-      logInfo(`[Planner] Calling native plannerPlanBuild with ${entries?.length ?? 0} entries`);
-      const plan = native.plannerPlanBuild(entries ?? []);
+      logInfo(`[Planner] Calling native plannerPlanBuild with ${entryIds.length} entries`);
+      const plan = native.plannerPlanBuild(entryIds);
       logInfo(`[Planner] Native plan returned: ${plan.entries.length} entries, ${plan.chunks.length} chunks in ${Date.now() - start}ms`);
       return normalizePlan(plan);
     } catch (err) {
       logWarn(`plannerPlanBuild failed, falling back to JS planner: ${String(err)}`);
     }
   }
-  return fallbackPlan(entries);
+  return fallbackPlan(entryIds);
 }
 
 type ChunkFiles = { js: string[]; css: string[]; assets: string[] };
@@ -366,7 +491,7 @@ export async function writeBuildManifest(
   outputDir: string,
   plan: BuildPlan,
   artifacts: Array<{ id: string; files: ChunkFiles }>,
-) {
+): Promise<EmittedOutputInfo> {
   const filesByChunk = new Map<string, ChunkFiles>();
   for (const artifact of artifacts) {
     filesByChunk.set(artifact.id, artifact.files);
@@ -392,14 +517,20 @@ export async function writeBuildManifest(
   const dir = path.resolve(outputDir);
   await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, "manifest.json");
-  await fs.promises.writeFile(file, JSON.stringify(manifest, null, 2), "utf8");
+  const contents = JSON.stringify(manifest, null, 2);
+  await writeTextFileIfChanged(file, contents);
+  return {
+    file: toPosix(path.relative(dir, file)),
+    bytes: Buffer.byteLength(contents, "utf8"),
+    hash: getCacheKey(contents),
+  };
 }
 
 export async function emitChunks(
   outputDir: string,
   plan: BuildPlan,
   moduleOutputs: Map<string, { code: string; type: "js" | "css" | "asset" }>,
-  opts?: { casRoot?: string; versionHash?: string },
+  opts?: { casRoot?: string; versionHash?: string; nativeOptions?: NativeBuildChunksOptions },
 ): Promise<{ artifacts: Array<{ id: string; files: ChunkFiles }>; stats: Record<string, any> }> {
   if (!native?.buildChunks) {
     logWarn("Native buildChunks binding is not available; using JS fallback emitter.");
@@ -407,7 +538,7 @@ export async function emitChunks(
     return emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts);
   }
   const start = Date.now();
-  const rawArtifacts = native.buildChunks(plan, opts?.casRoot, opts?.versionHash) ?? [];
+  const rawArtifacts = native.buildChunks(plan, opts?.casRoot, opts?.versionHash, opts?.nativeOptions) ?? [];
   logInfo(`[Bundler] buildChunks completed in ${Date.now() - start}ms (native)`);
   return emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts);
 }
@@ -421,6 +552,13 @@ function buildJsFallbackArtifacts(
   for (const chunk of plan.chunks) {
     const jsParts: string[] = [];
     const assets: NativeAssetArtifact[] = [];
+    const idToFsPath = new Map<string, string>();
+    for (const mod of chunk.modules) {
+      const fsPath = mod.fsPath;
+      if (typeof fsPath === "string" && fsPath.length > 0) {
+        idToFsPath.set(mod.id, fsPath);
+      }
+    }
 
     for (const mod of chunk.modules) {
       const output = moduleOutputs.get(mod.id);
@@ -429,14 +567,16 @@ function buildJsFallbackArtifacts(
       }
     }
 
-    for (const assetPath of chunk.assets) {
+    for (const assetId of chunk.assets) {
+      const assetPath = idToFsPath.get(assetId);
+      if (!assetPath) continue;
       try {
         const data = fs.readFileSync(assetPath);
         if (data.length < 4096) {
           // Inline small assets via data URI emitted through JS fallback
           const mime = "application/octet-stream";
           const inline = `data:${mime};base64,${data.toString("base64")}`;
-          jsParts.push(`// ${assetPath}\nexport const __ionify_asset = "${inline}";`);
+          jsParts.push(`// ${assetId}\nexport const __ionify_asset = "${inline}";`);
           continue;
         }
         // Hash raw bytes to avoid UTF-8 coercion issues for binary assets
@@ -512,6 +652,20 @@ export async function emitChunksFromArtifacts(
   await fs.promises.mkdir(assetsDir, { recursive: true });
 
   const enableSourceMaps = process.env.IONIFY_SOURCEMAPS === "true";
+  const cssProfile: CssPipelineProfile | null = isBundleProfileEnabled()
+    ? {
+        chunksWithCss: 0,
+        cssModulesVisited: 0,
+        cssFsFallbackReads: 0,
+        cssDedupedModules: 0,
+        cssFilesWritten: 0,
+        cssInputBytes: 0,
+        cssOutputBytes: 0,
+        nsOrder: 0n,
+        nsMinify: 0n,
+        nsEmit: 0n,
+      }
+    : null;
 
   const grouped = new Map<string, NativeChunkArtifact[]>();
   for (const raw of rawArtifacts) {
@@ -544,6 +698,13 @@ export async function emitChunksFromArtifacts(
     const cssFiles: string[] = [];
     const assetFiles: string[] = [];
     const assetWritten = new Set<string>();
+    const idToFsPath = new Map<string, string>();
+    for (const mod of chunk.modules) {
+      const fsPath = mod.fsPath;
+      if (typeof fsPath === "string" && fsPath.length > 0) {
+        idToFsPath.set(mod.id, fsPath);
+      }
+    }
 
     const copyAssets = async (assets: NativeAssetArtifact[]) => {
       for (const asset of assets) {
@@ -553,11 +714,11 @@ export async function emitChunksFromArtifacts(
         if (assetWritten.has(assetFile)) continue;
         try {
           const data = await fs.promises.readFile(asset.source);
-          await fs.promises.mkdir(path.dirname(assetFile), { recursive: true });
-          await fs.promises.writeFile(assetFile, data);
+          await writeBufferFileIfChanged(assetFile, data);
           const rel = toPosix(path.relative(outputDir, assetFile));
           buildStats[rel] = {
             bytes: data.length,
+            hash: getCacheKey(data),
             emitter: "native",
             type: "asset",
           };
@@ -570,37 +731,58 @@ export async function emitChunksFromArtifacts(
     };
 
     // Build chunk-level CSS (ordered, minified, deduped)
+    const cssOrderStart = cssProfile ? process.hrtime.bigint() : 0n;
     const cssOrder = orderCssModules(chunk);
+    if (cssProfile) {
+      cssProfile.nsOrder += process.hrtime.bigint() - cssOrderStart;
+      if (cssOrder.length) cssProfile.chunksWithCss += 1;
+    }
     let cssFileRel: string | null = null;
     if (cssOrder.length) {
       const seenCss = new Set<string>();
       const cssPieces: string[] = [];
-      for (const cssPath of cssOrder) {
-        let cssSource = moduleOutputs.get(cssPath)?.code;
-        if (!cssSource && fs.existsSync(cssPath)) {
+      for (const cssId of cssOrder) {
+        if (cssProfile) cssProfile.cssModulesVisited += 1;
+        let cssSource = moduleOutputs.get(cssId)?.code;
+        const cssPath = idToFsPath.get(cssId) ?? null;
+        if (!cssSource && cssPath && fs.existsSync(cssPath)) {
           try {
             cssSource = await fs.promises.readFile(cssPath, "utf8");
+            if (cssProfile) cssProfile.cssFsFallbackReads += 1;
           } catch (err) {
-            logWarn(`Failed to read CSS source ${cssPath}: ${String(err)}`);
+            logWarn(`Failed to read CSS source ${cssId}: ${String(err)}`);
           }
         }
         if (!cssSource) continue;
+        if (cssProfile) cssProfile.cssInputBytes += Buffer.byteLength(cssSource, "utf8");
+        const minifyStart = cssProfile ? process.hrtime.bigint() : 0n;
         const minified = minifyCss(cssSource);
+        if (cssProfile) cssProfile.nsMinify += process.hrtime.bigint() - minifyStart;
         if (!minified.length) continue;
         const key = getCacheKey(minified);
-        if (seenCss.has(key)) continue;
+        if (seenCss.has(key)) {
+          if (cssProfile) cssProfile.cssDedupedModules += 1;
+          continue;
+        }
         seenCss.add(key);
         cssPieces.push(minified);
       }
       if (cssPieces.length) {
         const combinedCss = cssPieces.join("\n");
+        if (cssProfile) cssProfile.cssOutputBytes += Buffer.byteLength(combinedCss, "utf8");
         const cssHash = getCacheKey(combinedCss).slice(0, 8);
         const cssFileName = `assets/${chunk.id}.${cssHash}.css`;
         const cssFilePath = path.join(outputDir, cssFileName);
-        await fs.promises.writeFile(cssFilePath, combinedCss, "utf8");
+        const emitStart = cssProfile ? process.hrtime.bigint() : 0n;
+        const cssChanged = await writeTextFileIfChanged(cssFilePath, combinedCss);
+        if (cssProfile) {
+          cssProfile.nsEmit += process.hrtime.bigint() - emitStart;
+          if (cssChanged) cssProfile.cssFilesWritten += 1;
+        }
         cssFileRel = toPosix(path.relative(outputDir, cssFilePath));
         buildStats[cssFileRel] = {
           bytes: Buffer.byteLength(combinedCss),
+          hash: getCacheKey(combinedCss),
           emitter: "native",
           type: "css",
         };
@@ -611,7 +793,7 @@ export async function emitChunksFromArtifacts(
     for (const artifact of artifacts) {
       const nativeFile = path.join(chunkOutDir, artifact.file_name);
       let nativeCode = artifact.code;
-      if (cssFileRel) {
+      if (cssFileRel && !chunk.entry) {
         const absCss = path.join(outputDir, cssFileRel);
         const relCss = toPosix(path.relative(path.dirname(nativeFile), absCss));
         const inject = `(()=>{const url=new URL(${JSON.stringify(
@@ -621,57 +803,27 @@ export async function emitChunksFromArtifacts(
       }
       if (enableSourceMaps && artifact.map) {
         const mapFile = `${nativeFile}.map`;
-        await fs.promises.writeFile(mapFile, artifact.map, "utf8");
+        await writeTextFileIfChanged(mapFile, artifact.map);
         nativeCode = `${nativeCode}\n//# sourceMappingURL=${path.basename(mapFile)}`;
         const relMap = toPosix(path.relative(outputDir, mapFile));
         buildStats[relMap] = {
-          bytes: artifact.map_bytes,
+          bytes: Buffer.byteLength(artifact.map, "utf8"),
+          hash: getCacheKey(artifact.map),
           emitter: "native",
           type: "map",
         };
         jsFiles.push(relMap);
       }
-      await fs.promises.writeFile(nativeFile, nativeCode, "utf8");
+      await writeTextFileIfChanged(nativeFile, nativeCode);
       const relNative = toPosix(path.relative(outputDir, nativeFile));
       buildStats[relNative] = {
-        bytes: artifact.code_bytes,
+        bytes: Buffer.byteLength(nativeCode, "utf8"),
+        hash: getCacheKey(nativeCode),
         emitter: "native",
         type: "js",
       };
       jsFiles.push(relNative);
       await copyAssets(artifact.assets);
-    }
-
-    if (chunk.css.length) {
-      const seenCss = new Set<string>();
-      const cssSources: string[] = [];
-      for (const cssPath of chunk.css) {
-        if (!seenCss.add(cssPath)) continue;
-        const output = moduleOutputs.get(cssPath);
-        if (output?.type === "css") {
-          cssSources.push(output.code);
-        } else if (fs.existsSync(cssPath)) {
-          try {
-            cssSources.push(await fs.promises.readFile(cssPath, "utf8"));
-          } catch (err) {
-            logWarn(`Failed to read CSS source ${cssPath}: ${String(err)}`);
-          }
-        }
-      }
-      if (cssSources.length) {
-        const combinedCss = cssSources.join("\n\n");
-        const cssHash = crypto.createHash("sha256").update(combinedCss).digest("hex").slice(0, 8);
-        const cssFileName = `${chunk.id}.${cssHash}.native.css`;
-        const cssFilePath = path.join(chunkOutDir, cssFileName);
-        await fs.promises.writeFile(cssFilePath, combinedCss, "utf8");
-        const relCss = path.relative(outputDir, cssFilePath);
-        buildStats[relCss] = {
-          bytes: Buffer.byteLength(combinedCss),
-          emitter: "native",
-          type: "css",
-        };
-        cssFiles.push(relCss);
-      }
     }
 
     results.push({
@@ -684,21 +836,48 @@ export async function emitChunksFromArtifacts(
     });
   }
 
+  if (cssProfile) {
+    buildStats.__cssPipelineProfile = {
+      chunksWithCss: cssProfile.chunksWithCss,
+      cssModulesVisited: cssProfile.cssModulesVisited,
+      cssFsFallbackReads: cssProfile.cssFsFallbackReads,
+      cssDedupedModules: cssProfile.cssDedupedModules,
+      cssFilesWritten: cssProfile.cssFilesWritten,
+      cssInputBytes: cssProfile.cssInputBytes,
+      cssOutputBytes: cssProfile.cssOutputBytes,
+      orderMs: nsToMs(cssProfile.nsOrder),
+      minifyMs: nsToMs(cssProfile.nsMinify),
+      emitMs: nsToMs(cssProfile.nsEmit),
+    };
+    console.error(
+      `[BundlerProfile][css] chunks=${cssProfile.chunksWithCss} modules=${cssProfile.cssModulesVisited} fs_reads=${cssProfile.cssFsFallbackReads} deduped=${cssProfile.cssDedupedModules} writes=${cssProfile.cssFilesWritten} order_ms=${nsToMs(
+        cssProfile.nsOrder,
+      ).toFixed(2)} minify_ms=${nsToMs(cssProfile.nsMinify).toFixed(2)} emit_ms=${nsToMs(
+        cssProfile.nsEmit,
+      ).toFixed(2)} bytes_in=${cssProfile.cssInputBytes} bytes_out=${cssProfile.cssOutputBytes}`,
+    );
+  }
+
   return { artifacts: results, stats: buildStats };
 }
 
 export async function writeAssetsManifest(
   outputDir: string,
   artifacts: Array<{ id: string; files: ChunkFiles }>,
-) {
+): Promise<EmittedOutputInfo> {
   const dir = path.resolve(outputDir);
   await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, "manifest.assets.json");
   const payload = {
-    generatedAt: new Date().toISOString(),
     chunks: artifacts,
   };
-  await fs.promises.writeFile(file, JSON.stringify(payload, null, 2), "utf8");
+  const contents = JSON.stringify(payload, null, 2);
+  await writeTextFileIfChanged(file, contents);
+  return {
+    file: toPosix(path.relative(dir, file)),
+    bytes: Buffer.byteLength(contents, "utf8"),
+    hash: getCacheKey(contents),
+  };
 }
 
 

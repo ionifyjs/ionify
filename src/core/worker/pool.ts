@@ -18,6 +18,10 @@ export interface TransformJobResult {
   code: string;
   map?: string;
   type: "js" | "css" | "asset";
+  tokens?: Record<string, string> | null;
+  deps?: string[] | null;
+  urlDeps?: string[] | null;
+  pipelineHash?: string | null;
   error?: string;
 }
 

@@ -24,10 +24,15 @@ export class IonifyWatcher extends EventEmitter {
     super();
   }
 
+  isWatched(filePath: string) {
+    const abs = path.resolve(filePath);
+    return this.watchers.has(abs) || this.polled.has(abs);
+  }
+
   watchFile(filePath: string) {
     // Normalize to absolute path so map lookups are consistent.
     const abs = path.resolve(filePath);
-    if (this.watchers.has(abs)) return;
+    if (this.isWatched(abs)) return;
     if (/(node_modules|\.git|\.ionify|dist)/.test(abs)) return;
     if (!fs.existsSync(abs)) return;
 

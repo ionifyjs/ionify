@@ -19,6 +19,7 @@ export interface BuildPlanModule {
   kind: string;
   deps: string[];
   dynamicDeps: string[];
+  fsPath?: string | null;
 }
 
 export interface BuildPlanChunk {

@@ -10,13 +10,19 @@
 }
 */
 
-import { transform as swcTransform } from "@swc/core";
+import { transform as swcTransform, parseSync, printSync } from "@swc/core";
 import { init, parse } from "es-module-lexer";
 import type { Loader } from "@core/transform";
+import { getCacheKey } from "@core/cache";
 import { resolveImport } from "@core/resolver";
 import { publicPathForFile, MODULE_REQUEST_PREFIX } from "@core/utils/public-path";
+import { getCasArtifactPath } from "@core/utils/cas";
 import { native, tryBundleNodeModule, tryNativeTransform } from "@native/index";
-import { registerDepEntry, computeSubpathFromEntryPath } from "@core/deps/registry";
+import {
+  registerDepEntry,
+  computeSubpathFromEntryPath,
+  isCoreSingletonDepFileName,
+} from "@core/deps/registry";
 import { instrumentReactRefresh } from "@core/refresh/reactRefreshInstrumentation";
 import { isEntryModule } from "@core/refresh/entryDetection";
 import { shouldUseReactRefresh } from "@core/refresh/refreshEligibility";
@@ -26,6 +32,418 @@ import path from "path";
 // Must include ESM/CJS variants from node_modules (e.g. Radix ships .mjs),
 // otherwise bare imports like "react" won't be rewritten and the browser will throw.
 const JS_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+
+function resolveIonifyDir(rootDir: string): string {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && path.isAbsolute(fromEnv)) return fromEnv;
+  return path.join(rootDir, ".ionify");
+}
+
+function resolveDepsRoot(rootDir: string, depsHash: string): string {
+  return path.join(resolveIonifyDir(rootDir), "deps", depsHash);
+}
+
+type FeaturePackIndex = {
+  version: number;
+  depsHash: string;
+  fileNameToChunkGroupId?: Record<string, unknown>;
+};
+
+type VendorPackV2Index = {
+  version: number;
+  depsHash: string;
+  packFileToSharedFile?: Record<string, unknown>;
+  packFileToKey?: Record<string, unknown>;
+  packFileToChunkFiles?: Record<string, unknown>;
+  fileNameToPackFile?: Record<string, unknown>;
+};
+
+let featurePackIndexCache:
+  | {
+      depsRoot: string;
+      depsHash: string;
+      mtimeMs: number;
+      mapping: Map<string, string>;
+    }
+  | null = null;
+
+function getFeaturePackChunkGroupId(rootDir: string, fileName: string): string | null {
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return null;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = path.join(depsRoot, "vendor-pack.feature.index.json");
+  if (!fs.existsSync(indexPath)) return null;
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(indexPath);
+  } catch {
+    return null;
+  }
+
+  const mtimeMs = stat.mtimeMs;
+  if (
+    !featurePackIndexCache ||
+    featurePackIndexCache.depsRoot !== depsRoot ||
+    featurePackIndexCache.depsHash !== depsHash ||
+    featurePackIndexCache.mtimeMs !== mtimeMs
+  ) {
+    try {
+      const raw = fs.readFileSync(indexPath, "utf8");
+      const parsed = JSON.parse(raw) as FeaturePackIndex;
+      const mapping = new Map<string, string>();
+      if (parsed?.version === 1 && parsed?.depsHash === depsHash) {
+        const obj = parsed.fileNameToChunkGroupId;
+        if (obj && typeof obj === "object") {
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof k !== "string" || typeof v !== "string") continue;
+            mapping.set(k, v);
+          }
+        }
+      }
+      featurePackIndexCache = { depsRoot, depsHash, mtimeMs, mapping };
+    } catch {
+      featurePackIndexCache = { depsRoot, depsHash, mtimeMs, mapping: new Map() };
+    }
+  }
+
+  const cg = featurePackIndexCache.mapping.get(fileName) ?? null;
+  if (!cg) return null;
+  // Guardrail: never rewrite to a pack that doesn't exist on disk (restart-safe).
+  const sharedPath = path.join(depsRoot, `shared.${cg}.js`);
+  if (!fs.existsSync(sharedPath)) return null;
+  return cg;
+}
+
+let vendorPackV2IndexCache:
+  | {
+      depsRoot: string;
+      depsHash: string;
+      mtimeMs: number;
+      fileNameToPackFile: Map<string, string>;
+      packFileToSharedFile: Map<string, string>;
+      packFileToKey: Map<string, string>;
+      packFileToChunkFiles: Map<string, string[]>;
+    }
+  | null = null;
+
+function vendorPackV2MemberKey(fileName: string): string {
+  return getCacheKey(`vp2:${fileName}`).slice(0, 12);
+}
+
+let vendorPackV2PackValidationCache:
+  | {
+      depsRoot: string;
+      depsHash: string;
+      byPackFile: Map<string, { mtimeMs: number; size: number; ok: boolean; key: string | null }>;
+    }
+  | null = null;
+
+function validateVendorPackV2Module(
+  depsRoot: string,
+  depsHash: string,
+  packFileName: string,
+  expectedKey: string | null,
+  chunkFiles: string[],
+): boolean {
+  const packPath = path.join(depsRoot, packFileName);
+  if (!fs.existsSync(packPath)) return false;
+  for (const chunkFile of chunkFiles) {
+    if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) return false;
+    if (!fs.existsSync(path.join(depsRoot, chunkFile))) return false;
+  }
+
+  if (
+    !vendorPackV2PackValidationCache ||
+    vendorPackV2PackValidationCache.depsRoot !== depsRoot ||
+    vendorPackV2PackValidationCache.depsHash !== depsHash
+  ) {
+    vendorPackV2PackValidationCache = { depsRoot, depsHash, byPackFile: new Map() };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(packPath);
+  } catch {
+    return false;
+  }
+
+  const cached = vendorPackV2PackValidationCache.byPackFile.get(packFileName);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    if (!cached.ok) return false;
+    if (expectedKey && cached.key !== expectedKey) return false;
+    return true;
+  }
+
+  let ok = false;
+  let actualKey: string | null = null;
+  try {
+    const head = fs.readFileSync(packPath, "utf8").slice(0, 256);
+    const match = head.match(/\/\/\s*ionify:vendor-pack-v2\s+([0-9a-fA-F]{32,})/);
+    actualKey = match?.[1] ? String(match[1]).toLowerCase() : null;
+    ok = !!actualKey && (!expectedKey || actualKey === expectedKey);
+  } catch {
+    ok = false;
+  }
+
+  vendorPackV2PackValidationCache.byPackFile.set(packFileName, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    ok,
+    key: actualKey,
+  });
+
+  return ok;
+}
+
+function getVendorPackV2ImportFileName(rootDir: string, fileName: string): string | null {
+  if (isCoreSingletonDepFileName(fileName)) return null;
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return null;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = path.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!fs.existsSync(indexPath)) return null;
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(indexPath);
+  } catch {
+    return null;
+  }
+
+  const mtimeMs = stat.mtimeMs;
+  if (
+    !vendorPackV2IndexCache ||
+    vendorPackV2IndexCache.depsRoot !== depsRoot ||
+    vendorPackV2IndexCache.depsHash !== depsHash ||
+    vendorPackV2IndexCache.mtimeMs !== mtimeMs
+  ) {
+    try {
+      const raw = fs.readFileSync(indexPath, "utf8");
+      const parsed = JSON.parse(raw) as VendorPackV2Index;
+      const fileNameToPackFile = new Map<string, string>();
+      const packFileToSharedFile = new Map<string, string>();
+      const packFileToKey = new Map<string, string>();
+      const packFileToChunkFiles = new Map<string, string[]>();
+      if (parsed?.version === 1 && parsed?.depsHash === depsHash) {
+        const sharedObj = parsed.packFileToSharedFile;
+        if (sharedObj && typeof sharedObj === "object") {
+          for (const [packFile, sharedFile] of Object.entries(sharedObj)) {
+            if (typeof packFile !== "string" || typeof sharedFile !== "string") continue;
+            if (!packFile.endsWith(".js") || !sharedFile.endsWith(".js")) continue;
+            packFileToSharedFile.set(packFile, sharedFile);
+          }
+        }
+        const keyObj = parsed.packFileToKey;
+        if (keyObj && typeof keyObj === "object") {
+          for (const [packFile, key] of Object.entries(keyObj)) {
+            if (typeof packFile !== "string" || typeof key !== "string") continue;
+            if (!packFile.endsWith(".js")) continue;
+            const cleaned = key.trim().toLowerCase();
+            if (!/^[0-9a-f]{32,}$/.test(cleaned)) continue;
+            packFileToKey.set(packFile, cleaned);
+          }
+        }
+        const chunkObj = parsed.packFileToChunkFiles;
+        if (chunkObj && typeof chunkObj === "object") {
+          for (const [packFile, chunkFiles] of Object.entries(chunkObj)) {
+            if (typeof packFile !== "string" || !Array.isArray(chunkFiles)) continue;
+            if (!packFile.endsWith(".js")) continue;
+            const normalized = chunkFiles
+              .map((v) => (typeof v === "string" ? v : ""))
+              .filter(Boolean)
+              .slice()
+              .sort();
+            const unique: string[] = [];
+            for (const file of normalized) {
+              if (!file.endsWith(".js")) continue;
+              if (unique.length === 0 || unique[unique.length - 1] !== file) unique.push(file);
+            }
+            if (unique.length > 0) packFileToChunkFiles.set(packFile, unique);
+          }
+        }
+
+        const obj = parsed.fileNameToPackFile;
+        if (obj && typeof obj === "object") {
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof k !== "string" || typeof v !== "string") continue;
+            if (!v.endsWith(".js")) continue;
+            fileNameToPackFile.set(k, v);
+          }
+        }
+      }
+      vendorPackV2IndexCache = {
+        depsRoot,
+        depsHash,
+        mtimeMs,
+        fileNameToPackFile,
+        packFileToSharedFile,
+        packFileToKey,
+        packFileToChunkFiles,
+      };
+      vendorPackV2PackValidationCache = null;
+    } catch {
+      vendorPackV2IndexCache = {
+        depsRoot,
+        depsHash,
+        mtimeMs,
+        fileNameToPackFile: new Map(),
+        packFileToSharedFile: new Map(),
+        packFileToKey: new Map(),
+        packFileToChunkFiles: new Map(),
+      };
+      vendorPackV2PackValidationCache = null;
+    }
+  }
+
+  const packFileName = vendorPackV2IndexCache.fileNameToPackFile.get(fileName) ?? null;
+  if (!packFileName) return null;
+
+  const expectedKey = vendorPackV2IndexCache.packFileToKey.get(packFileName) ?? null;
+  const chunkFiles =
+    vendorPackV2IndexCache.packFileToChunkFiles.get(packFileName) ??
+    (() => {
+      const shared = vendorPackV2IndexCache?.packFileToSharedFile.get(packFileName) ?? null;
+      return shared ? [shared] : [];
+    })();
+  if (chunkFiles.length === 0) return null;
+
+  if (!validateVendorPackV2Module(depsRoot, depsHash, packFileName, expectedKey, chunkFiles)) return null;
+  return packFileName;
+}
+
+function extractDepsFileNameFromUrl(url: string): string | null {
+  if (!url.startsWith("/@deps/")) return null;
+  let rest = url.slice("/@deps/".length);
+  const queryIndex = rest.indexOf("?");
+  const hashIndex = rest.indexOf("#");
+  const splitIndex =
+    queryIndex === -1 ? hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
+  if (splitIndex !== -1) {
+    rest = rest.slice(0, splitIndex);
+  }
+  if (!rest.endsWith(".js")) return null;
+  return rest;
+}
+
+function rewriteVendorPackV2Imports(code: string, rootDir: string): string {
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return code;
+  if (!code.includes("/@deps/")) return code;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = path.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!fs.existsSync(indexPath)) return code;
+
+  let ast: any;
+  try {
+    ast = parseSync(code, {
+      syntax: "ecmascript",
+      jsx: true,
+      decorators: true,
+      dynamicImport: true,
+      importAssertions: true,
+    } as any);
+  } catch {
+    return code;
+  }
+
+  let mutated = false;
+  const body: any[] = Array.isArray(ast?.body) ? ast.body : [];
+  for (const item of body) {
+    if (!item || item.type !== "ImportDeclaration") continue;
+    const sourceValue: string | undefined = item.source?.value;
+    if (typeof sourceValue !== "string") continue;
+    const depFileName = extractDepsFileNameFromUrl(sourceValue);
+    if (!depFileName) continue;
+
+    const importFileName = getVendorPackV2ImportFileName(rootDir, depFileName);
+    if (!importFileName) continue;
+
+    const memberKey = vendorPackV2MemberKey(depFileName);
+    const prefix = `__ionify_vp_${memberKey}`;
+    const newSourceValue = `/@deps/${importFileName}`;
+
+    const makeImportedIdent = (value: string, template: any) => ({
+      type: "Identifier",
+      span: template?.span ?? { start: 0, end: 0 },
+      ctxt: 0,
+      value,
+      optional: false,
+    });
+
+    const specifiers: any[] = Array.isArray(item.specifiers) ? item.specifiers : [];
+    if (specifiers.length === 0) {
+      item.source.value = newSourceValue;
+      item.source.raw = JSON.stringify(newSourceValue);
+      mutated = true;
+      continue;
+    }
+
+    const nextSpecs: any[] = [];
+    let ok = true;
+    for (const spec of specifiers) {
+      if (!spec || typeof spec.type !== "string") {
+        ok = false;
+        break;
+      }
+      if (spec.type === "ImportDefaultSpecifier") {
+        const local = spec.local;
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__default`, local),
+          isTypeOnly: false,
+        });
+        continue;
+      }
+      if (spec.type === "ImportNamespaceSpecifier") {
+        const local = spec.local;
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__ns`, local),
+          isTypeOnly: false,
+        });
+        continue;
+      }
+      if (spec.type === "ImportSpecifier") {
+        const local = spec.local;
+        const imported = spec.imported ?? local;
+        const importedName = imported?.value;
+        if (typeof importedName !== "string" || importedName.length === 0) {
+          ok = false;
+          break;
+        }
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__${importedName}`, imported ?? local),
+          isTypeOnly: false,
+        });
+        continue;
+      }
+      ok = false;
+      break;
+    }
+
+    if (!ok) continue;
+    item.specifiers = nextSpecs;
+    item.source.value = newSourceValue;
+    item.source.raw = JSON.stringify(newSourceValue);
+    mutated = true;
+  }
+
+  if (!mutated) return code;
+  try {
+    const printed = printSync(ast, { minify: false } as any);
+    return printed?.code ?? code;
+  } catch {
+    return code;
+  }
+}
 
 function shouldTransform(ext: string, filePath: string): boolean {
   if (!JS_EXTENSIONS.has(ext)) return false;
@@ -99,7 +517,7 @@ function findNearestPackageJson(filePath: string): string | null {
   return null;
 }
 
-function makeDepsProxyForFile(filePath: string, code: string): string | null {
+function makeDepsProxyForFile(filePath: string, code: string, rootDir: string): string | null {
   if (!looksLikeCjsWrapperSource(code)) return null;
   const pkgJsonPath = findNearestPackageJson(filePath);
   if (!pkgJsonPath) return null;
@@ -109,13 +527,58 @@ function makeDepsProxyForFile(filePath: string, code: string): string | null {
       entryPath: filePath,
       packageName: pkg?.name ?? "dep",
       packageVersion: pkg?.version ?? "0.0.0",
-      subpath: null,
+      // Important: include the physical subpath so stable dep ids remain correct across restarts
+      // and match the optimizer's stable id (e.g. react-refresh/runtime must include `__runtime`).
+      subpath: computeSubpathForDep(filePath, pkg),
     }).fileName;
-    return (
-      `import * as __ionify_dep__ from "/@deps/${fileName}";\n` +
-      `export default __ionify_dep__;\n` +
-      `export * from "/@deps/${fileName}";\n`
-    );
+
+    // Phase 6.4: No-duplication policy.
+    // If this dep wrapper is routed through a vendor-pack-v2 module, prefer re-exporting from the pack
+    // instead of `export * from "/@deps/<wrapper>"` (which would force an extra wrapper request).
+    const importFileName = getVendorPackV2ImportFileName(rootDir, fileName);
+    if (importFileName) {
+      const depsHash = process.env.IONIFY_DEPS_HASH;
+      const depsRoot = depsHash ? resolveDepsRoot(rootDir, depsHash) : null;
+      const wrapperPath = depsRoot ? path.join(depsRoot, fileName) : null;
+      let exportNames: string[] = [];
+      if (wrapperPath && fs.existsSync(wrapperPath)) {
+        try {
+          const wrapperCode = fs.readFileSync(wrapperPath, "utf8");
+          const names: string[] = [];
+          for (const match of wrapperCode.matchAll(
+            /export\s+\{\s*__ionify_export_[A-Za-z0-9_$]+\s+as\s+([A-Za-z0-9_$]+)\s*\}\s*;\s*/g,
+          )) {
+            const name = match[1];
+            if (typeof name === "string" && name.length > 0) names.push(name);
+          }
+          exportNames = names
+            .slice()
+            .sort()
+            .filter((v, i, arr) => i === 0 || arr[i - 1] !== v);
+        } catch {
+          exportNames = [];
+        }
+      }
+
+      const memberKey = vendorPackV2MemberKey(fileName);
+      const prefix = `__ionify_vp_${memberKey}`;
+      const packUrl = `/@deps/${importFileName}`;
+      const lines: string[] = [];
+      lines.push(`import { ${prefix}__ns } from "${packUrl}";`);
+      for (const name of exportNames) {
+        lines.push(`import { ${prefix}__${name} as ${name} } from "${packUrl}";`);
+      }
+      lines.push(`export default ${prefix}__ns;`);
+      if (exportNames.length > 0) {
+        lines.push(`export { ${exportNames.join(", ")} };`);
+      }
+      lines.push("");
+      return lines.join("\n");
+    }
+
+    const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+    const url = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+    return `import * as __ionify_dep__ from "${url}";\nexport default __ionify_dep__;\nexport * from "${url}";\n`;
   } catch {
     return null;
   }
@@ -146,26 +609,28 @@ async function swcTranspile(
           dynamicImport: true,
         };
 
-  const result = await swcTransform(code, {
-    filename: filePath,
-    jsc: {
-      parser: swcParser,
-      target: "es2022",
-      transform: reactRefresh
-        ? {
-            react: {
-              development: true,
-              refresh: true,
-              runtime: "automatic",
-            },
-          }
-        : undefined,
-    },
-    sourceMaps: false,
-    module: {
-      type: "es6",
-    },
-  });
+	  const result = await swcTransform(code, {
+	    filename: filePath,
+	    jsc: {
+	      parser: swcParser,
+	      target: "es2022",
+	      transform:
+	        isTsx || isJsx
+	          ? {
+	              react: {
+	                // Canonical base transform: keep transpiled output consistent across dev/build/test.
+	                development: false,
+	                runtime: "automatic",
+	                ...(reactRefresh ? { refresh: true } : {}),
+	              },
+	            }
+	          : undefined,
+	    },
+	    sourceMaps: false,
+	    module: {
+	      type: "es6",
+	    },
+	  });
 
   return result.code ?? code;
 }
@@ -184,12 +649,19 @@ export const jsLoader: Loader = {
   transform: async ({ path: filePath, code, ext, config }) => {
     const isNodeModules = filePath.includes("node_modules");
     const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
+    const rootDir = config?.root ? path.resolve(config.root) : process.cwd();
+    const stateDir =
+      process.env.IONIFY_STATE_DIR && path.isAbsolute(process.env.IONIFY_STATE_DIR)
+        ? process.env.IONIFY_STATE_DIR
+        : null;
+    const versionHash = process.env.IONIFY_CONFIG_HASH || null;
+    const casRoot = stateDir ? path.join(stateDir, "cas") : null;
     
     let output = code;
     
     // Try native bundler for node_modules files (handles CommonJS, tree-shaking, etc.)
     if (isNodeModules) {
-      const depsProxy = makeDepsProxyForFile(filePath, code);
+      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir);
       if (depsProxy) {
         // Avoid serving obvious CJS wrappers to the browser (even if the extension is .mjs).
         // Route through /@deps/ so the CJS optimizer produces valid browser ESM.
@@ -216,7 +688,8 @@ export const jsLoader: Loader = {
         }
       }
     } else {
-      // Regular transpilation for user code (non-node_modules)
+      // Regular transpilation for user code (non-node_modules).
+      // IMPORTANT: base transforms must be consistent across dev/build/test so CAS artifacts are reusable.
       const isDev = process.env.NODE_ENV !== "production";
       const reactRefresh = shouldUseReactRefresh({ ext, code, isDev, config });
       const mode = currentMode();
@@ -224,15 +697,30 @@ export const jsLoader: Loader = {
         filename: filePath,
         jsx: ext === ".jsx" || ext === ".tsx",
         typescript: ext === ".ts" || ext === ".tsx",
-        react_refresh: reactRefresh,
+        react_refresh: false,
       });
-      if (nativeResult) {
-        output = nativeResult.code ?? code;
-      } else {
-        output = await swcTranspile(code, filePath, ext, reactRefresh);
+      const transpiled = nativeResult ? (nativeResult.code ?? code) : await swcTranspile(code, filePath, ext, false);
+
+      // Populate shared CAS with the canonical base transform (pre-define, pre-import-rewrite, no HMR).
+      if (casRoot && versionHash) {
+        try {
+          const baseHash = getCacheKey(code);
+          const baseDir = getCasArtifactPath(casRoot, versionHash, baseHash);
+          const baseFile = path.join(baseDir, "transformed.js");
+          if (!fs.existsSync(baseFile)) {
+            fs.mkdirSync(baseDir, { recursive: true });
+            const tmp = `${baseFile}.tmp-${process.pid}`;
+            fs.writeFileSync(tmp, transpiled, "utf8");
+            fs.renameSync(tmp, baseFile);
+          }
+        } catch {
+          // ignore CAS write errors
+        }
       }
 
-      if (reactRefresh) {
+      output = transpiled;
+
+      if (isDev && reactRefresh) {
         // Use dedicated instrumentation layer (Phase 5.6.2.1)
         const isEntry = isEntryModule(filePath, config ?? undefined);
         
@@ -260,7 +748,7 @@ export const jsLoader: Loader = {
         } else {
           output += `\nif (import.meta.hot) import.meta.hot.accept();\n`;
         }
-      } else {
+      } else if (isDev) {
         output += `\nif (import.meta.hot) {\n  import.meta.hot.accept();\n}\n`;
       }
     }
@@ -273,7 +761,6 @@ export const jsLoader: Loader = {
       console.warn(`[Ionify][rewrite] scanning ${imports.length} import(s) in ${filePath}`);
     }
     if (imports.length) {
-      const rootDir = config?.root ? path.resolve(config.root) : process.cwd();
       let rewritten = "";
       let lastIndex = 0;
       let mutated = false;
@@ -317,18 +804,19 @@ export const jsLoader: Loader = {
             null;
           
           // CJS deps must go through /@deps/ so they become valid browser ESM.
-          if (kind === "PkgCjs" && fsPath) {
-            const pkg = resolvedNative?.pkg;
-            const fileName = registerDepEntry({
-              entryPath: fsPath,
-              packageName: pkg?.name ?? pathPart,
-              packageVersion: pkg?.version ?? "0.0.0",
-              subpath: computeSubpathForDep(fsPath, pkg),
-            }).fileName;
-            const replacement = `/@deps/${fileName}`;
-            if (!mutated) {
-              mutated = true;
-            }
+	          if (kind === "PkgCjs" && fsPath) {
+	            const pkg = resolvedNative?.pkg;
+	            const fileName = registerDepEntry({
+	              entryPath: fsPath,
+	              packageName: pkg?.name ?? pathPart,
+	              packageVersion: pkg?.version ?? "0.0.0",
+	              subpath: computeSubpathForDep(fsPath, pkg),
+	            }).fileName;
+	            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+	            const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+	            if (!mutated) {
+	              mutated = true;
+	            }
             if (record.t === 2) {
               rewritten += output.slice(lastIndex, record.s + 1);
               rewritten += replacement;
@@ -348,19 +836,20 @@ export const jsLoader: Loader = {
           if (kind === "PkgEsm" && fsPath) {
             try {
               const resolvedCode = fs.readFileSync(fsPath, "utf8");
-              if (looksLikeCjsWrapperSource(resolvedCode)) {
-                const pkg = resolvedNative?.pkg;
-                const fileName = registerDepEntry({
-                  entryPath: fsPath,
-                  packageName: pkg?.name ?? pathPart,
-                  packageVersion: pkg?.version ?? "0.0.0",
-                  subpath: computeSubpathForDep(fsPath, pkg),
-                }).fileName;
-                const replacement = `/@deps/${fileName}`;
-                if (!mutated) mutated = true;
-                if (record.t === 2) {
-                  rewritten += output.slice(lastIndex, record.s + 1);
-                  rewritten += replacement;
+	              if (looksLikeCjsWrapperSource(resolvedCode)) {
+	                const pkg = resolvedNative?.pkg;
+	                const fileName = registerDepEntry({
+	                  entryPath: fsPath,
+	                  packageName: pkg?.name ?? pathPart,
+	                  packageVersion: pkg?.version ?? "0.0.0",
+	                  subpath: computeSubpathForDep(fsPath, pkg),
+	                }).fileName;
+	                const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+	                const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+	                if (!mutated) mutated = true;
+	                if (record.t === 2) {
+	                  rewritten += output.slice(lastIndex, record.s + 1);
+	                  rewritten += replacement;
                   rewritten += output[record.e - 1];
                   lastIndex = record.e;
                 } else {
@@ -376,17 +865,18 @@ export const jsLoader: Loader = {
 
             // Route all ESM through optimizer for nested dependency resolution
             const pkg = resolvedNative?.pkg;
-            const fileName = registerDepEntry({
-              entryPath: fsPath,
-              packageName: pkg?.name ?? pathPart,
-              packageVersion: pkg?.version ?? "0.0.0",
-              subpath: computeSubpathForDep(fsPath, pkg),
-            }).fileName;
-            const replacement = `/@deps/${fileName}`;
-            if (!mutated) mutated = true;
-            if (record.t === 2) {
-              rewritten += output.slice(lastIndex, record.s + 1);
-              rewritten += replacement;
+	            const fileName = registerDepEntry({
+	              entryPath: fsPath,
+	              packageName: pkg?.name ?? pathPart,
+	              packageVersion: pkg?.version ?? "0.0.0",
+	              subpath: computeSubpathForDep(fsPath, pkg),
+	            }).fileName;
+	            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+	            const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+	            if (!mutated) mutated = true;
+	            if (record.t === 2) {
+	              rewritten += output.slice(lastIndex, record.s + 1);
+	              rewritten += replacement;
               rewritten += output[record.e - 1];
               lastIndex = record.e;
             } else {
@@ -471,6 +961,14 @@ export const jsLoader: Loader = {
           `[Ionify][rewrite] no rewrites applied for ${filePath}; first imports: ${sample}`,
         );
       }
+    }
+
+    // Phase 6.3: Vendor pack v2 (few-request mode) rewrite.
+    const vendorPacks = (config as any)?.optimizeDeps?.vendorPacks;
+    const vendorPackV2Enabled =
+      vendorPacks === "auto" || (!!vendorPacks && typeof vendorPacks === "object");
+    if (vendorPackV2Enabled) {
+      output = rewriteVendorPackV2Imports(output, rootDir);
     }
 
     return { code: output };

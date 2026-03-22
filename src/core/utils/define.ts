@@ -23,10 +23,15 @@ export function applyDefineReplacements(
 
   let result = code;
   
-  // Sort keys by length (longest first) to avoid partial replacements
+  // Sort keys by length (longest first) to avoid partial replacements.
+  // This ensures import.meta.env.VITE_FOO (longer) is replaced before
+  // the fallback import.meta.env object replacement (shorter).
   const sortedKeys = Object.keys(definitions).sort((a, b) => b.length - a.length);
   
   for (const key of sortedKeys) {
+    // Skip the special import.meta.env object key — handled in the final pass below.
+    if (key === "import.meta.env") continue;
+
     const value = definitions[key];
     
     // Convert value to string representation
@@ -57,6 +62,35 @@ export function applyDefineReplacements(
       // Simple identifier like "__VERSION__"
       result = replaceIdentifier(result, key, replacement);
     }
+  }
+
+  // Final pass: replace any remaining `import.meta.env` references with the
+  // full env object literal. This pass deliberately uses a lookahead that
+  // allows the match even when followed by `.UNKNOWN_KEY` — which is exactly
+  // the pattern that breaks at browser runtime when left unreplaced.
+  //
+  // Why this is safe:
+  //   - All KNOWN `import.meta.env.VITE_FOO` references were already replaced
+  //     in the main loop above (longer key = higher sort priority), so only
+  //     references to UNKNOWN keys remain.
+  //   - Replacing `import.meta.env.VITE_UNKNOWN` with `{...obj...}.VITE_UNKNOWN`
+  //     yields `undefined` at runtime — safe, and unblocks the `||` fallback.
+  //   - Bare `import.meta.env` references (destructuring, spread, assignments)
+  //     are also covered here even if not caught by the main loop.
+  if ("import.meta.env" in definitions) {
+    const envObj = definitions["import.meta.env"];
+    let envObjLiteral: string;
+    if (typeof envObj === "string" && envObj.startsWith("{")) {
+      envObjLiteral = envObj;
+    } else {
+      envObjLiteral = JSON.stringify(envObj);
+    }
+    // Pattern: `import.meta.env` NOT preceded by word/dot, NOT followed by
+    // a word character. The critical difference from replaceMemberExpression is
+    // that `.` is NOT in the negative lookahead — so `import.meta.env.FOO`
+    // (where FOO is unknown) is matched and `import.meta.env` is replaced by
+    // the object literal, yielding `{...}.FOO` → undefined (not TypeError).
+    result = result.replace(/(?<![\w.$])import\.meta\.env(?!\w)/g, envObjLiteral);
   }
   
   return result;
@@ -110,6 +144,14 @@ function escapeRegExp(str: string): string {
 /**
  * Build define config from environment variables
  * Auto-exposes variables starting with VITE_ or IONIFY_ as import.meta.env.*
+ *
+ * Two replacement strategies are used together:
+ *  1. Individual key entries (`import.meta.env.VITE_FOO` → `"bar"`) for known vars.
+ *     These are replaced first (longest key wins) and become simple literals.
+ *  2. The `import.meta.env` object entry — a fallback that replaces any remaining
+ *     `import.meta.env` reference (including `import.meta.env.UNKNOWN_KEY`) with the
+ *     full env object literal. This prevents TypeError at runtime for unknown keys
+ *     and makes the `|| fallback` pattern in user code work correctly.
  */
 export function buildDefineConfig(
   userDefine: DefineConfig | undefined,
@@ -120,21 +162,25 @@ export function buildDefineConfig(
   
   // Normalize envPrefix to array
   const prefixes = Array.isArray(envPrefix) ? envPrefix : [envPrefix];
-  
-  // Auto-expose env vars with matching prefixes
+
+  // Collect the prefix-matched env vars for injecting into both individual keys
+  // and the full import.meta.env object.
+  const prefixedEnvVars: Record<string, string> = {};
   for (const [key, value] of Object.entries(envValues)) {
-    // Check if key starts with any of the prefixes
     const hasPrefix = prefixes.some(prefix => key.startsWith(prefix));
-    
     if (hasPrefix || key === "NODE_ENV" || key === "MODE") {
-      const importMetaKey = `import.meta.env.${key}`;
-      // Only add if not already defined by user
-      if (!(importMetaKey in define)) {
-        define[importMetaKey] = value;
-      }
+      prefixedEnvVars[key] = value;
     }
   }
-  
+
+  // 1. Individual key replacements: import.meta.env.VITE_FOO → "bar"
+  for (const [key, value] of Object.entries(prefixedEnvVars)) {
+    const importMetaKey = `import.meta.env.${key}`;
+    if (!(importMetaKey in define)) {
+      define[importMetaKey] = value;
+    }
+  }
+
   // Always define import.meta.env.DEV and import.meta.env.PROD
   if (!("import.meta.env.DEV" in define)) {
     define["import.meta.env.DEV"] = envValues.MODE !== "production";
@@ -142,6 +188,34 @@ export function buildDefineConfig(
   if (!("import.meta.env.PROD" in define)) {
     define["import.meta.env.PROD"] = envValues.MODE === "production";
   }
-  
+
+  // Compatibility: many ecosystem packages (React, React Router, etc.) still gate behavior on
+  // process.env.NODE_ENV even in ESM builds. Default it so browser builds don't crash.
+  if (!("process.env.NODE_ENV" in define) && typeof envValues.NODE_ENV === "string") {
+    define["process.env.NODE_ENV"] = envValues.NODE_ENV;
+  }
+  if (!("process.env.MODE" in define) && typeof envValues.MODE === "string") {
+    define["process.env.MODE"] = envValues.MODE;
+  }
+
+  // 2. Full import.meta.env object injection (fallback for unknown vars and
+  //    bare-object usage patterns like destructuring / spread).
+  //    Build the same shape Vite uses so project code can rely on it.
+  if (!("import.meta.env" in define)) {
+    const isDev = envValues.MODE !== "production";
+    const envObj: Record<string, unknown> = {
+      MODE: envValues.MODE ?? "development",
+      DEV: isDev,
+      PROD: !isDev,
+      BASE_URL: "/",
+      SSR: false,
+    };
+    // Include all prefix-matched vars so destructuring / unknown-key access works.
+    for (const [key, value] of Object.entries(prefixedEnvVars)) {
+      envObj[key] = value;
+    }
+    define["import.meta.env"] = envObj;
+  }
+
   return define;
 }

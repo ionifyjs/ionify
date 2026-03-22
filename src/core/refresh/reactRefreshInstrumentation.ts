@@ -20,6 +20,8 @@ export interface InstrumentOptions {
   isEntry?: boolean;
 }
 
+export const REACT_REFRESH_RUNTIME_MODULE = "/__ionify_hmr_client.js";
+
 export interface InstrumentResult {
   shouldInstrument: boolean;
   prologue: string;
@@ -228,7 +230,7 @@ export async function instrumentReactRefresh(options: InstrumentOptions): Promis
   const registrations = isEntry ? "" : await buildReactRefreshRegistrations(code, filePath);
 
   const prologue =
-    `import { setupReactRefresh, normalizeRefreshModuleId } from "/__ionify_react_refresh.js";\n` +
+    `import { setupReactRefresh, normalizeRefreshModuleId } from "${REACT_REFRESH_RUNTIME_MODULE}";\n` +
     `const __ionifyRefresh__ = setupReactRefresh(import.meta.hot ?? { accept() {}, dispose() {} }, normalizeRefreshModuleId(import.meta.url));\n`;
 
   const epilogue =
@@ -244,4 +246,3 @@ export async function instrumentReactRefresh(options: InstrumentOptions): Promis
 
   return { shouldInstrument: true, prologue, registrations, epilogue };
 }
-

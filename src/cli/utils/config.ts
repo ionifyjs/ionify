@@ -16,7 +16,7 @@ import path from "path";
 import { pathToFileURL } from "url";
 import { build } from "esbuild";
 import type { IonifyConfig } from "../../types/config";
-import { logError, logInfo } from "./logger.js";
+import { logError, logInfo, logWarn } from "./logger.js";
 import { configureResolverAliases, resetResolverAliasCache } from "@core/resolver";
 
 const CONFIG_BASENAMES = [
@@ -29,6 +29,22 @@ const CONFIG_BASENAMES = [
 
 let cachedConfig: IonifyConfig | null = null;
 let configLoaded = false;
+
+function findProjectRoot(startDir: string): string | null {
+  let dir = path.resolve(startDir);
+  for (let i = 0; i < 15; i++) {
+    const pkg = path.join(dir, "package.json");
+    try {
+      if (fs.existsSync(pkg) && fs.statSync(pkg).isFile()) return dir;
+    } catch {
+      // ignore
+    }
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
 
 // Bundle the config file into a single ESM string that can be `import()`ed.
 async function bundleConfig(entry: string) {
@@ -92,15 +108,18 @@ function findConfigFile(cwd: string): string | null {
   return null;
 }
 
-export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfig | null> {
+export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Promise<IonifyConfig | null> {
   if (configLoaded) return cachedConfig;
   configLoaded = true;
 
   const configPath = findConfigFile(cwd);
   if (!configPath) {
-    // Phase 5.4.2: Even without config file, create default config with root
-    cachedConfig = { root: cwd };
-    configureResolverAliases(undefined, cwd);
+    // No config file: default root should still be deterministic and not depend on
+    // where the user runs the command from inside the project.
+    const projectRoot = findProjectRoot(cwd) ?? cwd;
+    cachedConfig = { root: projectRoot };
+    configureResolverAliases(undefined, projectRoot);
+    delete process.env.IONIFY_RESOLVE_ALIAS;
     return cachedConfig;
   }
 
@@ -114,7 +133,7 @@ export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfi
     
     // If the config is a function (from defineConfig), call it
     if (resolved && typeof resolved === 'function') {
-      resolved = resolved({ mode: process.env.NODE_ENV || 'development' });
+      resolved = resolved({ mode: mode || process.env.MODE || process.env.IONIFY_MODE || process.env.NODE_ENV || 'development' });
     }
     
     if (resolved && typeof (resolved as unknown as Promise<unknown>)?.then === "function") {
@@ -150,12 +169,19 @@ export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfi
       }
       
       cachedConfig = resolved;
-      const baseDir = path.dirname(configPath);
+      const baseDir =
+        typeof resolved.root === "string" && resolved.root.length > 0 ? resolved.root : path.dirname(configPath);
       const aliases = resolved?.resolve?.alias;
       if (aliases && typeof aliases === "object") {
         configureResolverAliases(aliases, baseDir);
+        try {
+          process.env.IONIFY_RESOLVE_ALIAS = JSON.stringify(aliases);
+        } catch {
+          delete process.env.IONIFY_RESOLVE_ALIAS;
+        }
       } else {
         configureResolverAliases(undefined, baseDir);
+        delete process.env.IONIFY_RESOLVE_ALIAS;
       }
       logInfo(`Loaded ionify config from ${path.relative(cwd, configPath)}`);
     } else {
@@ -165,6 +191,7 @@ export async function loadIonifyConfig(cwd = process.cwd()): Promise<IonifyConfi
     logError("Failed to load ionify.config", err);
     cachedConfig = null;
     configureResolverAliases(undefined, cwd);
+    delete process.env.IONIFY_RESOLVE_ALIAS;
   }
   return cachedConfig;
 }
