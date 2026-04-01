@@ -10,6 +10,9 @@ export type FeaturePackPlanEntry = {
 export type FeaturePackObservedEntry = FeaturePackPlanEntry & {
   score: number;
   sizeBytes: number;
+  packageName?: string | null;
+  importerKeys?: string[];
+  entryRootKeys?: string[];
 };
 
 export type FeaturePackReadyState = {
@@ -28,6 +31,18 @@ export type ChunkedPackResultEntry = {
   outPath?: string | null;
 };
 
+export type AutoFeaturePackReadyGroup = {
+  group: string;
+  entries: FeaturePackPlanEntry[];
+};
+
+export type AutoFeaturePackPlan = {
+  group: string | null;
+  seedFileName: string;
+  familyKey: string;
+  entries: FeaturePackPlanEntry[];
+};
+
 function realpathOrSelf(filePath: string): string {
   try {
     return fs.realpathSync(filePath);
@@ -42,6 +57,91 @@ function sortPackEntries<T extends FeaturePackPlanEntry>(entries: readonly T[]):
     if (labelDelta !== 0) return labelDelta;
     return a.fileName.localeCompare(b.fileName);
   });
+}
+
+function dedupeSortedStrings(values: Iterable<string>): string[] {
+  const unique = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string" || value.length === 0) continue;
+    unique.add(value);
+  }
+  return Array.from(unique).sort();
+}
+
+function deriveFamilyKey(
+  packageName: string | null | undefined,
+  packageLabel: string | null | undefined,
+): string {
+  const pkg = String(packageName ?? "").trim();
+  if (pkg.startsWith("@")) {
+    const scope = pkg.split("/", 1)[0];
+    if (scope) return scope;
+  }
+  if (pkg) {
+    const base = pkg.split("/", 1)[0];
+    if (base) return base;
+  }
+
+  const label = String(packageLabel ?? "").trim();
+  if (label.startsWith("@")) {
+    const parts = label.split("/");
+    if (parts[0]) return parts[0];
+  }
+  if (label) {
+    const base = label.split("/", 1)[0];
+    if (base) return base;
+  }
+  return "";
+}
+
+function countIntersection(a: readonly string[] | null | undefined, b: readonly string[] | null | undefined): number {
+  if (!a?.length || !b?.length) return 0;
+  const set = new Set<string>(a);
+  let count = 0;
+  for (const value of b) {
+    if (set.has(value)) count += 1;
+  }
+  return count;
+}
+
+function collectAnchorSignals(
+  candidatesByFileName: Map<string, FeaturePackObservedEntry>,
+  entries: readonly FeaturePackPlanEntry[],
+): { families: string[]; importerKeys: string[]; entryRootKeys: string[] } {
+  const families = new Set<string>();
+  const importerKeys = new Set<string>();
+  const entryRootKeys = new Set<string>();
+  for (const entry of entries) {
+    const candidate = candidatesByFileName.get(entry.fileName);
+    const familyKey = deriveFamilyKey(candidate?.packageName, candidate?.packageLabel ?? entry.packageLabel);
+    if (familyKey) families.add(familyKey);
+    for (const importer of candidate?.importerKeys ?? []) {
+      if (importer) importerKeys.add(importer);
+    }
+    for (const entryRoot of candidate?.entryRootKeys ?? []) {
+      if (entryRoot) entryRootKeys.add(entryRoot);
+    }
+  }
+  return {
+    families: dedupeSortedStrings(families),
+    importerKeys: dedupeSortedStrings(importerKeys),
+    entryRootKeys: dedupeSortedStrings(entryRootKeys),
+  };
+}
+
+function boostedCandidateOrder(
+  candidates: readonly FeaturePackObservedEntry[],
+  getBoost: (candidate: FeaturePackObservedEntry) => number,
+): FeaturePackObservedEntry[] {
+  return candidates
+    .slice()
+    .sort((a, b) => {
+      const scoreDelta = b.score + getBoost(b) - (a.score + getBoost(a));
+      if (scoreDelta !== 0) return scoreDelta;
+      const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
+      if (labelDelta !== 0) return labelDelta;
+      return a.fileName.localeCompare(b.fileName);
+    });
 }
 
 export function reconcilePackEntries<T extends FeaturePackPlanEntry>(
@@ -179,4 +279,151 @@ export function selectStableFeaturePackEntries(
   }
 
   return selected;
+}
+
+type PlanAutoFeaturePackGroupsOptions = {
+  candidates: readonly FeaturePackObservedEntry[];
+  currentReadyGroups?: readonly AutoFeaturePackReadyGroup[] | null;
+  maxMembers: number;
+  maxBytes: number;
+  minMembers: number;
+  maxGroups?: number;
+};
+
+export function planAutoFeaturePackGroups(options: PlanAutoFeaturePackGroupsOptions): AutoFeaturePackPlan[] {
+  const candidatesByFileName = new Map<string, FeaturePackObservedEntry>();
+  for (const candidate of options.candidates) {
+    if (!candidate?.fileName || candidatesByFileName.has(candidate.fileName)) continue;
+    candidatesByFileName.set(candidate.fileName, candidate);
+  }
+
+  const candidates = Array.from(candidatesByFileName.values()).sort((a, b) => {
+    const scoreDelta = b.score - a.score;
+    if (scoreDelta !== 0) return scoreDelta;
+    const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
+    if (labelDelta !== 0) return labelDelta;
+    return a.fileName.localeCompare(b.fileName);
+  });
+  if (candidates.length === 0) return [];
+
+  const minMembers = Math.max(1, Math.floor(options.minMembers));
+  const maxGroups = Math.max(1, Math.floor(options.maxGroups ?? 4));
+  const readyGroups = (options.currentReadyGroups ?? [])
+    .filter((group) => group?.group && Array.isArray(group.entries) && group.entries.length > 0)
+    .slice()
+    .sort((a, b) => a.group.localeCompare(b.group));
+
+  const familyToReadyGroup = new Map<string, string>();
+  const fileToReadyGroup = new Map<string, string>();
+  for (const ready of readyGroups) {
+    for (const entry of ready.entries) {
+      if (!entry?.fileName) continue;
+      fileToReadyGroup.set(entry.fileName, ready.group);
+      const candidate = candidatesByFileName.get(entry.fileName);
+      const familyKey = deriveFamilyKey(candidate?.packageName, candidate?.packageLabel ?? entry.packageLabel);
+      if (familyKey && !familyToReadyGroup.has(familyKey)) {
+        familyToReadyGroup.set(familyKey, ready.group);
+      }
+    }
+  }
+
+  const assigned = new Set<string>();
+  const plans: AutoFeaturePackPlan[] = [];
+
+  for (const ready of readyGroups) {
+    const anchors = collectAnchorSignals(candidatesByFileName, ready.entries);
+    const ordered = boostedCandidateOrder(
+      candidates.filter((candidate) => {
+        if (assigned.has(candidate.fileName)) return false;
+        const reservedGroup = fileToReadyGroup.get(candidate.fileName);
+        if (reservedGroup && reservedGroup !== ready.group) return false;
+        const familyKey = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        const reservedFamilyGroup = familyKey ? familyToReadyGroup.get(familyKey) : null;
+        if (reservedFamilyGroup && reservedFamilyGroup !== ready.group) return false;
+        const sameReadyMember = ready.entries.some((entry) => entry.fileName === candidate.fileName);
+        const sameFamily = !!familyKey && anchors.families.includes(familyKey);
+        const sharedRoots = countIntersection(candidate.entryRootKeys, anchors.entryRootKeys) > 0;
+        const sharedImporters = countIntersection(candidate.importerKeys, anchors.importerKeys) > 0;
+        if (!sameReadyMember && !sameFamily && !sharedRoots && !sharedImporters) return false;
+        return true;
+      }),
+      (candidate) => {
+        let boost = 0;
+        if (ready.entries.some((entry) => entry.fileName === candidate.fileName)) boost += 2000;
+        const familyKey = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (familyKey && anchors.families.includes(familyKey)) boost += 800;
+        boost += Math.min(3, countIntersection(candidate.entryRootKeys, anchors.entryRootKeys)) * 140;
+        boost += Math.min(4, countIntersection(candidate.importerKeys, anchors.importerKeys)) * 50;
+        return boost;
+      },
+    );
+
+    const selected = selectStableFeaturePackEntries({
+      currentReadyEntries: ready.entries,
+      candidates: ordered,
+      maxMembers: options.maxMembers,
+      maxBytes: options.maxBytes,
+    });
+    if (selected.length < minMembers) continue;
+    for (const entry of selected) assigned.add(entry.fileName);
+    const familyKey =
+      anchors.families[0] ||
+      deriveFamilyKey(candidatesByFileName.get(selected[0]?.fileName ?? "")?.packageName, selected[0]?.packageLabel);
+    plans.push({
+      group: ready.group,
+      seedFileName: selected[0]?.fileName ?? "",
+      familyKey,
+      entries: selected,
+    });
+  }
+
+  for (const seed of candidates) {
+    if (plans.length >= maxGroups) break;
+    if (assigned.has(seed.fileName)) continue;
+    const reservedGroup = fileToReadyGroup.get(seed.fileName);
+    if (reservedGroup) continue;
+
+    const seedFamily = deriveFamilyKey(seed.packageName, seed.packageLabel);
+    const reservedFamilyGroup = seedFamily ? familyToReadyGroup.get(seedFamily) : null;
+    if (reservedFamilyGroup) continue;
+
+    const ordered = boostedCandidateOrder(
+      candidates.filter((candidate) => {
+        if (assigned.has(candidate.fileName)) return false;
+        if (fileToReadyGroup.has(candidate.fileName)) return false;
+        const candidateFamily = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (candidateFamily && familyToReadyGroup.has(candidateFamily)) return false;
+        const sharedRoots = countIntersection(candidate.entryRootKeys, seed.entryRootKeys) > 0;
+        const sharedImporters = countIntersection(candidate.importerKeys, seed.importerKeys) > 0;
+        const sameFamily = !!seedFamily && candidateFamily === seedFamily;
+        if (candidate.fileName !== seed.fileName && !sameFamily && !sharedRoots && !sharedImporters) return false;
+        return true;
+      }),
+      (candidate) => {
+        let boost = 0;
+        const candidateFamily = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (candidate.fileName === seed.fileName) boost += 2000;
+        if (seedFamily && candidateFamily === seedFamily) boost += 900;
+        boost += Math.min(3, countIntersection(candidate.entryRootKeys, seed.entryRootKeys)) * 180;
+        boost += Math.min(4, countIntersection(candidate.importerKeys, seed.importerKeys)) * 60;
+        return boost;
+      },
+    );
+
+    const selected = selectStableFeaturePackEntries({
+      candidates: ordered,
+      maxMembers: options.maxMembers,
+      maxBytes: options.maxBytes,
+    });
+    if (selected.length < minMembers) continue;
+    for (const entry of selected) assigned.add(entry.fileName);
+    plans.push({
+      group: null,
+      seedFileName: selected[0]?.fileName ?? seed.fileName,
+      familyKey: seedFamily,
+      entries: selected,
+    });
+  }
+
+  return plans;
 }

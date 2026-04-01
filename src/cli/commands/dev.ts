@@ -34,16 +34,17 @@ import selfsigned from "selfsigned";
 import { logInfo, logError, logWarn } from "@cli/utils/logger";
 import { getCacheKey } from "@core/cache";
 import {
+  planAutoFeaturePackGroups,
   deriveFeaturePackRoutingMap,
   isFeaturePackSlimAligned,
   reconcilePackEntries,
   resolveChunkedPackEntries,
-  selectStableFeaturePackEntries,
 } from "@core/deps/feature-pack-planner";
 import { computeChunkGroupIdFromStableIds } from "@core/deps/vendor-pack-utils";
 import { hashFeaturePackRoutingIndex, hashVendorPackV2RoutingIndex } from "@core/deps/routing-hash";
 import { VendorPackV2IndexManager, vendorPackV2MemberKey } from "@core/deps/vendor-pack-v2";
 import { Graph } from "@core/graph";
+import { RouteHintIndex, normalizeDocumentRouteKey, type RouteHintKind } from "@core/route-hints";
 import { extractImports, resolveImports } from "@core/resolver";
 import { ModuleResolver } from "@core/resolver/module-resolver";
 import { IonifyWatcher } from "@core/watcher";
@@ -629,6 +630,19 @@ function injectModulePreload(html: string, href: string): string {
   return `${tag}\n${html}`;
 }
 
+function buildRouteHintClientKey(req: IncomingMessage): string | null {
+  const forwarded = req.headers["x-forwarded-for"];
+  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const remoteAddress = typeof forwardedValue === "string" && forwardedValue.trim().length > 0
+    ? forwardedValue.split(",")[0]?.trim() ?? ""
+    : req.socket.remoteAddress ?? "";
+  const userAgent = Array.isArray(req.headers["user-agent"])
+    ? req.headers["user-agent"][0] ?? ""
+    : req.headers["user-agent"] ?? "";
+  const key = `${remoteAddress}::${userAgent}`.trim();
+  return key.length > 2 ? key : null;
+}
+
 function pruneDepsCache(ionifyDir: string, depsHash: string) {
   const depsRoot = path.join(ionifyDir, "deps");
   if (!fs.existsSync(depsRoot)) return;
@@ -1160,7 +1174,8 @@ export async function startDevServer({
     groupMap.set(entry.fileName, entry);
     return !existed;
   };
-  const depUsageStatePath = path.join(depsRoot, "deps-usage.v1.json");
+  const depUsageStatePath = path.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsageStatePath = path.join(depsRoot, "deps-usage.v1.json");
   const directDepUsageFileNames = new Set<string>();
   const setDirectDepUsageFileNames = (index: DepUsageIndex | null) => {
     directDepUsageFileNames.clear();
@@ -1171,8 +1186,8 @@ export async function startDevServer({
     }
   };
   const loadDirectDepUsageFileNamesFromDisk = () => {
-    const raw = readJsonFile<any>(depUsageStatePath);
-    if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return;
+    const raw = readJsonFile<any>(depUsageStatePath) ?? readJsonFile<any>(legacyDepUsageStatePath);
+    if (!raw || (raw.version !== 1 && raw.version !== 2) || raw.depsHash !== depsHash) return;
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
     for (const [fileName, value] of Object.entries(deps)) {
       const entryPath = typeof (value as any)?.entryPath === "string" ? (value as any).entryPath : "";
@@ -1387,7 +1402,7 @@ export async function startDevServer({
     writeJsonFile(vendorPackPlanPath, vendorPackPlan);
   }
 
-  type PackEntry = { entryPath: string; fileName: string; packageLabel: string };
+  type PackEntry = { entryPath: string; fileName: string; packageLabel: string; packageName?: string | null };
   const vendorPackMembers = vendorPacksForce && vendorPackPlan ? vendorPackPlan.members : [];
   const vendorPackEntries: PackEntry[] = [];
   const vendorPackFileNameSet = new Set<string>();
@@ -1533,13 +1548,53 @@ export async function startDevServer({
     log: { info: logInfo, warn: logWarn },
   });
   vendorPackV2.loadFromDisk();
+  const routeHintStatePath = path.join(ionifyDir, "route-hints.v1.json");
+  const routeHints = new RouteHintIndex(routeHintStatePath);
+  const isRouteHintPreloadValid = (hintUrl: string, kind: RouteHintKind): boolean => {
+    if (kind === "dep") {
+      if (!hintUrl.startsWith(DEPS_PREFIX) || !hintUrl.endsWith(".js")) return false;
+      return fs.existsSync(path.join(depsRoot, hintUrl.slice(DEPS_PREFIX.length)));
+    }
+
+    const parsedHint = url.parse(hintUrl);
+    const hintPath = parsedHint.pathname || "";
+    if (!hintPath || hintPath === "/" || hintPath.startsWith(DEPS_PREFIX) || hintPath.startsWith("/__ionify")) {
+      return false;
+    }
+    const resolved = decodePublicPath(rootDir, hintPath, {
+      allowedRoots,
+      workspaceRoot: workspace.workspaceRoot,
+    });
+    if (!resolved || !fs.existsSync(resolved)) return false;
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) return false;
+    const ext = path.extname(resolved).toLowerCase();
+    return ext !== ".html" && !isAssetExt(ext);
+  };
+  const expandRouteHintPreloadUrls = (hintUrl: string, kind: RouteHintKind): string[] => {
+    if (kind !== "dep" || !hintUrl.startsWith(DEPS_PREFIX)) return [hintUrl];
+    const fileName = hintUrl.slice(DEPS_PREFIX.length);
+    const expanded = new Set<string>();
+    const chunkFiles =
+      vendorPackV2.packFileToChunkFiles.get(fileName) ??
+      (() => {
+        const shared = vendorPackV2.packFileToSharedFile.get(fileName) ?? null;
+        return shared ? [shared] : [];
+      })();
+    for (const chunkFile of chunkFiles) {
+      if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
+      if (!fs.existsSync(path.join(depsRoot, chunkFile))) continue;
+      expanded.add(`${DEPS_PREFIX}${chunkFile}`);
+    }
+    expanded.add(hintUrl);
+    return Array.from(expanded);
+  };
   const minimumRequestPositivePackMembers = depsSharedChunksEnabled ? 4 : 3;
   const hasPositivePackRequestSavings = (memberCount: number): boolean => {
     return Number.isFinite(memberCount) && memberCount >= minimumRequestPositivePackMembers;
   };
 
-  type FeaturePackGroup = "auto";
-  const FEATURE_PACK_GROUPS = ["auto"] as const;
+  type FeaturePackGroup = string;
   type VendorFeaturePackStatus = "planned" | "building" | "ready" | "failed";
   type VendorFeaturePackState = {
     version: 1;
@@ -1604,6 +1659,28 @@ export async function startDevServer({
     path.join(depsRoot, `vendor-pack.feature.${group}.json`);
   const featurePackSlimStatePathFor = (group: FeaturePackGroup) =>
     path.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
+  const discoverFeaturePackGroupsFromDisk = (): FeaturePackGroup[] => {
+    if (!featurePacksEnabled) return [];
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(depsRoot);
+    } catch {
+      return [];
+    }
+    const groups = new Set<string>();
+    for (const name of names) {
+      const slimMatch = /^vendor-pack\.feature\.([a-z0-9_-]+)\.slim\.json$/i.exec(name);
+      if (slimMatch?.[1]) {
+        groups.add(slimMatch[1]);
+        continue;
+      }
+      const baseMatch = /^vendor-pack\.feature\.([a-z0-9_-]+)\.json$/i.exec(name);
+      if (baseMatch?.[1]) {
+        groups.add(baseMatch[1]);
+      }
+    }
+    return Array.from(groups).sort();
+  };
 
   const featurePackFileNameToChunkGroup = new Map<string, string>();
   const loadFeaturePackIndex = () => {
@@ -1912,7 +1989,7 @@ export async function startDevServer({
 
   // Phase 5.5: usage scan (project -> dep export usage) + usage-driven pack slimming.
   type DepUsageDisk = {
-    version: 1;
+    version: 2;
     depsHash: string;
     updatedAt: string;
     deps: Record<
@@ -1924,20 +2001,23 @@ export async function startDevServer({
         usedExports: string[];
         hasNamespace: boolean;
         hasExportStar: boolean;
+        importerKeys?: string[];
+        entryRootKeys?: string[];
       }
     >;
   };
   const loadDepUsageIndexFromDisk = (): DepUsageIndex | null => {
-    const raw = readJsonFile<DepUsageDisk>(depUsageStatePath);
-    if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return null;
+    const raw = readJsonFile<any>(depUsageStatePath) ?? readJsonFile<any>(legacyDepUsageStatePath);
+    if (!raw || (raw.version !== 1 && raw.version !== 2) || raw.depsHash !== depsHash) return null;
     const out: DepUsageIndex = new Map();
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
     for (const [fileName, value] of Object.entries(deps)) {
-      if (!value || typeof value !== "object") continue;
-      if (typeof value.entryPath !== "string" || typeof value.packageName !== "string") continue;
-      if (typeof value.packageVersion !== "string" || !Array.isArray(value.usedExports)) continue;
-      const usedExports = value.usedExports
-        .map((v) => (typeof v === "string" ? v : ""))
+      const item = value as Record<string, unknown> | null;
+      if (!item || typeof item !== "object") continue;
+      if (typeof item.entryPath !== "string" || typeof item.packageName !== "string") continue;
+      if (typeof item.packageVersion !== "string" || !Array.isArray(item.usedExports)) continue;
+      const usedExports = item.usedExports
+        .map((v: unknown) => (typeof v === "string" ? v : ""))
         .filter(Boolean)
         .slice()
         .sort();
@@ -1947,12 +2027,18 @@ export async function startDevServer({
       }
       out.set(fileName, {
         fileName,
-        entryPath: value.entryPath,
-        packageName: value.packageName,
-        packageVersion: value.packageVersion,
+        entryPath: item.entryPath,
+        packageName: item.packageName,
+        packageVersion: item.packageVersion,
         usedExports: unique,
-        hasNamespace: value.hasNamespace === true,
-        hasExportStar: value.hasExportStar === true,
+        hasNamespace: item.hasNamespace === true,
+        hasExportStar: item.hasExportStar === true,
+        importerKeys: Array.isArray(item.importerKeys)
+          ? item.importerKeys.map((v: unknown) => (typeof v === "string" ? v : "")).filter(Boolean)
+          : [],
+        entryRootKeys: Array.isArray(item.entryRootKeys)
+          ? item.entryRootKeys.map((v: unknown) => (typeof v === "string" ? v : "")).filter(Boolean)
+          : [],
       });
     }
     return out;
@@ -1970,10 +2056,12 @@ export async function startDevServer({
         usedExports: item.usedExports.slice(),
         hasNamespace: item.hasNamespace,
         hasExportStar: item.hasExportStar,
+        importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.slice() : [],
+        entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : [],
       };
     }
     writeJsonFile(depUsageStatePath, {
-      version: 1,
+      version: 2,
       depsHash,
       updatedAt: new Date().toISOString(),
       deps: depsObj,
@@ -1982,12 +2070,16 @@ export async function startDevServer({
 
   const computeUsageIndexHash = (index: DepUsageIndex): string => {
     const keys = Array.from(index.keys()).sort();
-    let body = `deps-usage:v1:${depsHash}\n`;
+    let body = `deps-usage:v2:${depsHash}\n`;
     for (const fileName of keys) {
       const item = index.get(fileName);
       if (!item) continue;
       const used = Array.isArray(item.usedExports) ? item.usedExports.slice().sort() : [];
-      body += `${fileName}|ns=${item.hasNamespace ? 1 : 0}|star=${item.hasExportStar ? 1 : 0}|used=${used.join(",")}\n`;
+      const importers = Array.isArray(item.importerKeys) ? item.importerKeys.slice().sort() : [];
+      const entryRoots = Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice().sort() : [];
+      body +=
+        `${fileName}|ns=${item.hasNamespace ? 1 : 0}|star=${item.hasExportStar ? 1 : 0}` +
+        `|used=${used.join(",")}|importers=${importers.join(",")}|entryRoots=${entryRoots.join(",")}\n`;
     }
     return getCacheKey(body);
   };
@@ -2448,14 +2540,39 @@ export async function startDevServer({
     }
   };
 
-  const featureObserved = new Map<FeaturePackGroup, Map<string, PackEntry>>([["auto", new Map()]]);
+  const featureObserved = new Map<string, PackEntry>();
   const featureState = new Map<FeaturePackGroup, VendorFeaturePackState>();
   const featureLastReadyState = new Map<FeaturePackGroup, VendorFeaturePackState>();
   const featureSlimState = new Map<FeaturePackGroup, VendorFeaturePackSlimState>();
   const featureLastReadySlimState = new Map<FeaturePackGroup, VendorFeaturePackSlimState>();
   let featurePackActivationPending = false;
+  const listFeaturePackGroups = (): FeaturePackGroup[] => {
+    const groups = new Set<string>();
+    for (const map of [featureState, featureLastReadyState, featureSlimState, featureLastReadySlimState]) {
+      for (const group of map.keys()) groups.add(group);
+    }
+    return Array.from(groups).sort();
+  };
+  const featureStateFilesFor = (group: FeaturePackGroup): string[] => [
+    featurePackStatePathFor(group),
+    featurePackSlimStatePathFor(group),
+  ];
+  const removeFeatureGroupState = (group: FeaturePackGroup) => {
+    featureState.delete(group);
+    featureLastReadyState.delete(group);
+    featureSlimState.delete(group);
+    featureLastReadySlimState.delete(group);
+    pruneFeaturePackRoutes(group);
+    for (const filePath of featureStateFilesFor(group)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // ignore cleanup failures; stale metadata is best-effort
+      }
+    }
+  };
   if (featurePacksEnabled) {
-    for (const group of FEATURE_PACK_GROUPS) {
+    for (const group of discoverFeaturePackGroupsFromDisk()) {
       const raw = readJsonFile<VendorFeaturePackState>(featurePackStatePathFor(group));
       if (
         !raw ||
@@ -2487,13 +2604,18 @@ export async function startDevServer({
       }
       for (const entry of Array.isArray(raw.entries) ? raw.entries : []) {
         if (!entry?.fileName || !entry?.entryPath) continue;
-        featureObserved.get(group)?.set(entry.fileName, entry);
+        upsertObservedPackEntry(featureObserved, {
+          entryPath: entry.entryPath,
+          fileName: entry.fileName,
+          packageLabel: entry.packageLabel,
+          packageName: (entry as any)?.packageName ?? null,
+        });
       }
     }
   }
 
   if (featurePacksEnabled && packSlimmingEnabled) {
-    for (const group of FEATURE_PACK_GROUPS) {
+    for (const group of discoverFeaturePackGroupsFromDisk()) {
       const raw = readJsonFile<VendorFeaturePackSlimState>(featurePackSlimStatePathFor(group));
       if (
         !raw ||
@@ -2565,7 +2687,7 @@ export async function startDevServer({
     vendorPackV2.prunePackPrefix("vendor-pack.feature.");
 
     const activeBaseStates: VendorFeaturePackState[] = [];
-    for (const group of FEATURE_PACK_GROUPS) {
+    for (const group of listFeaturePackGroups()) {
       const baseState = featureLastReadyState.get(group);
       if (
         !baseState ||
@@ -2636,14 +2758,25 @@ export async function startDevServer({
     writeJsonFile(featurePackSlimStatePathFor(group), stamped);
   };
 
-  const planFeaturePackEntries = (group: FeaturePackGroup): PackEntry[] => {
-    const entries = reconcilePackEntries(
-      Array.from(featureObserved.get(group)?.values() ?? []),
-      canonicalFileNameForEntry,
-    );
-    const candidates: Array<PackEntry & { score: number; sizeBytes: number }> = [];
+  const featureEntriesSignature = (entries: readonly Pick<PackEntry, "fileName">[]): string =>
+    entries
+      .map((entry) => entry.fileName)
+      .filter(Boolean)
+      .slice()
+      .sort()
+      .join("|");
+  const featurePackSourceExts = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const plannedFeatureGroups = new Map<FeaturePackGroup, string>();
+  const computeFeatureCandidates = (): Array<
+    PackEntry & { score: number; sizeBytes: number; importerKeys: string[]; entryRootKeys: string[] }
+  > => {
+    const entries = reconcilePackEntries(Array.from(featureObserved.values()), canonicalFileNameForEntry);
+    const candidates: Array<
+      PackEntry & { score: number; sizeBytes: number; importerKeys: string[]; entryRootKeys: string[] }
+    > = [];
     for (const entry of entries) {
       if (!entry.entryPath || !fs.existsSync(entry.entryPath)) continue;
+      if (!featurePackSourceExts.has(path.extname(entry.entryPath).toLowerCase())) continue;
       if (vendorDepFileNames.has(entry.fileName) || isCoreSingletonDepFileName(entry.fileName)) continue;
       const manifestEntry = depsManifestIndex.get(entry.fileName);
       const requestCount = getKnownDepRequestCount(entry.fileName);
@@ -2658,30 +2791,126 @@ export async function startDevServer({
         4 * Math.min(moduleCount / 40, 6) +
         2 * Math.min(edgeCount / 80, 6) +
         4 * Math.log2(sizeKb);
-      candidates.push({ ...entry, score, sizeBytes });
+      const usage = depUsageIndex?.get(entry.fileName);
+      candidates.push({
+        ...entry,
+        score,
+        sizeBytes,
+        importerKeys: Array.isArray(usage?.importerKeys) ? usage!.importerKeys.slice() : [],
+        entryRootKeys: Array.isArray(usage?.entryRootKeys) ? usage!.entryRootKeys.slice() : [],
+      });
     }
-
-    candidates.sort((a, b) => {
-      const scoreDelta = b.score - a.score;
-      if (scoreDelta !== 0) return scoreDelta;
-      const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
-      if (labelDelta !== 0) return labelDelta;
-      return a.fileName.localeCompare(b.fileName);
-    });
-
-    const currentReadyEntries = featureLastReadyState.get(group)?.entries ?? [];
-    const selected = selectStableFeaturePackEntries({
-      currentReadyEntries,
+    return candidates;
+  };
+  const computeFeatureAutoMaxGroups = (candidateCount: number): number => {
+    if (candidateCount <= 0) return 1;
+    const targetMembersPerGroup = Math.max(12, Math.min(vendorPackMaxMembers, 18));
+    return Math.max(4, Math.min(8, Math.ceil(candidateCount / targetMembersPerGroup)));
+  };
+  const assignFeaturePlanGroup = (
+    usedGroups: Set<string>,
+    plan: { group: string | null; familyKey: string; seedFileName: string; entries: PackEntry[] },
+  ): FeaturePackGroup => {
+    if (plan.group) {
+      usedGroups.add(plan.group);
+      return plan.group;
+    }
+    const candidates = [
+      `auto-${getCacheKey(`feature-plan:${plan.familyKey}:${plan.seedFileName}`).slice(0, 8)}`,
+      `auto-${getCacheKey(`feature-plan:${featureEntriesSignature(plan.entries)}`).slice(0, 8)}`,
+    ];
+    for (const candidate of candidates) {
+      if (!usedGroups.has(candidate)) {
+        usedGroups.add(candidate);
+        return candidate;
+      }
+    }
+    let index = 1;
+    while (usedGroups.has(`auto-${index}`)) index += 1;
+    const fallback = `auto-${index}`;
+    usedGroups.add(fallback);
+    return fallback;
+  };
+  const computePlannedFeatureGroups = (): Map<FeaturePackGroup, PackEntry[]> => {
+    const candidates = computeFeatureCandidates();
+    const usedGroups = new Set<string>(listFeaturePackGroups());
+    const plans = planAutoFeaturePackGroups({
       candidates,
+      currentReadyGroups: Array.from(featureLastReadyState.entries()).map(([group, state]) => ({
+        group,
+        entries: Array.isArray(state.entries) ? state.entries : [],
+      })),
       maxMembers: vendorPackMaxMembers,
       maxBytes: vendorPackMaxBytes,
+      minMembers: minimumRequestPositivePackMembers,
+      maxGroups: computeFeatureAutoMaxGroups(candidates.length),
     });
-
-    if (!hasPositivePackRequestSavings(selected.length)) {
-      return [];
+    const next = new Map<FeaturePackGroup, PackEntry[]>();
+    for (const plan of plans) {
+      const group = assignFeaturePlanGroup(usedGroups, plan);
+      next.set(group, plan.entries.map((entry) => ({ ...entry })));
+    }
+    return next;
+  };
+  const replanFeaturePacks = () => {
+    if (!featurePacksEnabled) return;
+    const nextPlans = computePlannedFeatureGroups();
+    plannedFeatureGroups.clear();
+    for (const [group, entries] of nextPlans) {
+      plannedFeatureGroups.set(group, featureEntriesSignature(entries));
     }
 
-    return selected;
+    for (const group of listFeaturePackGroups()) {
+      if (nextPlans.has(group)) continue;
+      if (featureLastReadyState.has(group) || featureLastReadySlimState.has(group)) {
+        removeFeatureGroupState(group);
+        featurePackActivationPending = true;
+        continue;
+      }
+      removeFeatureGroupState(group);
+    }
+
+    for (const [group, entries] of nextPlans) {
+      const plannedSignature = featureEntriesSignature(entries);
+      const currentState = featureState.get(group);
+      const currentSignature = currentState ? featureEntriesSignature(currentState.entries) : "";
+      const hasRoutedMembers =
+        featureLastReadyState.get(group)?.status === "ready" &&
+        entries.every((entry) => featurePackFileNameToChunkGroup.get(entry.fileName));
+      if (currentState?.status === "ready" && currentSignature === plannedSignature && hasRoutedMembers) {
+        continue;
+      }
+
+      updateFeatureState(group, {
+        version: 1,
+        depsHash,
+        group,
+        updatedAt: new Date().toISOString(),
+        status: "planned",
+        chunkGroupId: null,
+        sharedFileName: null,
+        entries,
+      });
+      if (packSlimmingEnabled) {
+        updateFeatureSlimState(group, {
+          version: 1,
+          depsHash,
+          group,
+          updatedAt: new Date().toISOString(),
+          status: "planned",
+          chunkGroupId: null,
+          sharedFileName: null,
+          entries: entries.map((entry) => ({
+            baseFileName: entry.fileName,
+            wrapperFileName: entry.fileName,
+            entryPath: entry.entryPath,
+            packageLabel: entry.packageLabel,
+            usedExports: [],
+          })),
+        });
+      }
+      scheduleFeatureBuild(group);
+    }
   };
 
   const featureBuildQueue: FeaturePackGroup[] = [];
@@ -2916,17 +3145,18 @@ export async function startDevServer({
     featureBuildRunning = true;
     void (async () => {
       try {
-        while (featureBuildQueue.length) {
-          const next = featureBuildQueue.shift();
-          if (!next) continue;
+          while (featureBuildQueue.length) {
+            const next = featureBuildQueue.shift();
+            if (!next) continue;
 
-          // Avoid building while the server is actively serving requests.
+            // Avoid building while the server is actively serving requests.
           while (activeRequests > 0) {
             await new Promise((r) => setTimeout(r, 250));
           }
 
-          const entries = planFeaturePackEntries(next);
-          if (entries.length === 0) continue;
+          const state = featureState.get(next);
+          const entries = Array.isArray(state?.entries) ? state!.entries.slice() : [];
+          if (!hasPositivePackRequestSavings(entries.length)) continue;
 
           const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
           const sharedFileName = `shared.${chunkGroupId}.js`;
@@ -2990,6 +3220,10 @@ export async function startDevServer({
             // Refresh manifest index after optimization (for future caps/signals).
             refreshDepsManifestIndex();
 
+            for (const entry of resolvedEntries) {
+              upsertObservedPackEntry(featureObserved, entry);
+            }
+
             updateFeatureState(next, {
               version: 1,
               depsHash,
@@ -3027,6 +3261,8 @@ export async function startDevServer({
 
   const scheduleFeatureBuild = (group: FeaturePackGroup) => {
     if (!featurePacksEnabled) return;
+    const plannedSignature = plannedFeatureGroups.get(group);
+    if (!plannedSignature) return;
     const existing = featureBuildTimers.get(group);
     if (existing) clearTimeout(existing);
     featureBuildTimers.set(
@@ -3049,50 +3285,48 @@ export async function startDevServer({
     if (!fs.existsSync(entry.entryPath)) return;
     const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
     if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) return; // core stays core
-    const group: FeaturePackGroup = "auto";
-    const groupMap = featureObserved.get(group);
-    if (!groupMap) return;
-    const wasNew = upsertObservedPackEntry(groupMap, {
+    const wasNew = upsertObservedPackEntry(featureObserved, {
       entryPath: entry.entryPath,
       fileName,
       packageLabel: entry.packageLabel,
+      packageName: entry.packageName,
     });
+    if (!wasNew && featurePackFileNameToChunkGroup.has(fileName)) return;
+    replanFeaturePacks();
+  };
 
-    const state = featureState.get(group);
-    const shouldRebuild = !state || state.status !== "ready" || !featurePackFileNameToChunkGroup.has(fileName);
-    if (wasNew || shouldRebuild) {
-      updateFeatureState(group, {
-        version: 1,
-        depsHash,
-        group,
-        updatedAt: new Date().toISOString(),
-        status: "planned",
-        chunkGroupId: null,
-        sharedFileName: null,
-        entries: planFeaturePackEntries(group),
+  const seedFeatureCandidatesFromUsageIndex = (index: DepUsageIndex | null) => {
+    if (!featurePacksEnabled || !index) return;
+    let changed = false;
+    for (const usage of index.values()) {
+      if (!usage?.fileName || !usage?.entryPath || !usage?.packageName) continue;
+      if (!fs.existsSync(usage.entryPath)) continue;
+      const fileName = canonicalFileNameForEntry(usage.fileName, usage.entryPath);
+      if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) continue;
+      const subpath =
+        typeof getDepEntry(fileName)?.subpath === "string"
+          ? getDepEntry(fileName)?.subpath ?? null
+          : computeSubpathFromEntryPath(usage.entryPath);
+      const wasNew = upsertObservedPackEntry(featureObserved, {
+        entryPath: usage.entryPath,
+        fileName,
+        packageLabel: formatDepLabel(usage.packageName, subpath),
+        packageName: usage.packageName,
       });
-      if (packSlimmingEnabled) {
-        const plannedEntries = planFeaturePackEntries(group);
-        updateFeatureSlimState(group, {
-          version: 1,
-          depsHash,
-          group,
-          updatedAt: new Date().toISOString(),
-          status: "planned",
-          chunkGroupId: null,
-          sharedFileName: null,
-          entries: plannedEntries.map((e) => ({
-            baseFileName: e.fileName,
-            wrapperFileName: e.fileName,
-            entryPath: e.entryPath,
-            packageLabel: e.packageLabel,
-            usedExports: [],
-          })),
-        });
+      if (wasNew || !featurePackFileNameToChunkGroup.has(fileName)) {
+        changed = true;
       }
-      scheduleFeatureBuild(group);
+    }
+    if (changed) {
+      replanFeaturePacks();
     }
   };
+
+  if (featurePacksEnabled && depUsageIndex) {
+    seedFeatureCandidatesFromUsageIndex(depUsageIndex);
+  } else if (featurePacksEnabled && featureObserved.size > 0) {
+    replanFeaturePacks();
+  }
 
   const pkgNameFromLabel = (label: string | undefined): string | null => {
     if (!label) return null;
@@ -3538,6 +3772,8 @@ export async function startDevServer({
   // Built-in + user loaders (from ionify.config) are wired into the transform engine here.
   await applyRegisteredLoaders(transformer, userConfig);
   const hmr = new HMRServer();
+  const peerDepWarningSet = new Set<string>();
+  const peerDepWarningLog: string[] = [];
 
   /**
    * P19R: Broadcast peer dependency version mismatch warnings to all connected
@@ -3546,10 +3782,18 @@ export async function startDevServer({
    */
   function broadcastPeerDepWarnings(warnings: string[] | undefined | null): void {
     if (!warnings || warnings.length === 0) return;
+    const freshWarnings: string[] = [];
     for (const msg of warnings) {
+      if (typeof msg !== "string" || msg.length === 0 || peerDepWarningSet.has(msg)) continue;
+      peerDepWarningSet.add(msg);
+      peerDepWarningLog.push(msg);
+      freshWarnings.push(msg);
+    }
+    if (freshWarnings.length === 0) return;
+    for (const msg of freshWarnings) {
       logWarn(`[deps] ${msg}`);
     }
-    hmr.broadcastEvent("peer-dep-warning", { warnings });
+    hmr.broadcastEvent("peer-dep-warning", { warnings: peerDepWarningLog.slice() }, { retain: true });
   }
 
   const envFromFiles = loadIonifyEnv(envMode, rootDir);
@@ -3757,6 +4001,12 @@ export async function startDevServer({
         // leave as undecoded path to avoid crashing on malformed encodings
       }
       const q = parsed.query || {};
+      const requestUrlWithQuery = `${reqPath}${parsed.search ?? ""}`;
+      const routeHintClientKey = buildRouteHintClientKey(req);
+      const routeHintReferer = Array.isArray(req.headers.referer)
+        ? req.headers.referer[0] ?? null
+        : req.headers.referer ?? null;
+      const routeHintObservedAtMs = Date.now();
 
       // --- HMR endpoints ---
       if (reqPath === "/__ionify_hmr") {
@@ -3921,6 +4171,16 @@ export async function startDevServer({
           entryFromRegistry?.packageName
             ? formatDepLabel(entryFromRegistry.packageName, entryFromRegistry.subpath)
             : entryFromManifest?.packageLabel ?? fileName;
+        const observeRouteHintDepRequest = () => {
+          if (!fileName.endsWith(".js")) return;
+          routeHints.noteRequest({
+            url: requestUrlWithQuery,
+            kind: "dep",
+            refererUrl: routeHintReferer,
+            clientKey: routeHintClientKey,
+            observedAtMs: routeHintObservedAtMs,
+          });
+        };
 
         // Phase 6.1: On restarts, modules can be served from CAS without re-running rewrite hooks,
         // so the in-memory dep registry may be empty. Recover entryPath deterministically using
@@ -3957,6 +4217,7 @@ export async function startDevServer({
 		          !entryFromManifest ||
 		          entryFromManifest.outputVersion === DEPS_OPTIMIZER_OUTPUT_VERSION;
 		        if (fs.existsSync(depsFilePath) && manifestVersionCurrent) {
+              observeRouteHintDepRequest();
 		          // Phase 6.4: No-duplication policy across packs.
 		          // Shared chunks may import other `/@deps/*` wrappers as externals. If those wrappers are already
 		          // covered by a vendor-pack-v2 route (e.g. `react` covered by `core`), rewrite the shared chunk
@@ -4058,6 +4319,7 @@ export async function startDevServer({
             const stat = fs.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+            observeRouteHintDepRequest();
             const variant = selectPrecompressedVariant(req, depsFilePath);
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
@@ -4119,6 +4381,7 @@ export async function startDevServer({
             const stat = fs.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+            observeRouteHintDepRequest();
             const variant = selectPrecompressedVariant(req, depsFilePath);
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
@@ -4177,6 +4440,7 @@ export async function startDevServer({
           const stat = fs.statSync(resolvedOutPath);
           const optimizedSize = stat.size;
           const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+          observeRouteHintDepRequest();
           const variant = selectPrecompressedVariant(req, resolvedOutPath);
           if (variant) {
             sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
@@ -4646,70 +4910,111 @@ export async function startDevServer({
       const withDefine = applyDefineReplacements(transformedCode, defineConfig);
       const envApplied = applyEnvPlaceholders(withDefine, ext);
 
-			      // HTML: inject HMR client
-					      if (path.extname(effectiveFsPath) === ".html") {
-                  activateFeaturePacksOnNextDocument();
+      // HTML: inject HMR client
+      if (path.extname(effectiveFsPath) === ".html") {
+        activateFeaturePacksOnNextDocument();
 
-					        let htmlOut = envApplied;
+        const documentRouteKey = normalizeDocumentRouteKey(reqPath);
+        routeHints.beginDocument({
+          routeKey: documentRouteKey,
+          documentUrl: requestUrlWithQuery,
+          clientKey: routeHintClientKey,
+          observedAtMs: routeHintObservedAtMs,
+        });
 
-					        // Phase 6.4: No-duplication policy.
-					        // Prefer pack/routing preloads when vendor deps are already covered by a v2 pack route.
-					        // This avoids redundant requests/bytes (e.g. legacy vendor.<depsHash>.js importing per-entry wrappers
-					        // that are already routed to vendor-pack v2 modules).
-					        const preloadDepsUrl = (url: string) => {
-					          if (!url.startsWith(DEPS_PREFIX)) return;
-					          const fileName = url.slice(DEPS_PREFIX.length);
-					          if (!fileName.endsWith(".js")) return;
-					          if (!fs.existsSync(path.join(depsRoot, fileName))) return;
-					          htmlOut = injectModulePreload(htmlOut, url);
-					        };
+        let htmlOut = envApplied;
+        const preloadUrl = (hintUrl: string) => {
+          if (!hintUrl) return;
+          htmlOut = injectModulePreload(htmlOut, hintUrl);
+        };
 
-						        const packPreloads = new Set<string>();
-						        const packFilesForVendorDeps = new Set<string>();
-						        if (vendorPacksEnabled) {
-						          for (const dep of vendorDeps) {
-						            const packFileName = vendorPackV2.fileNameToPackFile.get(dep.fileName) ?? null;
-						            if (!packFileName) continue;
-						            if (!fs.existsSync(path.join(depsRoot, packFileName))) continue;
-						            packFilesForVendorDeps.add(packFileName);
-						            const chunkFiles =
-						              vendorPackV2.packFileToChunkFiles.get(packFileName) ??
-						              (() => {
-						                const shared = vendorPackV2.packFileToSharedFile.get(packFileName) ?? null;
-						                return shared ? [shared] : [];
-						              })();
-						            if (chunkFiles.length === 0) continue;
-						            for (const chunkFile of chunkFiles) {
-						              if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
-						              if (!fs.existsSync(path.join(depsRoot, chunkFile))) continue;
-						              packPreloads.add(`${DEPS_PREFIX}${chunkFile}`);
-						            }
-						          }
-						        }
+        const routeAwarePreloads = new Set<string>();
+        for (const hint of routeHints.selectPreloads(documentRouteKey, {
+          maxEntries: 24,
+          maxDepEntries: 8,
+          maxSourceEntries: 16,
+          minRequestCount: 1,
+        })) {
+          if (!isRouteHintPreloadValid(hint.url, hint.kind)) continue;
+          for (const preloadUrlCandidate of expandRouteHintPreloadUrls(hint.url, hint.kind)) {
+            routeAwarePreloads.add(preloadUrlCandidate);
+          }
+        }
 
-						        if (packFilesForVendorDeps.size > 0) {
-						          for (const url of Array.from(packPreloads).sort()) preloadDepsUrl(url);
-						          for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
-						            preloadDepsUrl(`${DEPS_PREFIX}${packFileName}`);
-						          }
-						        } else {
-					          ensureVendorPackFile();
-					          const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
-					          if (sharedPreload) htmlOut = injectModulePreload(htmlOut, sharedPreload);
-					          if (vendorPackUrl) htmlOut = injectModulePreload(htmlOut, vendorPackUrl);
-					        }
+        if (routeAwarePreloads.size > 0) {
+          for (const routePreload of routeAwarePreloads) {
+            preloadUrl(routePreload);
+          }
+          logInfo(
+            `[phase22] Route hints ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}`,
+          );
+        } else {
+          // Phase 6.4: No-duplication policy.
+          // Prefer pack/routing preloads when vendor deps are already covered by a v2 pack route.
+          // This avoids redundant requests/bytes (e.g. legacy vendor.<depsHash>.js importing per-entry wrappers
+          // that are already routed to vendor-pack v2 modules).
+          const preloadDepsUrl = (hintUrl: string) => {
+            if (!hintUrl.startsWith(DEPS_PREFIX)) return;
+            const fileName = hintUrl.slice(DEPS_PREFIX.length);
+            if (!fileName.endsWith(".js")) return;
+            if (!fs.existsSync(path.join(depsRoot, fileName))) return;
+            preloadUrl(hintUrl);
+          };
 
-					        const injected = injectHMRClient(htmlOut);
-					        const htmlBuffer = Buffer.from(injected, "utf8");
-					        const etag = weakEtagFromContent(`html-${configHash}`, htmlBuffer);
-					        sendBuffer(req, res, 200, "text/html; charset=utf-8", htmlBuffer, {
-					          etag,
-				          cacheControl: "no-cache",
-				        });
-	      } else {
-	        const finalBuffer = Buffer.from(envApplied);
-	        const etag = weakEtagFromContent(`mod-${configHash}`, finalBuffer);
-	        sendBuffer(req, res, 200, guessContentType(effectiveFsPath), finalBuffer, {
+          const packPreloads = new Set<string>();
+          const packFilesForVendorDeps = new Set<string>();
+          if (vendorPacksEnabled) {
+            for (const dep of vendorDeps) {
+              const packFileName = vendorPackV2.fileNameToPackFile.get(dep.fileName) ?? null;
+              if (!packFileName) continue;
+              if (!fs.existsSync(path.join(depsRoot, packFileName))) continue;
+              packFilesForVendorDeps.add(packFileName);
+              const chunkFiles =
+                vendorPackV2.packFileToChunkFiles.get(packFileName) ??
+                (() => {
+                  const shared = vendorPackV2.packFileToSharedFile.get(packFileName) ?? null;
+                  return shared ? [shared] : [];
+                })();
+              if (chunkFiles.length === 0) continue;
+              for (const chunkFile of chunkFiles) {
+                if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
+                if (!fs.existsSync(path.join(depsRoot, chunkFile))) continue;
+                packPreloads.add(`${DEPS_PREFIX}${chunkFile}`);
+              }
+            }
+          }
+
+          if (packFilesForVendorDeps.size > 0) {
+            for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
+            for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
+              preloadDepsUrl(`${DEPS_PREFIX}${packFileName}`);
+            }
+          } else {
+            ensureVendorPackFile();
+            const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
+            if (sharedPreload) preloadUrl(sharedPreload);
+            if (vendorPackUrl) preloadUrl(vendorPackUrl);
+          }
+        }
+
+        const injected = injectHMRClient(htmlOut);
+        const htmlBuffer = Buffer.from(injected, "utf8");
+        const etag = weakEtagFromContent(`html-${configHash}`, htmlBuffer);
+        sendBuffer(req, res, 200, "text/html; charset=utf-8", htmlBuffer, {
+          etag,
+          cacheControl: "no-cache",
+        });
+      } else {
+        routeHints.noteRequest({
+          url: requestUrlWithQuery,
+          kind: "source",
+          refererUrl: routeHintReferer,
+          clientKey: routeHintClientKey,
+          observedAtMs: routeHintObservedAtMs,
+        });
+        const finalBuffer = Buffer.from(envApplied);
+        const etag = weakEtagFromContent(`mod-${configHash}`, finalBuffer);
+        sendBuffer(req, res, 200, guessContentType(effectiveFsPath), finalBuffer, {
           etag,
           cacheControl: "no-cache",
         });
@@ -4855,6 +5160,7 @@ export async function startDevServer({
       logError("Error closing HMR:", err);
     }
 
+    routeHints.flush();
     graph.flush();
     
     for (const { event, handler } of signalHandlers) {
@@ -5173,7 +5479,11 @@ export async function startDevServer({
 	          if (process.env.DEBUG_DEPS) {
 	            logInfo(`[deps] Usage scan completed in ${elapsed}ms.`);
 	          }
-	          logInfo(`Usage scan complete (safe: ${safe}, skipped: ${skipped})`);
+          logInfo(`Usage scan complete (safe: ${safe}, skipped: ${skipped})`);
+
+          if (featurePacksEnabled) {
+            seedFeatureCandidatesFromUsageIndex(index);
+          }
 
           // If manual packs are already ready (warm restart), schedule slimming immediately.
           if (manualPacksEnabled) {
@@ -5187,7 +5497,7 @@ export async function startDevServer({
           }
 
           if (featurePacksEnabled) {
-            for (const group of FEATURE_PACK_GROUPS) {
+            for (const group of listFeaturePackGroups()) {
               const state = featureState.get(group);
               if (state?.status === "ready") scheduleFeatureSlimBuild(group);
             }

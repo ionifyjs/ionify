@@ -12,8 +12,8 @@ function warnAboutClassRefresh(stableModuleId) {
   if (typeof document !== "undefined") {
     import("/__ionify_overlay.js")
       .then((mod) => {
-        if (typeof mod?.showWarningOverlay === "function") {
-          mod.showWarningOverlay(warning, stableModuleId);
+        if (typeof mod?.showWarningToast === "function") {
+          mod.showWarningToast(warning, stableModuleId);
         }
       })
       .catch(() => {});

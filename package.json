@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "Ionify — Instant, Intelligent, Unified Build Engine",
   "bin": {
@@ -48,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/khaledM-salem/Ionify.git"
+    "url": "https://github.com/ionifyjs/ionify.git"
   },
   "bugs": {
-    "url": "https://github.com/khaledM-salem/Ionify/issues"
+    "url": "https://github.com/ionifyjs/ionify/issues"
   },
   "homepage": "https://ionify.cloud",
   "dependencies": {

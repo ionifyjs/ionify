@@ -46,6 +46,7 @@ import {
   buildCanonicalDepFileNameIndex,
   canonicalizeDepFileName,
   canonicalizeDepUsageIndex,
+  scanDepEntryPaths,
   scanDepUsage,
   type DepUsageIndex,
 } from "@core/deps/usage";
@@ -388,8 +389,12 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
  *     their hash is recomputed from artifact bytes, and the artifact is written into CAS.
  *   - Internal transitive modules (node_modules files that are NOT direct entries) are
  *     pruned from the plan since the entry artifact already bundles them.
+ *   - Shared dep artifacts (shared.sc*.js, vendor-pack.*.js) imported by the rerouted
+ *     wrappers are pre-warmed into Tier-1 CAS and injected as synthetic plan modules.
+ *     This prevents the Rust bundler from fully re-parsing 10-50MB of pre-built shared
+ *     chunks on every build — they are hydrated from CAS instead (CAS-First principle).
  *
- * Returns `{ rerouted, pruned }` counts.
+ * Returns `{ rerouted, pruned, sharedPrewarmed }` counts.
  */
 export function rerouteDepsArtifacts(options: {
   plan: BuildPlan;
@@ -397,13 +402,13 @@ export function rerouteDepsArtifacts(options: {
   casRoot: string;
   configHash: string;
   workspaceRoot: string;
-}): { rerouted: number; pruned: number } {
+}): { rerouted: number; pruned: number; sharedPrewarmed: number } {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
 
   // Build reverse map: canonical entry path → { outFile, artifactPath }
   const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string }>();
   const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0 };
+  if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
   try {
     const raw = fs.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
@@ -422,13 +427,17 @@ export function rerouteDepsArtifacts(options: {
       depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath });
     }
   } catch {
-    return { rerouted: 0, pruned: 0 };
+    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
   }
 
-  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0 };
+  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
 
   let rerouted = 0;
   let pruned = 0;
+
+  // Track rerouted module paths per chunk so we can scan their /@deps/ imports.
+  // key: chunkId → set of rerouted artifact paths
+  const reroutedPathsByChunk = new Map<string, Set<string>>();
 
   for (const chunk of plan.chunks) {
     const keptModules: typeof chunk.modules = [];
@@ -474,6 +483,14 @@ export function rerouteDepsArtifacts(options: {
         mod.hash = artifactHash;
         keptModules.push(mod);
         rerouted += 1;
+
+        // Record artifact path for shared-file discovery below.
+        let chunkSet = reroutedPathsByChunk.get(chunk.id);
+        if (!chunkSet) {
+          chunkSet = new Set();
+          reroutedPathsByChunk.set(chunk.id, chunkSet);
+        }
+        chunkSet.add(artifact.artifactPath);
       } else {
         pruned += 1;
       }
@@ -481,7 +498,98 @@ export function rerouteDepsArtifacts(options: {
     chunk.modules = keptModules;
   }
 
-  return { rerouted, pruned };
+  // ── Phase U extension: Pre-warm shared dep artifacts into Tier-1 CAS ──
+  //
+  // Dep wrapper files (e.g. axios@1.12.2_xxx.js) import shared runtime chunks
+  // (e.g. /@deps/shared.sc4685e79e.js) which can be 3-12MB each. These shared
+  // files are not in the plan's module list, so the Rust bundler re-parses and
+  // applies full SWC transforms to them on every build — even though they are
+  // stable, pre-built artifacts that never change between builds.
+  //
+  // Fix: scan each rerouted wrapper for /@deps/<file>.js imports, resolve them
+  // to depsRoot, pre-warm them into Tier-1 CAS, and add them as synthetic plan
+  // modules. The Rust bundler will then CAS-hydrate them (no re-parse).
+  //
+  // This is architecturally aligned: same CAS-First mechanism used for wrappers,
+  // no new abstractions, no bridges, no hacks.
+  const DEPS_URL_PREFIX = "/@deps/";
+  // Regex to extract /@deps/<filename>.js references from wrapper file contents.
+  const depsImportRe = /["'](\/@deps\/([^"'?]+\.js))["']/g;
+
+  // Track which shared files have already been added to avoid duplicate plan modules.
+  const prewarnedSharedPaths = new Set<string>();
+  let sharedPrewarmed = 0;
+
+  for (const [chunkId, artifactPaths] of reroutedPathsByChunk.entries()) {
+    const chunk = plan.chunks.find(c => c.id === chunkId);
+    if (!chunk) continue;
+
+    // Collect all /@deps/ references from this chunk's rerouted wrappers.
+    const sharedFilesToAdd: Array<{ absPath: string; hash: string }> = [];
+
+    for (const wrapperPath of artifactPaths) {
+      let wrapperCode: string;
+      try {
+        wrapperCode = fs.readFileSync(wrapperPath, "utf8");
+      } catch {
+        continue;
+      }
+
+      // Scan for /@deps/<file>.js references (imports of shared/vendor-pack files).
+      depsImportRe.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = depsImportRe.exec(wrapperCode)) !== null) {
+        const relFile = match[2]; // e.g. "shared.sc4685e79e.js"
+        // Only pre-warm files that live in depsRoot (shared.*.js, vendor-pack.*.js, etc.)
+        // and skip individual dep wrappers (they are already in the plan via rerouting).
+        // Heuristic: shared/pack files don't look like "package@version_hash.js".
+        const isSharedOrPack =
+          relFile.startsWith("shared.") ||
+          relFile.startsWith("vendor-pack.") ||
+          relFile.startsWith("vendor-core.");
+        if (!isSharedOrPack) continue;
+
+        const absPath = path.join(depsRoot, relFile);
+        if (prewarnedSharedPaths.has(absPath)) continue;
+        if (!fs.existsSync(absPath)) continue;
+
+        // Read, hash, and CAS-write the shared artifact.
+        let sharedCode: string;
+        try {
+          sharedCode = fs.readFileSync(absPath, "utf8");
+        } catch {
+          continue;
+        }
+        const sharedHash = getCacheKey(sharedCode);
+        const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
+        const sharedCasFile = path.join(sharedCasDir, "transformed.js");
+        if (!fs.existsSync(sharedCasFile)) {
+          fs.mkdirSync(sharedCasDir, { recursive: true });
+          fs.writeFileSync(sharedCasFile, sharedCode, "utf8");
+        }
+
+        prewarnedSharedPaths.add(absPath);
+        sharedFilesToAdd.push({ absPath, hash: sharedHash });
+        sharedPrewarmed += 1;
+      }
+    }
+
+    // Inject synthetic plan modules for the discovered shared artifacts.
+    // They use the absolute path as both id and fsPath so the Rust bundler's
+    // modules_by_path map resolves them to CAS correctly.
+    for (const { absPath, hash } of sharedFilesToAdd) {
+      chunk.modules.push({
+        id: absPath,
+        fsPath: absPath,
+        hash,
+        kind: "js",
+        deps: [],
+        dynamicDeps: [],
+      });
+    }
+  }
+
+  return { rerouted, pruned, sharedPrewarmed };
 }
 
 function computeBuildSlimmingSavedPercent(depsRoot: string, depsHash: string): number | null {
@@ -578,7 +686,7 @@ function computeBuildVendorPackRequestsSavedPercent(depsRoot: string, depsHash: 
   }
 }
 
-type PackEntry = { entryPath: string; fileName: string; packageLabel: string };
+type PackEntry = { entryPath: string; fileName: string; packageLabel: string; packageName?: string | null };
 
 type VendorManualPackStatus = "planned" | "building" | "ready" | "failed";
 type VendorManualPackState = {
@@ -616,7 +724,7 @@ type VendorManualPackSlimState = {
 };
 
 type DepUsageDisk = {
-  version: 1;
+  version: 2;
   depsHash: string;
   updatedAt: string;
   deps: Record<
@@ -628,6 +736,8 @@ type DepUsageDisk = {
       usedExports: string[];
       hasNamespace: boolean;
       hasExportStar: boolean;
+      importerKeys?: string[];
+      entryRootKeys?: string[];
     }
   >;
 };
@@ -759,17 +869,19 @@ function formatDepLabel(pkgName: string, subpath: string | null): string {
 }
 
 function loadDepUsageIndexFromDisk(depsRoot: string, depsHash: string): DepUsageIndex | null {
-  const depUsagePath = path.join(depsRoot, "deps-usage.v1.json");
-  const raw = readJsonFile<DepUsageDisk>(depUsagePath);
-  if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return null;
+  const depUsagePath = path.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsagePath = path.join(depsRoot, "deps-usage.v1.json");
+  const raw = readJsonFile<any>(depUsagePath) ?? readJsonFile<any>(legacyDepUsagePath);
+  if (!raw || (raw.version !== 1 && raw.version !== 2) || raw.depsHash !== depsHash) return null;
   const out: DepUsageIndex = new Map();
   const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
   for (const [fileName, value] of Object.entries(deps)) {
-    if (!value || typeof value !== "object") continue;
-    if (typeof value.entryPath !== "string" || typeof value.packageName !== "string") continue;
-    if (typeof value.packageVersion !== "string" || !Array.isArray(value.usedExports)) continue;
-    const usedExports = value.usedExports
-      .map((v) => (typeof v === "string" ? v : ""))
+    const item = value as Record<string, unknown> | null;
+    if (!item || typeof item !== "object") continue;
+    if (typeof item.entryPath !== "string" || typeof item.packageName !== "string") continue;
+    if (typeof item.packageVersion !== "string" || !Array.isArray(item.usedExports)) continue;
+    const usedExports = item.usedExports
+      .map((v: unknown) => (typeof v === "string" ? v : ""))
       .filter(Boolean)
       .slice()
       .sort();
@@ -779,19 +891,25 @@ function loadDepUsageIndexFromDisk(depsRoot: string, depsHash: string): DepUsage
     }
     out.set(fileName, {
       fileName,
-      entryPath: value.entryPath,
-      packageName: value.packageName,
-      packageVersion: value.packageVersion,
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
       usedExports: unique,
-      hasNamespace: value.hasNamespace === true,
-      hasExportStar: value.hasExportStar === true,
+      hasNamespace: item.hasNamespace === true,
+      hasExportStar: item.hasExportStar === true,
+      importerKeys: Array.isArray(item.importerKeys)
+        ? item.importerKeys.map((v: unknown) => (typeof v === "string" ? v : "")).filter(Boolean)
+        : [],
+      entryRootKeys: Array.isArray(item.entryRootKeys)
+        ? item.entryRootKeys.map((v: unknown) => (typeof v === "string" ? v : "")).filter(Boolean)
+        : [],
     });
   }
   return out;
 }
 
 function saveDepUsageIndexToDisk(depsRoot: string, depsHash: string, index: DepUsageIndex): void {
-  const depUsagePath = path.join(depsRoot, "deps-usage.v1.json");
+  const depUsagePath = path.join(depsRoot, "deps-usage.v2.json");
   const depsObj: DepUsageDisk["deps"] = {};
   const keys = Array.from(index.keys()).sort();
   for (const fileName of keys) {
@@ -804,10 +922,12 @@ function saveDepUsageIndexToDisk(depsRoot: string, depsHash: string, index: DepU
       usedExports: item.usedExports.slice(),
       hasNamespace: item.hasNamespace,
       hasExportStar: item.hasExportStar,
+      importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.slice() : [],
+      entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : [],
     };
   }
   writeJsonFile(depUsagePath, {
-    version: 1,
+    version: 2,
     depsHash,
     updatedAt: new Date().toISOString(),
     deps: depsObj,
@@ -1667,6 +1787,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       depsHash,
       depsRoot,
       config,
+      resolvedEntries: entries,
+      allowedRoots: workspace.allowedRoots,
     });
 
 	    const depsManifestIndex = loadDepsManifestIndex(depsRoot);
@@ -1723,7 +1845,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // ── T3: Route node_modules deps through deps optimizer artifacts ──
     {
       const casRoot = path.join(ionifyDir, "cas");
-      const { rerouted, pruned } = rerouteDepsArtifacts({
+      const { rerouted, pruned, sharedPrewarmed } = rerouteDepsArtifacts({
         plan,
         depsRoot,
         casRoot,
@@ -1732,7 +1854,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       });
       if (rerouted > 0 || pruned > 0) {
         logInfo(
-          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted, ${pruned} internal modules pruned`,
+          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted, ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
         );
       }
     }
@@ -2343,8 +2465,10 @@ async function ensureOptimizedDeps(options: {
   depsHash: string;
   depsRoot: string;
   config: any;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
 }) {
-  const { rootDir, ionifyDir, depsHash, depsRoot, config } = options;
+  const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots } = options;
   if (!native?.resolveModule) return;
   if (!native?.optimizeDependenciesChunked && !native?.optimizeDependenciesBatch && !native?.optimizeDependency) {
     return;
@@ -2385,6 +2509,19 @@ async function ensureOptimizedDeps(options: {
       entryPaths.add(fsPath);
     } catch {
       // ignore
+    }
+  }
+
+  const usageEntries = await resolveUsageEntries(rootDir, resolvedEntries);
+  if (usageEntries.length > 0) {
+    try {
+      const scannedEntryPaths = await scanDepEntryPaths({ rootDir, entries: usageEntries, allowedRoots });
+      for (const entry of scannedEntryPaths) {
+        if (optimizeExclude?.has(entry.packageName)) continue;
+        entryPaths.add(entry.entryPath);
+      }
+    } catch {
+      // Fall back to package.json/include/vendor discovery only.
     }
   }
 

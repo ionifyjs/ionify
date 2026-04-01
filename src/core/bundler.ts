@@ -405,6 +405,13 @@ export async function generateBuildPlan(
 
     const queue = [...entryPaths];
     const seen = new Set(queue);
+    const graphSeedNodes: Array<{
+      id: string;
+      hash: string;
+      deps: string[];
+      dynamicDeps: string[];
+      kind: BuildPlanModuleKind;
+    }> = [];
 
     while (queue.length) {
       const file = queue.shift()!;
@@ -441,18 +448,33 @@ export async function generateBuildPlan(
         .map((dep) => toWsModuleId(dep, workspaceRoot))
         .filter((id): id is string => typeof id === "string" && id.length > 0);
 
-      // Register in native graph with dynamic deps populated
-      if (typeof (native as any).graphRecord === "function") {
-        (native as any).graphRecord(fileId, hash, depsIds, dynamicIds, classifyModuleKind(fileId));
-      } else if (typeof (native as any).recordFile === "function") {
-        (native as any).recordFile(fileId, hash, depsIds, dynamicIds, classifyModuleKind(fileId));
-      }
+      graphSeedNodes.push({
+        id: fileId,
+        hash,
+        deps: depsIds,
+        dynamicDeps: dynamicIds,
+        kind: classifyModuleKind(fileId),
+      });
 
       // BFS propagation — include dynamic import targets so they are also recorded
       for (const dep of [...depsAbs, ...dynamicAbs]) {
         if (!seen.has(dep)) {
           seen.add(dep);
           queue.push(dep);
+        }
+      }
+    }
+
+    if (graphSeedNodes.length > 0) {
+      if (typeof native.graphRecordBatch === "function") {
+        native.graphRecordBatch(graphSeedNodes);
+      } else if (typeof (native as any).graphRecord === "function") {
+        for (const node of graphSeedNodes) {
+          (native as any).graphRecord(node.id, node.hash, node.deps, node.dynamicDeps, node.kind);
+        }
+      } else if (typeof (native as any).recordFile === "function") {
+        for (const node of graphSeedNodes) {
+          (native as any).recordFile(node.id, node.hash, node.deps, node.dynamicDeps, node.kind);
         }
       }
     }

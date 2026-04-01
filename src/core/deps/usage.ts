@@ -14,6 +14,8 @@ export type DepUsage = {
   usedExports: string[];
   hasNamespace: boolean;
   hasExportStar: boolean;
+  importerKeys: string[];
+  entryRootKeys: string[];
 };
 
 export type DepUsageIndex = Map<string, DepUsage>;
@@ -278,6 +280,8 @@ export function canonicalizeDepUsageIndex(
         ...usage,
         fileName: canonicalFileName,
         usedExports: dedupeSortedStrings(usage.usedExports),
+        importerKeys: dedupeSortedStrings(usage.importerKeys),
+        entryRootKeys: dedupeSortedStrings(usage.entryRootKeys),
       });
       continue;
     }
@@ -288,6 +292,14 @@ export function canonicalizeDepUsageIndex(
     ]);
     existing.hasNamespace = existing.hasNamespace || usage.hasNamespace;
     existing.hasExportStar = existing.hasExportStar || usage.hasExportStar;
+    existing.importerKeys = dedupeSortedStrings([
+      ...(Array.isArray(existing.importerKeys) ? existing.importerKeys : []),
+      ...(Array.isArray(usage.importerKeys) ? usage.importerKeys : []),
+    ]);
+    existing.entryRootKeys = dedupeSortedStrings([
+      ...(Array.isArray(existing.entryRootKeys) ? existing.entryRootKeys : []),
+      ...(Array.isArray(usage.entryRootKeys) ? usage.entryRootKeys : []),
+    ]);
   }
 
   return out;
@@ -316,6 +328,14 @@ function isWithinAllowedRoots(absPath: string, allowedRoots: string[]): boolean 
   return false;
 }
 
+function normalizeProjectKey(rootDir: string, absPath: string): string {
+  const normalizedRoot = safeRealpath(rootDir);
+  const normalizedPath = safeRealpath(absPath);
+  const rel = path.relative(normalizedRoot, normalizedPath).replace(/\\/g, "/");
+  if (!rel || rel === ".") return ".";
+  return rel;
+}
+
 export async function scanDepUsage(options: {
   rootDir: string;
   entries: string[];
@@ -337,21 +357,136 @@ export async function scanDepUsage(options: {
       used: Set<string>;
       hasNamespace: boolean;
       hasExportStar: boolean;
+      importers: Set<string>;
+      entryRoots: Set<string>;
     }
   >();
 
-  const queue: string[] = [];
+  const queue: Array<{ absPath: string; entryRootKey: string }> = [];
   const visitedFiles = new Set<string>();
 
   for (const entry of entries) {
     if (typeof entry !== "string" || entry.length === 0) continue;
     const abs = path.isAbsolute(entry) ? entry : path.resolve(rootDir, entry);
-    queue.push(abs);
+    queue.push({
+      absPath: abs,
+      entryRootKey: normalizeProjectKey(rootDir, abs),
+    });
   }
 
   while (queue.length) {
     const queued = queue.shift()!;
-    const absPath = safeRealpath(queued);
+    const absPath = safeRealpath(queued.absPath);
+    const entryRootKey = queued.entryRootKey;
+    const visitKey = `${absPath}\u0000${entryRootKey}`;
+    if (visitedFiles.has(visitKey)) continue;
+    visitedFiles.add(visitKey);
+
+    if (!isWithinAllowedRoots(absPath, allowedRoots)) continue;
+    if (absPath.includes(`${path.sep}node_modules${path.sep}`)) continue;
+
+    const ext = path.extname(absPath).toLowerCase();
+    if (!SCAN_EXTS.has(ext)) continue;
+    if (absPath.endsWith(".d.ts")) continue;
+    if (!fs.existsSync(absPath)) continue;
+
+    let code = "";
+    try {
+      code = fs.readFileSync(absPath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const records = parseModuleForUsage(absPath, code);
+    for (const record of records) {
+      const source = record.source;
+      if (typeof source !== "string" || source.length === 0) continue;
+
+      const resolvedImport = resolveImport(source, absPath);
+      const resolvedLocalImport =
+        resolvedImport &&
+        isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) &&
+        !resolvedImport.includes(`${path.sep}node_modules${path.sep}`)
+          ? resolvedImport
+          : null;
+      if (resolvedLocalImport) {
+        queue.push({ absPath: resolvedLocalImport, entryRootKey });
+        continue;
+      }
+
+      if (isBareSpecifier(source)) {
+        const resolved = resolveDepEntryForBareImport(source, absPath);
+        if (!resolved) continue;
+        const key = resolved.fileName;
+        let item = usage.get(key);
+        if (!item) {
+          item = {
+            fileName: resolved.fileName,
+            entryPath: resolved.entryPath,
+            packageName: resolved.packageName,
+            packageVersion: resolved.packageVersion,
+            used: new Set(),
+            hasNamespace: false,
+            hasExportStar: false,
+            importers: new Set(),
+            entryRoots: new Set(),
+          };
+          usage.set(key, item);
+        }
+        item.importers.add(normalizeProjectKey(rootDir, absPath));
+        item.entryRoots.add(entryRootKey);
+        for (const imp of record.imported) {
+          if (imp.kind === "namespace") item.hasNamespace = true;
+          if (imp.kind === "export-star") item.hasExportStar = true;
+          if (imp.kind === "default") item.used.add("default");
+          if (imp.kind === "named" && imp.name) item.used.add(imp.name);
+        }
+        continue;
+      }
+    }
+  }
+
+  const out: DepUsageIndex = new Map();
+  for (const item of usage.values()) {
+    out.set(item.fileName, {
+      fileName: item.fileName,
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
+      usedExports: dedupeSortedStrings(item.used.values()),
+      hasNamespace: item.hasNamespace,
+      hasExportStar: item.hasExportStar,
+      importerKeys: dedupeSortedStrings(item.importers.values()),
+      entryRootKeys: dedupeSortedStrings(item.entryRoots.values()),
+    });
+  }
+
+  return out;
+}
+
+export async function scanDepEntryPaths(options: {
+  rootDir: string;
+  entries: string[];
+  allowedRoots?: string[] | null;
+}): Promise<Array<{ entryPath: string; packageName: string }>> {
+  const { rootDir, entries } = options;
+  const allowedRoots = normalizeAllowedRoots(
+    Array.isArray(options.allowedRoots) && options.allowedRoots.length
+      ? options.allowedRoots
+      : [rootDir],
+  );
+
+  const queue: string[] = [];
+  const visitedFiles = new Set<string>();
+  const entryPaths = new Map<string, { entryPath: string; packageName: string }>();
+
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    queue.push(path.isAbsolute(entry) ? entry : path.resolve(rootDir, entry));
+  }
+
+  while (queue.length) {
+    const absPath = safeRealpath(queue.shift()!);
     if (visitedFiles.has(absPath)) continue;
     visitedFiles.add(absPath);
 
@@ -387,46 +522,18 @@ export async function scanDepUsage(options: {
         continue;
       }
 
-      if (isBareSpecifier(source)) {
-        const resolved = resolveDepEntryForBareImport(source, absPath);
-        if (!resolved) continue;
-        const key = resolved.fileName;
-        let item = usage.get(key);
-        if (!item) {
-          item = {
-            fileName: resolved.fileName,
-            entryPath: resolved.entryPath,
-            packageName: resolved.packageName,
-            packageVersion: resolved.packageVersion,
-            used: new Set(),
-            hasNamespace: false,
-            hasExportStar: false,
-          };
-          usage.set(key, item);
-        }
-        for (const imp of record.imported) {
-          if (imp.kind === "namespace") item.hasNamespace = true;
-          if (imp.kind === "export-star") item.hasExportStar = true;
-          if (imp.kind === "default") item.used.add("default");
-          if (imp.kind === "named" && imp.name) item.used.add(imp.name);
-        }
-        continue;
+      if (!isBareSpecifier(source)) continue;
+      const resolved = resolveDepEntryForBareImport(source, absPath);
+      if (!resolved || !resolved.entryPath.includes("node_modules")) continue;
+      const canonicalEntryPath = safeRealpath(resolved.entryPath);
+      if (!entryPaths.has(canonicalEntryPath)) {
+        entryPaths.set(canonicalEntryPath, {
+          entryPath: canonicalEntryPath,
+          packageName: resolved.packageName,
+        });
       }
     }
   }
 
-  const out: DepUsageIndex = new Map();
-  for (const item of usage.values()) {
-    out.set(item.fileName, {
-      fileName: item.fileName,
-      entryPath: item.entryPath,
-      packageName: item.packageName,
-      packageVersion: item.packageVersion,
-      usedExports: dedupeSortedStrings(item.used.values()),
-      hasNamespace: item.hasNamespace,
-      hasExportStar: item.hasExportStar,
-    });
-  }
-
-  return out;
+  return Array.from(entryPaths.values()).sort((a, b) => a.entryPath.localeCompare(b.entryPath));
 }

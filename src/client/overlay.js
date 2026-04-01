@@ -1,6 +1,38 @@
 // Basic DOM overlay used to surface build/transform errors (and warnings) during HMR.
 const ERROR_OVERLAY_ID = "ionify-error-overlay";
 const WARNING_OVERLAY_ID = "ionify-warning-overlay";
+const WARNING_TOAST_ID = "ionify-warning-toast";
+
+function scheduleNonBlockingRender(task) {
+  if (typeof window === "undefined") {
+    task();
+    return;
+  }
+
+  const run = () => {
+    const afterFrame = () => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(task));
+      } else {
+        setTimeout(task, 32);
+      }
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(afterFrame, { timeout: 1200 });
+      return;
+    }
+
+    setTimeout(afterFrame, 120);
+  };
+
+  if (document.readyState === "complete") {
+    run();
+    return;
+  }
+
+  window.addEventListener("load", run, { once: true });
+}
 
 function ensureOverlay(id) {
   let overlay = document.getElementById(id);
@@ -149,10 +181,127 @@ export function showWarningOverlay(message, details) {
   overlay.replaceChildren(panel);
 }
 
+export function showWarningToast(message, details) {
+  if (typeof document === "undefined") return;
+
+  scheduleNonBlockingRender(() => {
+    const toast = ensureOverlay(WARNING_TOAST_ID);
+    toast.style.position = "fixed";
+    toast.style.right = "16px";
+    toast.style.bottom = "16px";
+    toast.style.maxWidth = "min(420px, calc(100vw - 32px))";
+    toast.style.background = "rgba(17,24,39,0.94)";
+    toast.style.color = "#fbbf24";
+    toast.style.fontFamily = "Menlo, Consolas, monospace";
+    toast.style.fontSize = "12px";
+    toast.style.lineHeight = "1.5";
+    toast.style.padding = "12px 14px";
+    toast.style.border = "1px solid rgba(251,191,36,0.35)";
+    toast.style.borderRadius = "12px";
+    toast.style.boxShadow = "0 10px 24px rgba(0,0,0,0.28)";
+    toast.style.zIndex = "2147483645";
+
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "flex-start";
+    row.style.gap = "10px";
+
+    const body = document.createElement("div");
+    body.style.flex = "1";
+
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.style.marginBottom = "4px";
+    title.textContent = "Ionify Warning";
+
+    const text = document.createElement("div");
+    text.textContent = message ?? "";
+
+    body.appendChild(title);
+    body.appendChild(text);
+
+    if (details) {
+      const controls = document.createElement("div");
+      controls.style.marginTop = "8px";
+      controls.style.display = "flex";
+      controls.style.alignItems = "center";
+      controls.style.gap = "8px";
+
+      const detailsButton = document.createElement("button");
+      detailsButton.type = "button";
+      detailsButton.textContent = "Show details";
+      detailsButton.style.border = "1px solid rgba(251,191,36,0.35)";
+      detailsButton.style.background = "transparent";
+      detailsButton.style.color = "inherit";
+      detailsButton.style.borderRadius = "999px";
+      detailsButton.style.padding = "4px 8px";
+      detailsButton.style.cursor = "pointer";
+      detailsButton.style.font = "inherit";
+
+      let detailsVisible = false;
+      let detailsBlock = null;
+      detailsButton.onclick = () => {
+        if (detailsVisible) {
+          detailsBlock?.remove();
+          detailsBlock = null;
+          detailsVisible = false;
+          detailsButton.textContent = "Show details";
+          return;
+        }
+
+        detailsBlock = document.createElement("pre");
+        detailsBlock.style.margin = "8px 0 0 0";
+        detailsBlock.style.whiteSpace = "pre-wrap";
+        detailsBlock.style.maxHeight = "220px";
+        detailsBlock.style.overflowY = "auto";
+        detailsBlock.style.color = "#fde68a";
+        detailsBlock.textContent = details;
+        body.appendChild(detailsBlock);
+        detailsVisible = true;
+        detailsButton.textContent = "Hide details";
+      };
+
+      const hint = document.createElement("div");
+      hint.style.fontSize = "11px";
+      hint.style.opacity = "0.85";
+      hint.textContent = "Non-blocking warning.";
+
+      controls.appendChild(detailsButton);
+      controls.appendChild(hint);
+      body.appendChild(controls);
+    }
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close warning");
+    close.textContent = "×";
+    close.style.border = "none";
+    close.style.background = "transparent";
+    close.style.color = "inherit";
+    close.style.cursor = "pointer";
+    close.style.fontSize = "18px";
+    close.style.lineHeight = "18px";
+    close.style.padding = "0";
+    close.onclick = clearWarningToast;
+
+    row.appendChild(body);
+    row.appendChild(close);
+    toast.replaceChildren(row);
+  });
+}
+
 export function clearWarningOverlay() {
   if (typeof document === "undefined") return;
   const overlay = document.getElementById(WARNING_OVERLAY_ID);
   if (overlay && overlay.parentElement) {
     overlay.parentElement.removeChild(overlay);
+  }
+}
+
+export function clearWarningToast() {
+  if (typeof document === "undefined") return;
+  const toast = document.getElementById(WARNING_TOAST_ID);
+  if (toast && toast.parentElement) {
+    toast.parentElement.removeChild(toast);
   }
 }

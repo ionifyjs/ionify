@@ -45,6 +45,7 @@ interface PendingUpdate {
 export class HMRServer {
   private clients = new Set<SSEClient>();
   private pending = new Map<string, PendingUpdate>();
+  private retainedEvents = new Map<string, unknown>();
   private nextId = 1;
   private closed = false;
 
@@ -63,6 +64,9 @@ export class HMRServer {
       "X-Accel-Buffering": "no",
     });
     res.write(`event: ready\ndata: "ok"\n\n`);
+    for (const [event, payload] of this.retainedEvents.entries()) {
+      this.sendToClient(res, event, payload);
+    }
 
     this.clients.add(res);
     // cleanup on close
@@ -72,12 +76,16 @@ export class HMRServer {
     });
   }
 
-  private send(event: string | null, payload: unknown) {
+  private sendToClient(client: SSEClient, event: string | null, payload: unknown) {
     const data =
       (event ? `event: ${event}\n` : "") +
       `data: ${JSON.stringify(payload)}\n\n`;
+    try { client.write(data); } catch { /* drop dead client */ }
+  }
+
+  private send(event: string | null, payload: unknown) {
     for (const client of this.clients) {
-      try { client.write(data); } catch { /* drop dead client */ }
+      this.sendToClient(client, event, payload);
     }
   }
 
@@ -86,7 +94,10 @@ export class HMRServer {
     this.send(null, payload);
   }
 
-  broadcastEvent(event: string, payload: unknown) {
+  broadcastEvent(event: string, payload: unknown, options?: { retain?: boolean }) {
+    if (options?.retain) {
+      this.retainedEvents.set(event, payload);
+    }
     this.send(event, payload);
   }
 
@@ -128,6 +139,7 @@ export class HMRServer {
     }
     this.clients.clear();
     this.pending.clear();
+    this.retainedEvents.clear();
   }
 }
 

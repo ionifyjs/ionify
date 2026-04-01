@@ -17,6 +17,15 @@ export interface NativeGraphNode {
   format?: "esm" | "cjs";
 }
 
+export interface NativeGraphRecordBatchNode {
+  id: string;
+  hash: string | null;
+  deps: string[];
+  dynamicDeps?: string[];
+  kind?: string;
+  configHash?: string | null;
+}
+
 export interface NativeBuildChunksTreeshakeOptions {
   mode?: "off" | "safe" | "aggressive" | string;
   include?: string[];
@@ -50,6 +59,7 @@ export interface NativeBinding {
   parseAndTransformSwc?(source: string, options: { filename: string; jsx?: boolean; typescript?: boolean; react_refresh?: boolean }): { code: string; map?: string | null };
   graphInit(path?: string, version?: string): void;
   graphRecord(id: string, hash: string | null, deps: string[], dynamicDeps?: string[], kind?: string, configHash?: string | null): boolean;
+  graphRecordBatch?(nodes: NativeGraphRecordBatchNode[]): number;
   graphGet(id: string): NativeGraphNode | undefined | null;
   graphRemove(id: string): void;
   graphLoad(): NativeGraphNode[];

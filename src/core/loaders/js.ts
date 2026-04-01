@@ -564,11 +564,11 @@ function makeDepsProxyForFile(filePath: string, code: string, rootDir: string): 
       const prefix = `__ionify_vp_${memberKey}`;
       const packUrl = `/@deps/${importFileName}`;
       const lines: string[] = [];
-      lines.push(`import { ${prefix}__ns } from "${packUrl}";`);
+      lines.push(`import { ${prefix}__default, ${prefix}__ns } from "${packUrl}";`);
       for (const name of exportNames) {
         lines.push(`import { ${prefix}__${name} as ${name} } from "${packUrl}";`);
       }
-      lines.push(`export default ${prefix}__ns;`);
+      lines.push(`export default ${prefix}__default;`);
       if (exportNames.length > 0) {
         lines.push(`export { ${exportNames.join(", ")} };`);
       }
@@ -578,7 +578,11 @@ function makeDepsProxyForFile(filePath: string, code: string, rootDir: string): 
 
     const cg = getFeaturePackChunkGroupId(rootDir, fileName);
     const url = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
-    return `import * as __ionify_dep__ from "${url}";\nexport default __ionify_dep__;\nexport * from "${url}";\n`;
+    return (
+      `import __ionify_dep__default, * as __ionify_dep__ns from "${url}";\n` +
+      `export default __ionify_dep__default;\n` +
+      `export * from "${url}";\n`
+    );
   } catch {
     return null;
   }

@@ -11,6 +11,7 @@ const ERROR_URL = "/__ionify_hmr/error";
 const log = (...args) => console.log("[Ionify HMR]", ...args);
 const warn = (...args) => console.warn("[Ionify HMR]", ...args);
 let overlayModulePromise = null;
+let isNavigatingAway = false;
 
 async function loadOverlayModule() {
   if (!overlayModulePromise) {
@@ -40,10 +41,10 @@ async function clearErrorOverlay() {
   }
 }
 
-async function showWarningOverlay(message, details) {
+async function showWarningToast(message, details) {
   try {
     const mod = await loadOverlayModule();
-    mod?.showWarningOverlay?.(message, details);
+    mod?.showWarningToast?.(message, details);
   } catch {
     // ignore overlay load failures
   }
@@ -89,10 +90,21 @@ globalThis.addEventListener?.("unhandledrejection", (event) => {
   })();
 });
 
+globalThis.addEventListener?.("beforeunload", () => {
+  isNavigatingAway = true;
+});
+
+globalThis.addEventListener?.("pagehide", () => {
+  isNavigatingAway = true;
+});
+
 // Establish SSE channel used to notify about pending graph diffs.
 const source = new EventSource(SSE_URL);
 
 source.addEventListener("error", (e) => {
+  if (isNavigatingAway || source.readyState === EventSource.CLOSED) {
+    return;
+  }
   warn("SSE error", e);
   void (async () => {
   // Show overlay if server streamed a structured error payload.
@@ -111,15 +123,15 @@ source.addEventListener("error", (e) => {
 });
 
 // P19R: Non-blocking peer dependency version mismatch warnings from the deps optimizer.
-// Shown as a dismissible amber panel that does NOT block the app.
+// Surface them without competing with the initial document paint.
 source.addEventListener("peer-dep-warning", (event) => {
   void (async () => {
     const payload = JSON.parse(event.data);
     const warnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
     if (warnings.length === 0) return;
     const message = warnings.join("\n");
-    warn("Peer dep version mismatch detected:\n" + message);
-    await showWarningOverlay(
+    warn(`Peer dep version mismatch detected (${warnings.length} issue${warnings.length > 1 ? "s" : ""})`);
+    await showWarningToast(
       `Peer dependency version mismatch (${warnings.length} issue${warnings.length > 1 ? "s" : ""})`,
       message
     );
