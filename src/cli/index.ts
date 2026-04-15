@@ -68,13 +68,45 @@ program
 
 program
   .command("analyze")
-  .description("Inspect cached dependency graph stats")
+  .description("Inspect graph, build, packs, routes, and Phase B analyzer findings")
   .option("--json", "Output summary as JSON")
+  .option("--verbose", "Show full detailed analyzer sections after the summary")
+  .option("--section <name>", "Focus on one section: graph, build, deps, packs, routes, findings")
   .option("-l, --limit <count>", "Limit list outputs", "10")
+  .option("--top <count>", "Alias for --limit")
+  .option("--graph", "Show graph summary")
+  .option("--tree", "Include dependency tree in graph summary")
+  .option("--deps", "Alias for --tree")
+  .option("--build", "Show build manifest/build.stats summary")
+  .option("--packs", "Show vendor-pack summary")
+  .option("--routes", "Show route-hint summary")
+  .option("--findings", "Show duplicate, bloat, and suggestion findings")
+  .option("--deps-hash <hash>", "Pin analyzer pack summary to a specific depsHash")
+  .option("--out-dir <dir>", "Build output directory to inspect", "dist")
   .action(async (options) => {
     try {
-      const limit = parseInt(options.limit ?? "10", 10);
-      await runAnalyzeCommand({ json: !!options.json, limit: Number.isFinite(limit) ? limit : 10 });
+      const rawLimit = options.top ?? options.limit ?? "10";
+      const limit = parseInt(rawLimit, 10);
+      const section =
+        typeof options.section === "string" && options.section.length > 0 ? options.section.toLowerCase() : undefined;
+      if (section && !["graph", "build", "deps", "packs", "routes", "findings"].includes(section)) {
+        throw new Error(`Invalid --section value "${options.section}"`);
+      }
+      await runAnalyzeCommand({
+        json: !!options.json,
+        verbose: !!options.verbose,
+        section: section as any,
+        limit: Number.isFinite(limit) ? limit : 10,
+        graph: !!options.graph,
+        tree: !!options.tree,
+        deps: !!options.deps,
+        build: !!options.build,
+        packs: !!options.packs,
+        routes: !!options.routes,
+        findings: !!options.findings,
+        depsHash: options.depsHash,
+        outDir: options.outDir,
+      });
     } catch (err) {
       logError("Analyzer failed", err);
       process.exit(1);
