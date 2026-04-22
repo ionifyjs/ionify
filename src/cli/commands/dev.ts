@@ -1093,6 +1093,12 @@ export async function startDevServer({
     scopeHoist,
     plugins: pluginNames,
     entry: resolvedEntries ?? null,
+    resolveOptions: {
+      alias: (userConfig as any)?.resolve?.alias,
+      extensions: (userConfig as any)?.resolve?.extensions,
+      conditions: (userConfig as any)?.resolve?.conditions,
+      mainFields: (userConfig as any)?.resolve?.mainFields,
+    },
     cssOptions: (userConfig as any)?.css,
     assetOptions: (userConfig as any)?.assets ?? (userConfig as any)?.asset,
     runtimeContracts: {

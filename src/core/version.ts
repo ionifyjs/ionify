@@ -8,6 +8,7 @@
  * - parserMode, minifier (which parser/minifier to use)
  * - treeshake, scopeHoist (optimization settings)
  * - plugins (plugin names, sorted alphabetically)
+ * - resolveOptions (aliases/extensions/conditions/mainFields that affect graph reachability)
  * - cssOptions, assetOptions (loader configuration)
  * 
  * Critical Requirements:
@@ -48,6 +49,7 @@ export interface CanonicalVersionInputs {
     combineVariables: boolean;
   } | null;
   plugins: string[];  // plugin names, sorted alphabetically
+  resolveOptions: Record<string, unknown> | null;
   cssOptions: Record<string, unknown> | null;
   assetOptions: Record<string, unknown> | null;
   runtimeContracts: Record<string, unknown> | null;
@@ -111,6 +113,40 @@ function normalizeScopeHoist(scopeHoist: any): CanonicalVersionInputs["scopeHois
   };
 }
 
+function normalizeStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return out.length > 0 ? out : null;
+}
+
+function normalizeResolveAlias(alias: unknown): Array<[string, string[]]> | null {
+  if (!alias || typeof alias !== "object" || Array.isArray(alias)) return null;
+  const entries: Array<[string, string[]]> = [];
+  for (const [key, value] of Object.entries(alias as Record<string, unknown>)) {
+    if (typeof key !== "string" || key.length === 0) continue;
+    const values = Array.isArray(value) ? value : [value];
+    const normalized = values.filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+    if (normalized.length > 0) entries.push([key, normalized]);
+  }
+  return entries.length > 0 ? entries : null;
+}
+
+function normalizeResolveOptions(resolveOptions: any): CanonicalVersionInputs["resolveOptions"] {
+  if (!resolveOptions || typeof resolveOptions !== "object") return null;
+  const normalized: Record<string, unknown> = {};
+  const alias = normalizeResolveAlias(resolveOptions.alias);
+  const extensions = normalizeStringArray(resolveOptions.extensions);
+  const conditions = normalizeStringArray(resolveOptions.conditions);
+  const mainFields = normalizeStringArray(resolveOptions.mainFields);
+  if (alias) normalized.alias = alias;
+  if (extensions) normalized.extensions = extensions;
+  if (conditions) normalized.conditions = conditions;
+  if (mainFields) normalized.mainFields = mainFields;
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 /**
  * Compute canonical version inputs from user config.
  * 
@@ -130,6 +166,7 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
   scopeHoist?: any;
   entry?: string | string[];  // Should be absolute paths
   plugins?: any[];
+  resolveOptions?: any;
   cssOptions?: any;
   assetOptions?: any;
   runtimeContracts?: Record<string, unknown> | null;
@@ -156,6 +193,7 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
         .filter((name): name is string => typeof name === "string")
         .sort()
     : [];
+  const resolveOptions = normalizeResolveOptions(config.resolveOptions);
   
   // Normalize CSS and asset options (empty object → null for consistency)
   const cssOptions = config.cssOptions && Object.keys(config.cssOptions).length > 0
@@ -176,6 +214,7 @@ export function computeCanonicalVersionInputs(config: Partial<IonifyConfig> & {
     treeshake,
     scopeHoist,
     plugins,
+    resolveOptions,
     cssOptions,
     assetOptions,
     runtimeContracts,

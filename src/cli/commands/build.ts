@@ -34,7 +34,7 @@ import {
   type EmittedOutputInfo,
 } from "@core/bundler";
 import type { BuildPlan } from "../../types/plan";
-import { TransformWorkerPool } from "@core/worker/pool";
+import { TransformWorkerPool, type TransformJobResult } from "@core/worker/pool";
 import { getCacheKey } from "@core/cache";
 import { resolveWorkspace } from "@core/workspace";
 import { loadEnv as loadIonifyEnv } from "@cli/utils/env";
@@ -381,6 +381,36 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
 }
 
 /**
+ * T19 — Load dep-stop entries from the deps manifest for use in graph_build_from_entries.
+ *
+ * Returns an array of { entryPath, artifactHash } for every manifest entry that has a
+ * pre-computed artifact hash. These are passed to generateBuildPlan \u2192 graphBuildFromEntries
+ * so the native BFS can stop at Tier-2 dep artifact boundaries instead of crawling
+ * node_modules source trees (CAS-First principle: dep artifacts ARE the dep boundary).
+ *
+ * Returns [] if manifest does not exist or has no entries with a pre-computed artifactHash.
+ * Graceful degradation: missing/empty result \u2192 generateBuildPlan falls back to full BFS.
+ */
+function loadDepStopsFromManifest(depsRoot: string): Array<{ entryPath: string; artifactHash: string }> {
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return [];
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries: Record<string, any> = parsed?.entries ?? {};
+    const stops: Array<{ entryPath: string; artifactHash: string }> = [];
+    for (const [entryPath, entry] of Object.entries(entries)) {
+      const artifactHash: string = (entry as any)?.artifactHash ?? "";
+      if (!artifactHash) continue; // pre-T19 manifests: skip, fall back to full BFS for this dep
+      stops.push({ entryPath, artifactHash });
+    }
+    return stops;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * T3 — Route node_modules deps through deps optimizer artifacts.
  *
  * Reads the deps manifest at `depsRoot/manifest.json`, builds a reverse map from
@@ -405,8 +435,8 @@ export function rerouteDepsArtifacts(options: {
 }): { rerouted: number; pruned: number; sharedPrewarmed: number } {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
 
-  // Build reverse map: canonical entry path → { outFile, artifactPath }
-  const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string }>();
+  // Build reverse map: canonical entry path → { outFile, artifactPath, artifactHash, sharedImports }
+  const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string; artifactHash: string; sharedImports: string[] }>();
   const manifestPath = path.join(depsRoot, "manifest.json");
   if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
   try {
@@ -418,13 +448,17 @@ export function rerouteDepsArtifacts(options: {
       if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
       const artifactPath = path.join(depsRoot, outFile);
       if (!fs.existsSync(artifactPath)) continue;
+      const artifactHash: string = (entry as any)?.artifactHash ?? "";
+      const sharedImports: string[] = Array.isArray((entry as any)?.sharedImports)
+        ? (entry as any).sharedImports
+        : [];
       let canonicalEntry: string;
       try {
         canonicalEntry = fs.realpathSync.native(entryPath);
       } catch {
         canonicalEntry = path.resolve(entryPath);
       }
-      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath });
+      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, sharedImports });
     }
   } catch {
     return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
@@ -468,19 +502,39 @@ export function rerouteDepsArtifacts(options: {
 
       const artifact = canonical ? depsArtifactsByEntry.get(canonical) : null;
       if (artifact) {
-        const artifactCode = fs.readFileSync(artifact.artifactPath, "utf8");
-        const artifactHash = getCacheKey(artifactCode);
+        // ── CAS-First fast path ──────────────────────────────────────────────
+        // When the optimizer persisted artifactHash in the manifest we can skip
+        // readFileSync + getCacheKey (SHA-256 over up to 600 KB) entirely.
+        // We still need to ensure the CAS file exists; on the very first build
+        // after a re-optimization the CAS slot may be cold, so we do one read
+        // only when necessary (cache miss), not unconditionally.
+        let resolvedHash: string;
+        const artifactCasDir = artifact.artifactHash
+          ? getCasArtifactPath(casRoot, configHash, artifact.artifactHash)
+          : null;
+        const artifactCasFile = artifactCasDir ? path.join(artifactCasDir, "transformed.js") : null;
 
-        // Write artifact to CAS so the Rust bundler can find it via load_module_code.
-        const artifactCasDir = getCasArtifactPath(casRoot, configHash, artifactHash);
-        const artifactCasFile = path.join(artifactCasDir, "transformed.js");
-        if (!fs.existsSync(artifactCasFile)) {
-          fs.mkdirSync(artifactCasDir, { recursive: true });
-          fs.writeFileSync(artifactCasFile, artifactCode, "utf8");
+        if (artifact.artifactHash && artifactCasFile && fs.existsSync(artifactCasFile)) {
+          // Full fast path: hash known + CAS warm → zero file reads for this dep.
+          resolvedHash = artifact.artifactHash;
+        } else {
+          // Fallback: read the artifact bytes to compute hash and/or fill CAS.
+          const artifactCode = fs.readFileSync(artifact.artifactPath, "utf8");
+          resolvedHash = artifact.artifactHash || getCacheKey(artifactCode);
+          const casDir = getCasArtifactPath(casRoot, configHash, resolvedHash);
+          const casFile = path.join(casDir, "transformed.js");
+          if (!fs.existsSync(casFile)) {
+            fs.mkdirSync(casDir, { recursive: true });
+            fs.writeFileSync(casFile, artifactCode, "utf8");
+          }
         }
 
         mod.fsPath = artifact.artifactPath;
-        mod.hash = artifactHash;
+        mod.hash = resolvedHash;
+        // Normalize kind: T19 dep-leaf nodes have kind="dep" so the BFS recognises them
+        // as artifact boundaries. After rerouting they are concrete JS artifact files;
+        // all downstream consumers (CAS hydration loop, Rust bundler) expect kind="js".
+        (mod as any).kind = "js";
         keptModules.push(mod);
         rerouted += 1;
 
@@ -512,8 +566,18 @@ export function rerouteDepsArtifacts(options: {
   //
   // This is architecturally aligned: same CAS-First mechanism used for wrappers,
   // no new abstractions, no bridges, no hacks.
-  const DEPS_URL_PREFIX = "/@deps/";
-  // Regex to extract /@deps/<filename>.js references from wrapper file contents.
+
+  // ── CAS-First fast path: use sharedImports persisted in manifest ──────────
+  // When the optimizer has recorded sharedImports we can skip wrapper readFileSync
+  // + regex entirely. Build the lookup once from the already-loaded manifest data.
+  const artifactSharedImports = new Map<string, string[]>();
+  for (const entry of depsArtifactsByEntry.values()) {
+    if (entry.sharedImports.length > 0) {
+      artifactSharedImports.set(entry.artifactPath, entry.sharedImports);
+    }
+  }
+
+  // Regex only needed as fallback for artifacts optimized before version 16.
   const depsImportRe = /["'](\/@deps\/([^"'?]+\.js))["']/g;
 
   // Track which shared files have already been added to avoid duplicate plan modules.
@@ -528,6 +592,38 @@ export function rerouteDepsArtifacts(options: {
     const sharedFilesToAdd: Array<{ absPath: string; hash: string }> = [];
 
     for (const wrapperPath of artifactPaths) {
+      // ── Fast path: use persisted sharedImports, skip wrapper read + regex ──
+      const persistedImports = artifactSharedImports.get(wrapperPath);
+      if (persistedImports !== undefined) {
+        for (const relFile of persistedImports) {
+          const absPath = path.join(depsRoot, relFile);
+          if (prewarnedSharedPaths.has(absPath)) continue;
+          if (!fs.existsSync(absPath)) continue;
+          // Shared files don't have individual manifest entries — read+hash+CAS-write
+          // them here (only happens on cold CAS; subsequent builds hit the existsSync
+          // check above and continue immediately).
+          let sharedCode: string;
+          try {
+            sharedCode = fs.readFileSync(absPath, "utf8");
+          } catch {
+            continue;
+          }
+          const sharedHash = getCacheKey(sharedCode);
+          const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
+          const sharedCasFile = path.join(sharedCasDir, "transformed.js");
+          if (!fs.existsSync(sharedCasFile)) {
+            fs.mkdirSync(sharedCasDir, { recursive: true });
+            fs.writeFileSync(sharedCasFile, sharedCode, "utf8");
+          }
+          prewarnedSharedPaths.add(absPath);
+          sharedFilesToAdd.push({ absPath, hash: sharedHash });
+          sharedPrewarmed += 1;
+        }
+        continue;
+      }
+
+      // ── Fallback: no persistedImports — read wrapper and scan for /@deps/ ──
+      // Only hit for artifacts optimized before DEPS_OPTIMIZER_OUTPUT_VERSION 16.
       let wrapperCode: string;
       try {
         wrapperCode = fs.readFileSync(wrapperPath, "utf8");
@@ -693,6 +789,8 @@ type VendorManualPackState = {
   version: 1;
   depsHash: string;
   outputVersion?: number;
+  // T17: NODE_ENV used when this vendor pack was produced.
+  nodeEnv?: string;
   group: string;
   updatedAt: string;
   status: VendorManualPackStatus;
@@ -1050,6 +1148,7 @@ async function prepareProductionAutoCorePack(options: {
       const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
       if (!fsPath || typeof fsPath !== "string") continue;
       if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
 
       const pkg = resolved?.pkg ?? null;
       const packageName = typeof pkg?.name === "string" ? pkg.name : spec;
@@ -1075,8 +1174,18 @@ async function prepareProductionAutoCorePack(options: {
   const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
   const sharedFileName = `shared.${chunkGroupId}.js`;
   const sharedPath = path.join(depsRoot, sharedFileName);
+
+  // T17: Read state file before alreadyReady check so we can validate nodeEnv
+  // provenance. statePath must be declared here (not inside the alreadyReady branch).
+  const statePath = path.join(depsRoot, "vendor-pack.feature.core.json");
+  const existingState = readJsonFile<VendorManualPackState>(statePath);
+  const currentNodeEnv = process.env.NODE_ENV ?? "development";
   const alreadyReady =
-    fs.existsSync(sharedPath) && entries.every((e) => fs.existsSync(path.join(depsRoot, e.fileName)));
+    fs.existsSync(sharedPath) &&
+    entries.every((e) => fs.existsSync(path.join(depsRoot, e.fileName))) &&
+    // nodeEnv guard: empty/absent means pre-T17 pack — allow as cache hit on first run,
+    // the pack will be re-stamped with nodeEnv on next re-optimization cycle.
+    (!existingState?.nodeEnv || existingState.nodeEnv.toLowerCase() === currentNodeEnv.toLowerCase());
 
   const vendorPackV2 = new VendorPackV2IndexManager({
     depsRoot,
@@ -1087,12 +1196,12 @@ async function prepareProductionAutoCorePack(options: {
   });
   vendorPackV2.loadFromDisk();
 
-  const statePath = path.join(depsRoot, "vendor-pack.feature.core.json");
   if (alreadyReady) {
     writeJsonFile(statePath, {
       version: 1,
       depsHash,
       outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      nodeEnv: process.env.NODE_ENV,
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "ready",
@@ -1116,6 +1225,7 @@ async function prepareProductionAutoCorePack(options: {
     version: 1,
     depsHash,
     outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+    nodeEnv: currentNodeEnv,
     group: "core",
     updatedAt: new Date().toISOString(),
     status: "building",
@@ -1142,6 +1252,7 @@ async function prepareProductionAutoCorePack(options: {
       version: 1,
       depsHash,
       outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      nodeEnv: currentNodeEnv,
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "ready",
@@ -1162,6 +1273,7 @@ async function prepareProductionAutoCorePack(options: {
       version: 1,
       depsHash,
       outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      nodeEnv: currentNodeEnv,
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "failed",
@@ -1737,6 +1849,12 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       scopeHoist,
       plugins: pluginNames,
       entry: entries ?? null,
+      resolveOptions: {
+        alias: (config as any)?.resolve?.alias,
+        extensions: (config as any)?.resolve?.extensions,
+        conditions: (config as any)?.resolve?.conditions,
+        mainFields: (config as any)?.resolve?.mainFields,
+      },
       cssOptions: (config as any)?.css,
       assetOptions: (config as any)?.assets ?? (config as any)?.asset,
       runtimeContracts: {
@@ -1781,19 +1899,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       logInfo(`AST cache initialized with version hash`);
     }
 
-    await ensureOptimizedDeps({
-      rootDir,
-      ionifyDir,
-      depsHash,
-      depsRoot,
-      config,
-      resolvedEntries: entries,
-      allowedRoots: workspace.allowedRoots,
-    });
-
-	    const depsManifestIndex = loadDepsManifestIndex(depsRoot);
-
-	    const vendorPacksRaw = config?.optimizeDeps?.vendorPacks ?? false;
+    const vendorPacksRaw = config?.optimizeDeps?.vendorPacks ?? false;
 		    const vendorPacksManualConfigured =
 		      vendorPacksRaw &&
 		      typeof vendorPacksRaw === "object" &&
@@ -1801,42 +1907,222 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 		      Object.keys(vendorPacksRaw as any).length > 0;
 		    const vendorPacksAutoConfigured = vendorPacksRaw === "auto";
 
-		    if (vendorPacksManualConfigured || vendorPacksAutoConfigured) {
-		      const packsStart = Date.now();
-		      try {
-		        const packs = vendorPacksManualConfigured
-		          ? await prepareProductionManualPacks({
-		              rootDir,
-	              ionifyDir,
-	              depsHash,
-	              depsRoot,
-	              config,
-	              resolvedEntries: entries,
-	              allowedRoots: workspace.allowedRoots,
-	              depsManifestIndex,
-	            })
-	          : await prepareProductionAutoCorePack({
-	              rootDir,
-	              ionifyDir,
-	              depsHash,
-		              depsRoot,
-		              config,
-		            });
-		        if (packs.reasons && packs.reasons.length) {
-		          logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
-		        } else if (packs.didWork) {
-		          logInfo(`Production packs ready in ${Date.now() - packsStart}ms (CAS-first)`);
-	        } else {
-	          logInfo("Production packs ready (cached)");
-	        }
-	      } catch (err) {
-	        logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
-	      }
-	    }
+    // ── T8: Parallel deps optimization ────────────────────────────────────────
+    // When vendorPacks:"auto" is configured, P1 (batch optimizer — non-vendor
+    // entries) and P2 (chunked optimizer — vendor entries → shared chunk) are
+    // fully independent: they write to disjoint artifact file sets and have no
+    // data dependency.
+    //
+    // Native path (preferred): native.optimizeDepsParallelSplit runs both arms
+    // via rayon::join inside a single Rust call — true OS-thread parallelism,
+    // saving ~max(P1, P2) instead of P1 + P2 (~130ms on react-basic).
+    // After the split, prepareProductionAutoCorePack takes the alreadyReady fast
+    // path (files exist) and only writes the VendorPackV2 metadata (~2ms).
+    //
+    // Fallback: sequential P1 → P2 (original behaviour, always safe).
+    //
+    // Manual vendor packs (vendorPacksManualConfigured) always run sequentially —
+    // their pack entry resolution is interleaved with usage scanning inside
+    // prepareProductionManualPacks. A future T8b pass can hoist that.
+    if (vendorPacksAutoConfigured) {
+      const packsStart = Date.now();
+      const vendorExclude = resolveAutoVendorEntryFsPaths(rootDir, config);
+
+      if (
+        vendorExclude !== null &&
+        vendorExclude.size > 1 &&
+        (native as any)?.optimizeDepsParallelSplit
+      ) {
+        // ── T8 native parallel path ────────────────────────────────────────
+        const sentinelPath = path.join(depsRoot, ".verified");
+        if (fs.existsSync(sentinelPath)) {
+          logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
+        } else if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+          // ── T20: Global cache hit ──────────────────────────────────────────
+          try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+          logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+        } else {
+          // T6 artifact promotion (same as ensureOptimizedDeps)
+          if ((native as any)?.depsPromoteArtifacts) {
+            const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
+            if (prevRoot) {
+              try {
+                const r = (native as any).depsPromoteArtifacts(prevRoot, depsRoot, depsHash, DEPS_OPTIMIZER_OUTPUT_VERSION) as { promoted: number; skipped: number };
+                if (r.promoted > 0) logInfo(`[deps] Promoted ${r.promoted} artifacts from previous deps dir (${r.skipped} need re-optimization)`);
+              } catch { /* non-fatal */ }
+            }
+          }
+
+          // Resolve all non-vendor entry paths (same discovery as ensureOptimizedDeps)
+          const batchEntryPaths = await (async () => {
+            const out = new Set<string>();
+            if (!native?.resolveModule) return out;
+            const pkgJson = readProjectPackageJson(rootDir);
+            const optimizeExclude = Array.isArray(config?.optimizeDeps?.exclude)
+              ? new Set(config.optimizeDeps.exclude.map((s: any) => String(s)))
+              : null;
+            const depSpecifiers = Object.keys(pkgJson?.dependencies ?? {});
+            const includeSpecifiers = Array.isArray(config?.optimizeDeps?.include)
+              ? config.optimizeDeps.include.map((s: any) => String(s))
+              : [];
+            const vendorMode = config?.optimizeDeps?.vendor ?? "auto";
+            const vendorSpecifiers = vendorMode === false ? [] : Array.isArray(vendorMode) ? vendorMode.map((s: any) => String(s)) : vendorMode === "auto" ? detectVendorSpecifiers(pkgJson) : [];
+            const allSpecs = Array.from(new Set([...vendorSpecifiers, ...includeSpecifiers, ...depSpecifiers].map((s) => s.trim()).filter(Boolean))).filter((s) => !optimizeExclude?.has(s));
+            for (const spec of allSpecs) {
+              try {
+                const r = native.resolveModule(spec, rootDir) as any;
+                const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+                if (!fsPath || typeof fsPath !== "string" || !fsPath.includes("node_modules")) continue;
+                if (!isOptimizableDepEntryPath(fsPath)) continue;
+                if (!vendorExclude.has(fsPath)) out.add(fsPath);
+              } catch { /* ignore */ }
+            }
+            const usageEntries = await resolveUsageEntries(rootDir, entries);
+            if (usageEntries.length > 0) {
+              try {
+                const scanned = await scanDepEntryPaths({ rootDir, entries: usageEntries, allowedRoots: workspace.allowedRoots });
+                for (const e of scanned) {
+                  if (optimizeExclude?.has(e.packageName)) continue;
+                  if (!isOptimizableDepEntryPath(e.entryPath)) continue;
+                  if (!vendorExclude.has(e.entryPath)) out.add(e.entryPath);
+                }
+              } catch { /* fallback to package.json discovery */ }
+            }
+            return out;
+          })();
+
+          if (batchEntryPaths.size > 0 || vendorExclude.size > 0) {
+            fs.mkdirSync(depsRoot, { recursive: true });
+            const batchEntries = Array.from(batchEntryPaths).map((entryPath) => ({ entryPath, depsHash }));
+            // vendorExclude contains the fsPath set; build the OptimizeChunkedEntry array
+            const chunkedEntries = Array.from(vendorExclude).map((entryPath) => ({ entryPath, depsHash }));
+            let splitHadErrors = false;
+            try {
+              const splitResult = (native as any).optimizeDepsParallelSplit(batchEntries, chunkedEntries, ionifyDir) as {
+                chunkGroup: string;
+                chunkFiles: string[];
+                chunkedEntries: unknown[];
+                errors: string[];
+              };
+              for (const err of splitResult.errors ?? []) {
+                logWarn(`[deps] WARN (parallel split): ${err}`);
+                splitHadErrors = true;
+              }
+            } catch (err) {
+              logWarn(`[deps] WARN: Parallel split failed, falling back: ${String(err)}`);
+              // Fall through to sequential below — but don't write sentinel yet
+              await ensureOptimizedDeps({
+                rootDir, ionifyDir, depsHash, depsRoot, config,
+                resolvedEntries: entries, allowedRoots: workspace.allowedRoots,
+                excludeEntryPaths: vendorExclude,
+              });
+            }
+            // Only write the sentinel when the parallel split had no errors. Partial failures
+            // leave manifest.json incomplete; writing .verified would cause the next warm build
+            // to skip re-optimization and silently serve stale/missing dep artifacts.
+            if (!splitHadErrors) {
+              try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+              writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+            }
+          } else {
+            try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+            writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+          }
+        }
+        // prepareProductionAutoCorePack will find files already exist → alreadyReady fast path
+        try {
+          const packs = await prepareProductionAutoCorePack({ rootDir, ionifyDir, depsHash, depsRoot, config });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (CAS-first, rust-parallel)`);
+          } else {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (cached)`);
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+
+      } else {
+        // ── Fallback: sequential P1 → P2 ──────────────────────────────────
+        await ensureOptimizedDeps({
+          rootDir,
+          ionifyDir,
+          depsHash,
+          depsRoot,
+          config,
+          resolvedEntries: entries,
+          allowedRoots: workspace.allowedRoots,
+          excludeEntryPaths: vendorExclude ?? undefined,
+        });
+        const packsStart2 = Date.now();
+        try {
+          const packs = await prepareProductionAutoCorePack({
+            rootDir,
+            ionifyDir,
+            depsHash,
+            depsRoot,
+            config,
+          });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart2}ms (CAS-first)`);
+          } else {
+            logInfo("Production packs ready (cached)");
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+      }
+    } else {
+      // No auto vendor packs: sequential P1 only (+ optional manual packs after)
+      await ensureOptimizedDeps({
+        rootDir,
+        ionifyDir,
+        depsHash,
+        depsRoot,
+        config,
+        resolvedEntries: entries,
+        allowedRoots: workspace.allowedRoots,
+      });
+
+      if (vendorPacksManualConfigured) {
+        const depsManifestIndexForPacks = loadDepsManifestIndex(depsRoot);
+        const packsStart = Date.now();
+        try {
+          const packs = await prepareProductionManualPacks({
+            rootDir,
+            ionifyDir,
+            depsHash,
+            depsRoot,
+            config,
+            resolvedEntries: entries,
+            allowedRoots: workspace.allowedRoots,
+            depsManifestIndex: depsManifestIndexForPacks,
+          });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (CAS-first)`);
+          } else {
+            logInfo("Production packs ready (cached)");
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+      }
+    }
+
+	    const depsManifestIndex = loadDepsManifestIndex(depsRoot);
+    // T19: load dep-stop set for graph_build_from_entries (cold path only).
+    // Allows the native BFS to record dep entries as leaf nodes instead of crawling
+    // into node_modules source trees \u2014 saves ~500-1100ms on large apps (UP-Portal scale).
+    const depStops = loadDepStopsFromManifest(depsRoot);
 
     logInfo("Building...");
 
-    const plan = await generateBuildPlan(entries, rawVersionInputs);
+    const plan = await generateBuildPlan(entries, rawVersionInputs, depStops);
     const totalPlannedModules = plan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
     logInfo(
       `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`,
@@ -1906,6 +2192,90 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const casRoot = path.join(ionifyDir, "cas");
 
     let casHits = 0;
+
+    // ── Source freshness scan ──────────────────────────────────────────────────
+    // When source files are edited while no dev server is running, graph.db
+    // retains the old per-module hash.  Both Tier-1 (transform cache) and Tier-4
+    // (chunk CAS) are keyed by that hash, so a stale graph causes the build to
+    // serve old bundled output even when sources changed.
+    //
+    // Strategy: mtime-first, read-only-on-suspicion.
+    // A stamp file (.ionify/freshness-ts) records the high-res time of the last
+    // completed freshness scan.  On each build:
+    //   1. stat() every source module — O(N) syscalls, ~0.003ms/file, no I/O.
+    //   2. Only readFileSync+hash files whose mtime > stampMs (i.e. changed since
+    //      last scan).  On a warm build with no edits: zero reads.
+    //   3. When a hash mismatch is found: patch meta.hash + plan ref.hash in-memory
+    //      and write the new hash back to graph.db via graphRecord.
+    //   4. Write stampMs = Date.now() to the stamp file after the scan.
+    //
+    // Cost on up-portal warm builds (no edits):
+    //   ~300 source files × 0.003ms stat = ~0.9ms  (vs 5ms readFileSync+hash).
+    //
+    // Patching propagates to:
+    //   - jsCasFileById / CAS hydration pass → Tier-1 miss → re-transform ✓
+    //   - ref.hash on plan module objects → Rust chunkHash changes → Tier-4 miss ✓
+    {
+      const stampFile = path.join(ionifyDir, "freshness-ts");
+      let stampMs = 0;
+      try {
+        const raw = fs.readFileSync(stampFile, "utf8").trim();
+        stampMs = parseInt(raw, 10) || 0;
+      } catch {
+        // No stamp yet → treat all files as potentially stale (full scan once).
+      }
+
+      let staleCount = 0;
+      for (const [id, meta] of moduleMetaById.entries()) {
+        if (!meta.hash || !meta.fsPath) continue;
+        // Skip dep artifacts (under .ionify/) and node_modules (already content-hashed
+        // by the dep optimizer; those hashes are stable across depsHash changes).
+        const fp = meta.fsPath;
+        if (fp.includes("node_modules") || fp.includes("/.ionify/")) continue;
+        if (meta.kind !== "js" && meta.kind !== "css") continue;
+        try {
+          const st = fs.statSync(fp);
+          // mtime ≤ stamp → graph is authoritative, no read needed.
+          if (st.mtimeMs <= stampMs) continue;
+          // File was modified since last scan → read and hash to confirm.
+          const content = fs.readFileSync(fp);
+          const diskHash = crypto.createHash("sha256").update(content).digest("hex");
+          if (diskHash !== meta.hash) {
+            meta.hash = diskHash;
+            // Patch plan module objects so the Rust bundler uses the correct chunkHash.
+            const refs = moduleRefsById.get(id) ?? [];
+            for (const ref of refs) ref.hash = diskHash;
+            staleCount++;
+            // Write updated hash back to graph.db so subsequent builds agree.
+            if (native?.graphRecord) {
+              const firstRef = refs[0] as any;
+              const deps: string[] = Array.isArray(firstRef?.deps) ? firstRef.deps : [];
+              const dynDeps: string[] = Array.isArray(firstRef?.dynamicDeps) ? firstRef.dynamicDeps : [];
+              try {
+                native.graphRecord(id, diskHash, deps, dynDeps, meta.kind, null);
+              } catch {
+                // Non-fatal: next build will re-detect and re-patch.
+              }
+            }
+          }
+        } catch {
+          // File may be deleted or unreadable; let the transform phase handle it.
+        }
+      }
+      if (staleCount > 0) {
+        logInfo(`[Build] ${staleCount} source module(s) changed since last graph update — CAS keys refreshed`);
+      }
+
+      // Update stamp unconditionally — even if no staleness was found.
+      // This ensures next build's mtime comparisons are anchored to now.
+      try {
+        fs.mkdirSync(ionifyDir, { recursive: true });
+        fs.writeFileSync(stampFile, String(Date.now()), "utf8");
+      } catch {
+        // Non-fatal: next build will fall back to full stat scan.
+      }
+    }
+
     const defineJobs: Array<{ id: string; artifactHash: string; baseCode: string }> = [];
     const cssDerivedArtifactHashById = new Map<string, string>();
     const jobs: Array<{
@@ -1923,6 +2293,24 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       if (!defineHash) return baseHash;
       return getCacheKey(`${baseHash}|define:${defineHash}`);
     };
+
+    // Pre-compute casFile paths for non-CSS modules and batch-check existence in parallel
+    // (Rust/Rayon stat syscalls vs N sequential TS-side fs.existsSync calls).
+    const jsCasFileById = new Map<string, string>();
+    for (const [id, meta] of moduleMetaById.entries()) {
+      if (meta.kind !== "css" && meta.hash) {
+        const ah = getArtifactHash(meta.hash, meta.kind);
+        jsCasFileById.set(id, path.join(getCasArtifactPath(casRoot, configHash, ah), "transformed.js"));
+      }
+    }
+    const casExistsMap = new Map<string, boolean>();
+    if (jsCasFileById.size > 0) {
+      const batchPaths = Array.from(jsCasFileById.values());
+      const batchExists = (native as any).casBatchCheck(batchPaths) as boolean[];
+      for (let i = 0; i < batchPaths.length; i++) {
+        casExistsMap.set(batchPaths[i], batchExists[i]);
+      }
+    }
 
     // CAS hydration pass: skip transforms when artifacts already exist.
     for (const [id, meta] of moduleMetaById.entries()) {
@@ -2029,7 +2417,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       } else {
         const casFileName = "transformed.js";
         const casFile = casDir ? path.join(casDir, casFileName) : null;
-        if (casFile && fs.existsSync(casFile)) {
+        if (casFile && (casExistsMap.get(casFile) ?? fs.existsSync(casFile))) {
           casHits += 1;
           continue;
         }
@@ -2109,19 +2497,76 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-    const pool = new TransformWorkerPool();
-    try {
-      const results = await pool.runMany(
-        jobs.map((job) => ({
-          id: job.id,
-          filePath: job.filePath,
-          ext: job.ext,
-          code: job.code,
-        }))
-      );
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        const job = jobs[i];
+    if (jobs.length > 0) {
+      const transformResultsById = new Map<string, TransformJobResult>();
+      const nativeHandledIds = new Set<string>();
+      const jobById = new Map(jobs.map((job) => [job.id, job]));
+      const jsJobs = jobs.filter((job) => job.kind === "js");
+
+      if (typeof native?.nativeTransformBatch === "function" && jsJobs.length > 0) {
+        try {
+          const nativeResults = native.nativeTransformBatch(
+            jsJobs.map((job) => ({
+              id: job.id,
+              filePath: job.filePath,
+              ext: job.ext,
+              code: job.code,
+            })),
+            parserMode,
+          );
+
+          for (const result of nativeResults) {
+            const job = jobById.get(result.id);
+            if (!job) continue;
+            nativeHandledIds.add(result.id);
+            transformResultsById.set(result.id, {
+              id: result.id,
+              filePath: result.filePath ?? result.file_path ?? job.filePath,
+              code: result.code,
+              map: result.map ?? undefined,
+              type: (result.type ?? result.kind ?? "js") as TransformJobResult["type"],
+              error: result.error ?? undefined,
+            });
+          }
+
+          if (nativeHandledIds.size > 0) {
+            logInfo(`[Build] Native transform batch handled ${nativeHandledIds.size} JS module(s)`);
+          }
+        } catch (err) {
+          nativeHandledIds.clear();
+          logWarn(
+            `[Build] Native transform batch unavailable; falling back to worker transforms (${
+              err instanceof Error ? err.message : String(err)
+            })`,
+          );
+        }
+      }
+
+      const workerJobs = jobs.filter((job) => job.kind !== "js" || !nativeHandledIds.has(job.id));
+      if (workerJobs.length > 0) {
+        const pool = new TransformWorkerPool();
+        try {
+          const results = await pool.runMany(
+            workerJobs.map((job) => ({
+              id: job.id,
+              filePath: job.filePath,
+              ext: job.ext,
+              code: job.code,
+            }))
+          );
+          for (const result of results) {
+            transformResultsById.set(result.id, result);
+          }
+        } finally {
+          await pool.close();
+        }
+      }
+
+      for (const job of jobs) {
+        const result = transformResultsById.get(job.id);
+        if (!result) {
+          throw new Error(`Transform failed for ${job.filePath}: no transform result returned`);
+        }
         if (result.error) {
           throw new Error(`Transform failed for ${result.filePath}: ${result.error}`);
         }
@@ -2207,9 +2652,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         const finalCode = isJs ? applyDefineReplacements(result.code, defineConfig) : result.code;
         moduleOutputs.set(job.id, { code: finalCode, type: result.type });
       }
-    } finally {
-      await pool.close();
-    }
+    } // end if (jobs.length > 0)
 
     // Ensure native bundler plan hashes are aligned with derived CSS artifact hashes so
     // `transformed.js` wrappers (CSS Modules) can be hydrated from CAS deterministically.
@@ -2244,6 +2687,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 	    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
 	    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
 	    const mangleEnabled = minifyEnabled;
+
     const { artifacts, stats } = await emitChunks(absOutDir, plan, moduleOutputs, {
 	      casRoot,
 	      versionHash: configHash,
@@ -2255,6 +2699,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 	        scopeHoist,
 	      },
 	    });
+
     const outputHashHints = collectOutputHashHints(stats);
     recordOutputHashHint(outputHashHints, await writeBuildManifest(absOutDir, plan, artifacts));
     recordOutputHashHint(outputHashHints, await writeAssetsManifest(absOutDir, artifacts));
@@ -2459,6 +2904,56 @@ function detectVendorSpecifiers(pkgJson: any | null): string[] {
   return [];
 }
 
+const OPTIMIZABLE_DEP_ENTRY_EXTS = new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".json",
+]);
+
+function isOptimizableDepEntryPath(entryPath: string): boolean {
+  return OPTIMIZABLE_DEP_ENTRY_EXTS.has(path.extname(entryPath).toLowerCase());
+}
+
+/**
+ * T8: Resolve the fsPath set for the auto vendor specifiers (react/react-dom/vue/svelte
+ * families) so that ensureOptimizedDeps can exclude them from the batch optimizer arm
+ * while prepareProductionAutoCorePack handles them via the chunked optimizer arm.
+ * Returns null when resolution is not possible (native.resolveModule unavailable),
+ * and an empty set when no vendor specifiers are detected. Callers must fall back to
+ * sequential execution when null is returned.
+ */
+function resolveAutoVendorEntryFsPaths(rootDir: string, config: any): Set<string> | null {
+  if (!native?.resolveModule) return null;
+  const optimizeDeps = (config as any)?.optimizeDeps ?? {};
+  const optimizeExclude: Set<string> | null = Array.isArray(optimizeDeps.exclude)
+    ? new Set<string>(optimizeDeps.exclude.map((s: any) => String(s)))
+    : null;
+  const pkgJson = readProjectPackageJson(rootDir);
+  const vendorSpecifiers = detectVendorSpecifiers(pkgJson)
+    .filter((s) => !optimizeExclude?.has(s));
+  if (vendorSpecifiers.length === 0) return new Set();
+  const result = new Set<string>();
+  for (const spec of vendorSpecifiers) {
+    try {
+      const r = native.resolveModule(spec, rootDir) as any;
+      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
+      result.add(fsPath);
+    } catch {
+      // ignore individual resolution failures — still include others
+    }
+  }
+  return result;
+}
+
 async function ensureOptimizedDeps(options: {
   rootDir: string;
   ionifyDir: string;
@@ -2467,8 +2962,67 @@ async function ensureOptimizedDeps(options: {
   config: any;
   resolvedEntries: string[] | undefined;
   allowedRoots: string[];
+  /**
+   * T8: Entry paths that are owned exclusively by the vendor-pack parallel arm
+   * (`prepareProductionAutoCorePack` / `prepareProductionManualPacks`). These are
+   * filtered out of the batch optimizer so that P1 and P2 can run concurrently
+   * without writing to the same dep artifact files. When null / empty, all
+   * discovered entries are processed (legacy sequential behaviour).
+   */
+  excludeEntryPaths?: Set<string>;
 }) {
-  const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots } = options;
+  const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots, excludeEntryPaths } = options;
+
+  // ── Bottleneck #3 sentinel fast-path ──────────────────────────────────────
+  // depsHash is derived from configHash + lockfile + outputVersion + NODE_ENV +
+  // sourcemap + bundleEsm + sharedChunks. Any dep or config change produces a
+  // new depsHash → new depsRoot directory → no sentinel → full scan runs.
+  // On warm builds with the same depsHash, skip the entire scan+resolve pipeline
+  // (readProjectPackageJson, scanDepEntryPaths, N×resolveModule calls, optimizer
+  // cache-check pass) — everything that takes ~5-8ms per build per 610 deps.
+  const sentinelPath = path.join(depsRoot, ".verified");
+  if (fs.existsSync(sentinelPath)) {
+    logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
+    return;
+  }
+
+  // ── T20: Global Tier-5 restore ────────────────────────────────────────────
+  // If the global cache has a completed build for this depsHash, restore it to
+  // the local depsRoot (hardlinks, ~5ms) and skip the full optimizer (~133ms).
+  if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+    try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+    logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+    return;
+  }
+
+  // ── T6: Cross-depsHash artifact promotion ────────────────────────────────
+  // When depsHash rotates (pnpm add/update, lockfile/config change), the new
+  // depsRoot is empty. Find the most recently completed previous depsRoot and
+  // promote artifacts whose sourceHash still matches the on-disk file — these
+  // are pre-written as manifest entries so the optimizer treats them as cache
+  // hits. Only new/changed deps are re-bundled from source.
+  if ((native as any)?.depsPromoteArtifacts) {
+    const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
+    if (prevRoot) {
+      try {
+        const result = (native as any).depsPromoteArtifacts(
+          prevRoot,
+          depsRoot,
+          depsHash,
+          DEPS_OPTIMIZER_OUTPUT_VERSION,
+        ) as { promoted: number; skipped: number };
+        if (result.promoted > 0) {
+          logInfo(
+            `[deps] Promoted ${result.promoted} artifacts from previous deps dir` +
+            ` (${result.skipped} need re-optimization)`,
+          );
+        }
+      } catch {
+        // Non-fatal: promotion failure leaves new depsRoot empty → full re-optimization.
+      }
+    }
+  }
+
   if (!native?.resolveModule) return;
   if (!native?.optimizeDependenciesChunked && !native?.optimizeDependenciesBatch && !native?.optimizeDependency) {
     return;
@@ -2506,6 +3060,7 @@ async function ensureOptimizedDeps(options: {
       if (!fsPath || typeof fsPath !== "string") continue;
       // Only optimize external deps (node_modules). Workspace sources are handled by CAS transforms.
       if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
       entryPaths.add(fsPath);
     } catch {
       // ignore
@@ -2518,11 +3073,23 @@ async function ensureOptimizedDeps(options: {
       const scannedEntryPaths = await scanDepEntryPaths({ rootDir, entries: usageEntries, allowedRoots });
       for (const entry of scannedEntryPaths) {
         if (optimizeExclude?.has(entry.packageName)) continue;
+        if (!isOptimizableDepEntryPath(entry.entryPath)) continue;
         entryPaths.add(entry.entryPath);
       }
     } catch {
       // Fall back to package.json/include/vendor discovery only.
     }
+  }
+
+  if (entryPaths.size === 0) return;
+
+  // T8: Remove entries owned exclusively by the vendor-pack parallel arm so that
+  // P1 (batch) and P2 (chunked) write to disjoint artifact file sets. When
+  // excludeEntryPaths is provided, those entries will be optimized by P2 via
+  // optimizeDependenciesChunked — running them through this batch path too would
+  // create concurrent writes to the same files.
+  if (excludeEntryPaths && excludeEntryPaths.size > 0) {
+    for (const p of excludeEntryPaths) entryPaths.delete(p);
   }
 
   if (entryPaths.size === 0) return;
@@ -2551,6 +3118,8 @@ async function ensureOptimizedDeps(options: {
   if (depsSharedChunksEnabled && !avoidGlobalChunked && native?.optimizeDependenciesChunked) {
     try {
       native.optimizeDependenciesChunked(entries, ionifyDir);
+      try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
       return;
     } catch {
       // fall through to batch/single
@@ -2560,6 +3129,8 @@ async function ensureOptimizedDeps(options: {
   if (native?.optimizeDependenciesBatch) {
     try {
       native.optimizeDependenciesBatch(entries, ionifyDir);
+      try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
       return;
     } catch {
       // fall through to single
@@ -2575,10 +3146,108 @@ async function ensureOptimizedDeps(options: {
       }
     }
   }
+  try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+  writeDepArtifactsToGlobalCache(depsHash, depsRoot);
 }
 
 function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
+}
+
+/**
+ * T6: Find the most recently completed depsRoot under `<ionifyDir>/deps/` that
+ * is not the current one. "Completed" means it has both a `.verified` sentinel
+ * (written by `markDepsVerified`) and a `manifest.json` file — i.e., a full,
+ * successful prior optimization run. Picks the dir with the newest sentinel mtime.
+ */
+// ── T20: Tier-5 Global User Cache — dep artifacts ─────────────────────────
+// Dep artifacts live in `.ionify/deps/<depsHash>/` which is project-local and
+// deleted on `rm -rf .ionify` or CI cache wipe. This global mirror at
+// `~/.ionify/global/dep-artifacts/v1/<depsHash>/` survives those wipes and is
+// keyed by the same content-hash (depsHash) so it is safe to reuse across
+// projects and machines with identical dep trees.
+//
+// Cold build savings (react-basic): ~133ms (optimizer) → ~5ms (hardlink restore).
+// Write is done after every successful optimizer run so the cache self-populates.
+
+const GLOBAL_DEP_CACHE_VERSION = "v1";
+
+function getGlobalDepCacheDir(depsHash: string): string {
+  return path.join(os.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION, depsHash);
+}
+
+/**
+ * Restore dep artifacts from global Tier-5 cache into localDepsRoot.
+ * Uses hardlinks for zero-copy performance (falls back to copy on EXDEV).
+ * Returns true if restore succeeded.
+ */
+function restoreDepArtifactsFromGlobalCache(depsHash: string, localDepsRoot: string): boolean {
+  const globalDir = getGlobalDepCacheDir(depsHash);
+  const globalSentinel = path.join(globalDir, ".verified");
+  if (!fs.existsSync(globalSentinel)) return false;
+  try {
+    const entries = fs.readdirSync(globalDir);
+    for (const entry of entries) {
+      const src = path.join(globalDir, entry);
+      const dst = path.join(localDepsRoot, entry);
+      if (fs.existsSync(dst)) continue;
+      try {
+        fs.linkSync(src, dst);           // hardlink — instant, zero-copy
+      } catch {
+        fs.copyFileSync(src, dst);       // fallback: cross-device or unsupported
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mirror a completed local depsRoot into the global Tier-5 cache.
+ * Called fire-and-forget (errors are non-fatal).
+ */
+function writeDepArtifactsToGlobalCache(depsHash: string, localDepsRoot: string): void {
+  try {
+    const globalDir = getGlobalDepCacheDir(depsHash);
+    fs.mkdirSync(globalDir, { recursive: true });
+    const entries = fs.readdirSync(localDepsRoot);
+    for (const entry of entries) {
+      const src = path.join(localDepsRoot, entry);
+      const dst = path.join(globalDir, entry);
+      if (fs.existsSync(dst)) continue;
+      try {
+        fs.linkSync(src, dst);
+      } catch {
+        fs.copyFileSync(src, dst);
+      }
+    }
+  } catch {
+    // Non-fatal: global cache write failure never blocks the build.
+  }
+}
+
+function findPreviousDepsRoot(ionifyDir: string, currentDepsRoot: string): string | null {
+  const depsDir = path.join(ionifyDir, "deps");
+  if (!fs.existsSync(depsDir)) return null;
+  try {
+    const entries = fs.readdirSync(depsDir, { withFileTypes: true });
+    let best: { mtime: number; dirPath: string } | null = null;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dirPath = path.join(depsDir, entry.name);
+      if (dirPath === currentDepsRoot) continue;
+      if (!fs.existsSync(path.join(dirPath, ".verified"))) continue;
+      if (!fs.existsSync(path.join(dirPath, "manifest.json"))) continue;
+      try {
+        const mtime = fs.statSync(path.join(dirPath, ".verified")).mtimeMs;
+        if (!best || mtime > best.mtime) best = { mtime, dirPath };
+      } catch { /* skip unreadable sentinel */ }
+    }
+    return best?.dirPath ?? null;
+  } catch {
+    return null;
+  }
 }
 
 type BuildCompressionReportEntry = {

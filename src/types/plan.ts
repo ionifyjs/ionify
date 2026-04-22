@@ -1,4 +1,5 @@
-export type BuildPlanModuleKind = "js" | "css" | "asset";
+/** "dep" = pre-built Tier-2 dep optimizer artifact (T19 dep-leaf graph node) */
+export type BuildPlanModuleKind = "js" | "css" | "asset" | "dep";
 
 export interface BuildPlanModule {
   id: string;

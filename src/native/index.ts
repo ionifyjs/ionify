@@ -57,9 +57,32 @@ export interface NativeBinding {
   cacheHashPath?(path: string): string;
   parseAndTransformOxc?(source: string, options: { filename: string; jsx?: boolean; typescript?: boolean; react_refresh?: boolean }): { code: string; map?: string | null };
   parseAndTransformSwc?(source: string, options: { filename: string; jsx?: boolean; typescript?: boolean; react_refresh?: boolean }): { code: string; map?: string | null };
+  nativeTransformBatch?(
+    jobs: Array<{ id: string; filePath: string; ext: string; code: string }>,
+    parserMode?: "oxc" | "swc" | "hybrid" | string | null,
+  ): Array<{
+    id: string;
+    filePath?: string;
+    file_path?: string;
+    code: string;
+    map?: string | null;
+    type?: "js" | "css" | "asset" | string;
+    kind?: "js" | "css" | "asset" | string;
+    error?: string | null;
+  }>;
   graphInit(path?: string, version?: string): void;
   graphRecord(id: string, hash: string | null, deps: string[], dynamicDeps?: string[], kind?: string, configHash?: string | null): boolean;
   graphRecordBatch?(nodes: NativeGraphRecordBatchNode[]): number;
+  graphBuildFromEntries?(
+    entryPaths: string[],
+    workspaceRoot: string,
+    ionifyDir?: string | null,
+    /** T19: dep-leaf stop set — paths that map to pre-built Tier-2 artifacts; BFS stops here */
+    depStops?: Array<{ entryPath: string; artifactHash: string }> | null,
+  ): {
+    moduleCount: number;
+    fingerprint: string;
+  };
   graphGet(id: string): NativeGraphNode | undefined | null;
   graphRemove(id: string): void;
   graphLoad(): NativeGraphNode[];
@@ -152,6 +175,27 @@ export interface NativeBinding {
     mapPath?: string | null;
     error?: string | null;
   }>;
+
+  /**
+   * T8: Run the batch (non-vendor) and chunked (vendor) dep optimizers in true
+   * Rayon-parallel inside Rust. Both arms must operate on disjoint entry file sets
+   * (enforced by the TS caller via excludeEntryPaths / resolveAutoVendorEntryFsPaths).
+   */
+  optimizeDepsParallelSplit?(
+    batchEntries: Array<{ entryPath: string; depsHash: string }>,
+    chunkedEntries: Array<{ entryPath: string; depsHash: string; usedExports?: string[] | null }>,
+    ionifyDir?: string | null,
+  ): {
+    chunkGroup: string;
+    chunkFiles: string[];
+    chunkedEntries: Array<{
+      entryPath: string;
+      outPath: string;
+      mapPath?: string | null;
+      peerDepWarnings: string[];
+    }>;
+    errors: string[];
+  };
 
   // Phase 18C: Rust-native batch compression for JS chunk files.
   // Each item is compressed independently (Rayon-parallel in Rust).
@@ -364,6 +408,7 @@ type ConfigHashInput = {
   treeshake?: boolean | object;
   scopeHoist?: boolean | object;
   plugins?: string[];
+  resolveOptions?: unknown;
   cssOptions?: unknown;
   assetOptions?: unknown;
   runtimeContracts?: Record<string, unknown> | null;
