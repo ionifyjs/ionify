@@ -46,6 +46,10 @@ export interface NativeBuildChunksOptions {
   treeshake?: NativeBuildChunksTreeshakeOptions;
   scopeHoist?: NativeBuildChunksScopeHoistOptions;
   enableSourcemaps?: boolean;
+  externalModules?: string[];
+  federationExposeEntries?: string[];
+  virtualModuleIds?: string[];
+  virtualModuleSources?: string[];
 }
 
 export interface NativeBinding {
@@ -79,6 +83,8 @@ export interface NativeBinding {
     ionifyDir?: string | null,
     /** T19: dep-leaf stop set — paths that map to pre-built Tier-2 artifacts; BFS stops here */
     depStops?: Array<{ entryPath: string; artifactHash: string }> | null,
+    /** Phase MF-A: preserve these specifiers as externals in the planner graph. */
+    externalSpecifiers?: string[] | null,
   ): {
     moduleCount: number;
     fingerprint: string;

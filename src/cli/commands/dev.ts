@@ -40,13 +40,15 @@ import {
   reconcilePackEntries,
   resolveChunkedPackEntries,
 } from "@core/deps/feature-pack-planner";
+import { extractDepCouplingGroups } from "@core/deps/dep-coupling";
 import { computeChunkGroupIdFromStableIds } from "@core/deps/vendor-pack-utils";
 import { hashFeaturePackRoutingIndex, hashVendorPackV2RoutingIndex } from "@core/deps/routing-hash";
 import { VendorPackV2IndexManager, vendorPackV2MemberKey } from "@core/deps/vendor-pack-v2";
 import { Graph } from "@core/graph";
 import { RouteHintIndex, normalizeDocumentRouteKey, type RouteHintKind } from "@core/route-hints";
-import { extractImports, resolveImports } from "@core/resolver";
+import { extractImports } from "@core/resolver";
 import { ModuleResolver } from "@core/resolver/module-resolver";
+import { classifyImportSpecifiersForGraph, collectConfiguredExternalSpecifiers } from "@core/external-policy";
 import { IonifyWatcher } from "@core/watcher";
 import { TransformEngine, transformCache } from "@core/transform";
 import { TransformWorkerPool } from "@core/worker/pool";
@@ -83,12 +85,20 @@ import { applyDefineReplacements, buildDefineConfig } from "@core/utils/define";
 import { isNotModified, weakEtagFromContent, weakEtagFromStat } from "@core/http-cache";
 import crypto from "crypto";
 import zlib from "zlib";
+import { computeDepsHash } from "@cli/utils/deps-hash";
+import {
+  FEDERATION_GRAPH_PREFIX,
+  buildFederationConfigGraphNodes,
+  buildFederationVersionContract,
+  collectFederationRemoteImportBindings,
+  rewriteFederationGraphEdgeIds,
+  type FederationPersistedGraphNode,
+} from "@core/federation";
 
 const IONIFY_CSS_JS_MARKER = "// ionify:css";
 const IONIFY_VENDOR_PACK_MARKER = "// ionify:vendor-pack";
 const IONIFY_VENDOR_PACK_V2_MARKER = "// ionify:vendor-pack-v2";
 const DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
-const DEPS_CACHE_SCHEMA_VERSION = 1;
 const VENDOR_PACK_V2_REWRITE_POLICY_VERSION = 2;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -98,6 +108,16 @@ const __dirname = path.dirname(__filename);
 const CLIENT_DIR = path.resolve(__dirname, "../client");
 const CLIENT_FALLBACK_DIR = path.resolve(process.cwd(), "src/client");
 const DEPS_PREFIX = "/@deps/";
+
+function syncFederationGraphNodes(graph: Graph, nodes: FederationPersistedGraphNode[]): void {
+  const nextIds = new Set(nodes.map((node) => node.id));
+  for (const existingId of graph.listNodeIdsByPrefix(FEDERATION_GRAPH_PREFIX)) {
+    if (!nextIds.has(existingId)) graph.removeNodeById(existingId);
+  }
+  for (const node of nodes) {
+    graph.recordNodeById(node.id, node.hash, node.deps, node.dynamicDeps ?? [], node.kind);
+  }
+}
 
 function resolvePublicDir(rootDir: string, value: unknown): string | null {
   if (value === false) return null;
@@ -119,6 +139,81 @@ function shouldTryPublicDir(reqPath: string): boolean {
   if (reqPath.startsWith(DEPS_PREFIX)) return false;
   if (reqPath.startsWith("/__ionify")) return false;
   return true;
+}
+
+type ResolvedSpaFallbackPolicy = {
+  enabled: boolean;
+  entryFilePath: string | null;
+  entryUrlPath: string | null;
+  disableDotRule: boolean;
+};
+
+function resolveSpaFallbackPolicy(rootDir: string, rawValue: unknown): ResolvedSpaFallbackPolicy {
+  const objectValue =
+    rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
+      ? (rawValue as Record<string, unknown>)
+      : null;
+  const rawEnabled = objectValue ? objectValue.enabled : rawValue;
+  const mode =
+    rawEnabled === undefined ? "auto" : rawEnabled === true || rawEnabled === false ? rawEnabled : rawEnabled === "auto" ? "auto" : "auto";
+  const entryRaw =
+    objectValue && typeof objectValue.entry === "string" && objectValue.entry.trim().length > 0
+      ? objectValue.entry.trim()
+      : "/index.html";
+  const entryFilePath = entryRaw.startsWith("/")
+    ? path.join(rootDir, entryRaw)
+    : path.resolve(rootDir, entryRaw);
+  const disableDotRule = objectValue?.disableDotRule === true;
+  const entryExists = fs.existsSync(entryFilePath) && fs.statSync(entryFilePath).isFile();
+  const enabled = mode === "auto" ? entryExists : mode === true ? entryExists : false;
+
+  return {
+    enabled,
+    entryFilePath: enabled ? entryFilePath : null,
+    entryUrlPath: enabled ? normalizeUrlFromFs(rootDir, entryFilePath) : null,
+    disableDotRule,
+  };
+}
+
+function headerValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value.join(", ");
+  return typeof value === "string" ? value : "";
+}
+
+function isHtmlNavigationRequest(
+  req: IncomingMessage,
+  reqPath: string,
+  query: Record<string, unknown>,
+  policy: ResolvedSpaFallbackPolicy,
+): boolean {
+  if (!policy.enabled || !policy.entryFilePath) return false;
+  const method = (req.method ?? "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  if (!reqPath.startsWith("/")) return false;
+  if (reqPath.startsWith(DEPS_PREFIX) || reqPath.startsWith("/__ionify")) return false;
+  if ("import" in query || "inline" in query || "raw" in query || "module" in query || "url" in query) {
+    return false;
+  }
+
+  const baseName = path.posix.basename(reqPath);
+  if (!policy.disableDotRule && baseName.includes(".")) {
+    return false;
+  }
+
+  const secFetchDest = headerValue(req.headers["sec-fetch-dest"]).toLowerCase();
+  if (secFetchDest === "document") return true;
+  const secFetchMode = headerValue(req.headers["sec-fetch-mode"]).toLowerCase();
+  if (secFetchMode === "navigate") return true;
+  const accept = headerValue(req.headers.accept).toLowerCase();
+  return accept.includes("text/html");
+}
+
+function normalizeGraphDepForClient(rootDir: string, dep: string): string {
+  return dep.startsWith("http://") || dep.startsWith("https://")
+    ? dep
+    : path.isAbsolute(dep)
+      ? normalizeUrlFromFs(rootDir, dep)
+      : dep;
 }
 
 function rewriteCssImportSpecifiers(
@@ -483,31 +578,6 @@ function estimateLockfilePackageCount(name: string, contents: Buffer): number | 
   }
 
   return null;
-}
-
-function computeDepsHash(
-  configHash: string,
-  lockfile: LockfileInfo | null,
-  opts: {
-    nodeEnv: string;
-    sourcemap: boolean;
-    bundleEsm: boolean;
-    sharedChunks: string;
-    outputVersion: number;
-  },
-): string {
-  const hash = crypto.createHash("sha256");
-  hash.update(configHash);
-  hash.update(`depsSchema=${DEPS_CACHE_SCHEMA_VERSION}`);
-  if (lockfile) {
-    hash.update(lockfile.contents);
-  }
-  hash.update(`NODE_ENV=${opts.nodeEnv}`);
-  hash.update(`optimizeDeps.sourcemap=${opts.sourcemap ? "1" : "0"}`);
-  hash.update(`optimizeDeps.bundleEsm=${opts.bundleEsm ? "1" : "0"}`);
-  hash.update(`optimizeDeps.sharedChunks=${opts.sharedChunks}`);
-  hash.update(`optimizeDeps.outputVersion=${opts.outputVersion}`);
-  return hash.digest("hex").slice(0, 16);
 }
 
 function readProjectPackageJson(rootDir: string): any | null {
@@ -1024,6 +1094,7 @@ export async function startDevServer({
   const envMode = mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "development";
   // Phase 5.4.2: Load config first to get root option
   const userConfig = await loadIonifyConfig(process.cwd(), envMode);
+  const configuredExternalSpecifiers = collectConfiguredExternalSpecifiers(userConfig);
   const projectRootOverride = userConfig?.root ? path.resolve(userConfig.root) : null;
   const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
     projectRootOverride,
@@ -1046,6 +1117,7 @@ export async function startDevServer({
   const resolvedPort = port ?? configuredServer.port ?? 5173;
   const resolvedHost = host ?? configuredServer.host ?? process.env.IONIFY_HOST ?? "127.0.0.1";
   const httpsOptions = ensureDevHttpsOptions(configuredServer.https, rootDir, ionifyDir);
+  const spaFallback = resolveSpaFallbackPolicy(rootDir, configuredServer.spaFallback);
   const protocol = httpsOptions ? "https" : "http";
   
   const watcher = new IonifyWatcher(rootDir);
@@ -1103,6 +1175,7 @@ export async function startDevServer({
     assetOptions: (userConfig as any)?.assets ?? (userConfig as any)?.asset,
     runtimeContracts: {
       reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+      federation: buildFederationVersionContract(userConfig?.federation),
     },
   };
   const configHash = computeGraphVersion(rawVersionInputs);
@@ -1144,6 +1217,35 @@ export async function startDevServer({
   const depsRoot = path.join(ionifyDir, "deps", depsHash);
   fs.mkdirSync(depsRoot, { recursive: true });
   pruneDepsCache(ionifyDir, depsHash);
+
+  // Phase 5-Cloud-EI-DX2: dev "stable point" sentinel.
+  // Once the prewarm phase has settled (no new /@deps/* responses for
+  // DEV_STABLE_DEBOUNCE_MS), write `.ionify/deps/<depsHash>/.dev-stable` so
+  // `ionify push` can offer to push this partial-but-functional snapshot
+  // (distinct from `.verified`, which only build / optimize-all writes).
+  const DEV_STABLE_DEBOUNCE_MS = 5_000;
+  let devStableTimer: NodeJS.Timeout | null = null;
+  let devStableServedCount = 0;
+  const writeDevStableSentinel = () => {
+    try {
+      const sentinelPath = path.join(depsRoot, ".dev-stable");
+      const payload = {
+        ts: new Date().toISOString(),
+        depsHash,
+        nodeEnv: depsNodeEnv,
+        servedDepCount: devStableServedCount,
+      };
+      fs.writeFileSync(sentinelPath, JSON.stringify(payload));
+    } catch {
+      // best-effort — never crash dev because of sentinel write
+    }
+  };
+  const bumpDevStable = () => {
+    devStableServedCount += 1;
+    if (devStableTimer) clearTimeout(devStableTimer);
+    devStableTimer = setTimeout(writeDevStableSentinel, DEV_STABLE_DEBOUNCE_MS);
+    if (devStableTimer.unref) devStableTimer.unref();
+  };
   const depsManifestIndex = loadDepsManifestIndex(depsRoot);
   let depsManifestCanonicalFileNames = buildCanonicalDepFileNameIndex(
     Array.from(depsManifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath })),
@@ -2840,16 +2942,21 @@ export async function startDevServer({
   const computePlannedFeatureGroups = (): Map<FeaturePackGroup, PackEntry[]> => {
     const candidates = computeFeatureCandidates();
     const usedGroups = new Set<string>(listFeaturePackGroups());
+    const coupledGroups = extractDepCouplingGroups(
+      candidates.map((c) => ({ fileName: c.fileName, entryPath: c.entryPath })),
+    );
+    const readyGroupsForPlan = Array.from(featureLastReadyState.entries()).map(([group, state]) => ({
+      group,
+      entries: Array.isArray(state.entries) ? state.entries : [],
+    }));
     const plans = planAutoFeaturePackGroups({
       candidates,
-      currentReadyGroups: Array.from(featureLastReadyState.entries()).map(([group, state]) => ({
-        group,
-        entries: Array.isArray(state.entries) ? state.entries : [],
-      })),
+      currentReadyGroups: readyGroupsForPlan,
       maxMembers: vendorPackMaxMembers,
       maxBytes: vendorPackMaxBytes,
       minMembers: minimumRequestPositivePackMembers,
       maxGroups: computeFeatureAutoMaxGroups(candidates.length),
+      coupledGroups,
     });
     const next = new Map<FeaturePackGroup, PackEntry[]>();
     for (const plan of plans) {
@@ -3740,6 +3847,10 @@ export async function startDevServer({
   };
   
   const graph = new Graph(rawVersionInputs, { ionifyDir });
+  const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
+  if (userConfig?.federation) {
+    syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
+  }
   
   // Wave 5: Initialize AST cache with version hash
   if (native?.initAstCache) {
@@ -3959,9 +4070,17 @@ export async function startDevServer({
 	        specs = extractImports(code, mod.absPath);
 	      }
       
-      const depsAbs = resolveImports(specs, mod.absPath);
-      graph.recordFile(mod.absPath, hash, depsAbs);
-      scheduleDependencyWatches(depsAbs);
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        mod.absPath,
+        configuredExternalSpecifiers,
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings,
+      );
+      graph.recordFile(mod.absPath, hash, nextDeps);
+      scheduleDependencyWatches(localDeps);
 
 	      const extName = path.extname(mod.absPath);
 	      const result = await transformer.run({
@@ -3987,7 +4106,7 @@ export async function startDevServer({
       updates.push({
         url: mod.url,
         hash,
-        deps: depsAbs.map((dep) => normalizeUrlFromFs(rootDir, dep)),
+        deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
         reason: mod.reason,
         status: "updated",
         code: envApplied,
@@ -4126,6 +4245,7 @@ export async function startDevServer({
 
       if (reqPath.startsWith(DEPS_PREFIX)) {
         const fileName = reqPath.slice(DEPS_PREFIX.length);
+        if (fileName.endsWith(".js")) bumpDevStable();
         if (vendorPackFileName && fileName === vendorPackFileName) {
           ensureVendorPackFile();
         }
@@ -4549,8 +4669,23 @@ export async function startDevServer({
         }
 
         if (!found) {
+          if (isHtmlNavigationRequest(req, reqPath, q as Record<string, unknown>, spaFallback) && spaFallback.entryFilePath) {
+            effectiveFsPath = spaFallback.entryFilePath;
+            isPublicFile = false;
+          } else {
+            res.statusCode = 404;
+            res.end("Module not found");
+            return;
+          }
+        }
+      }
+      if (!fs.existsSync(effectiveFsPath)) {
+        if (isHtmlNavigationRequest(req, reqPath, q as Record<string, unknown>, spaFallback) && spaFallback.entryFilePath) {
+          effectiveFsPath = spaFallback.entryFilePath;
+          isPublicFile = false;
+        } else {
           res.statusCode = 404;
-          res.end("Module not found");
+          res.end("Not found");
           return;
         }
       }
@@ -4879,14 +5014,22 @@ export async function startDevServer({
 	        specs = extractImports(code, effectiveFsPath);
 	      }
       
-      const depsAbs = resolveImports(specs, effectiveFsPath);
-      const changed = graph.recordFile(effectiveFsPath, hash, depsAbs);
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        effectiveFsPath,
+        configuredExternalSpecifiers,
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings,
+      );
+      const changed = graph.recordFile(effectiveFsPath, hash, nextDeps);
 
       if (!watcher.isWatched(effectiveFsPath)) {
         watcher.watchFile(effectiveFsPath);
       }
       
-      scheduleDependencyWatches(depsAbs);
+      scheduleDependencyWatches(localDeps);
 
       let result: { code: string };
       try {
@@ -5026,7 +5169,7 @@ export async function startDevServer({
         });
       }
 
-      logInfo(`Served: ${effectiveUrlPath} deps:${depsAbs.length} ${changed ? "(updated)" : "(cached)"}`);
+      logInfo(`Served: ${effectiveUrlPath} deps:${nextDeps.length} ${changed ? "(updated)" : "(cached)"}`);
       if (cacheDebug) {
         const m = transformCache.metrics();
         logInfo(`[Ionify][Dev Cache] hits:${m.hits} misses:${m.misses} size:${m.size}`);
@@ -5270,6 +5413,11 @@ export async function startDevServer({
   logInfo(`Ionify Dev Server (Phase 2) at ${protocol}://localhost:${actualPort}`);
   logInfo(`Ready in ${Date.now() - bootStartMs}ms`);
   logInfo(`HMR listening at /__ionify_hmr (SSE)`);
+
+  // Phase 5-Cloud-EI-DX2: schedule an initial `.dev-stable` write so a
+  // freshly prewarmed depsRoot still gets a sentinel even without any
+  // browser traffic. Subsequent /@deps/* requests further debounce it.
+  bumpDevStable();
 
   // Phase 5.9.2 + 6.2: Pre-warm vendor core (best-effort, non-blocking).
   // Phase 6.1 force-mode keeps the legacy "app vendor pack" prewarm behavior.

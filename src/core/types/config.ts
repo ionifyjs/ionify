@@ -24,6 +24,35 @@ export interface IonifyServerConfig {
   host?: string;
   https?: boolean;
   cors?: boolean;
+  /**
+   * SPA document fallback policy for the dev server.
+   *
+   * - `"auto"` (default): if a root HTML document exists, missing document navigations
+   *   fall back to that document.
+   * - `true`: enable fallback using `entry` or `/index.html`.
+   * - `false`: disable fallback entirely.
+   * - object: configure the fallback document and dot-rule behavior.
+   *
+   * This applies only to browser-document navigations. Ionify never rewrites
+   * `/@deps/*`, HMR endpoints, explicit assets, or existing filesystem paths.
+   */
+  spaFallback?:
+    | "auto"
+    | boolean
+    | {
+        enabled?: boolean;
+        /**
+         * HTML document served when a navigation route misses the filesystem.
+         * Relative paths are resolved from project root.
+         * @default '/index.html'
+         */
+        entry?: string;
+        /**
+         * When `false` (default), paths whose basename contains `.` never fall back.
+         * This keeps missing assets/scripts/styles strict.
+         */
+        disableDotRule?: boolean;
+      };
   hmr?: {
     timeout?: number;
     overlay?: boolean;
@@ -38,6 +67,14 @@ export interface IonifyBuildConfig {
   outDir?: string;
   sourcemap?: boolean;
   minify?: boolean;
+  /**
+   * Preserve matching specifiers as external runtime imports.
+   * These modules are recorded as graph edges, excluded from bundling,
+   * and emitted unchanged in production output.
+   *
+   * Supports direct entries (`remote-app/widget.js`) and prefix entries (`remote-app/`).
+   */
+  external?: string[];
   /**
    * Phase 13: Emit precompressed sidecars (`.br` / `.gz`) during `ionify build`.
    * - `true` (default): enable with defaults (threshold 1KB, brotli q=11, gzip level=9)
@@ -74,15 +111,38 @@ export interface IonifyBuildConfig {
          */
         concurrency?: number;
       };
-  rollupOptions?: {
-    input?: string | string[] | Record<string, string>;
-    external?: string[];
-    output?: {
-      format?: 'es' | 'cjs' | 'umd' | 'iife';
-      dir?: string;
-      globals?: Record<string, string>;
-    };
-  };
+}
+
+export interface IonifyFederationRemoteConfig {
+  entry: string;
+  /**
+   * External specifier(s) preserved in source and build output for this remote.
+   * Defaults to the remote name when omitted.
+   */
+  external?: string | string[];
+  version?: string;
+  integrity?: string;
+  hash?: string;
+}
+
+export interface IonifyFederationSharedConfig {
+  singleton?: boolean;
+  requiredVersion?: string;
+  version?: string;
+  strictVersion?: boolean;
+  eager?: boolean;
+  shareScope?: string;
+}
+
+export interface IonifyFederationConfig {
+  /**
+   * Stable host identity written into `dist/manifest.json`.
+   * Defaults to `package.json#name` or the project directory name.
+   */
+  host?: string;
+  remotes?: Record<string, string | IonifyFederationRemoteConfig>;
+  exposes?: Record<string, string>;
+  shared?: Record<string, boolean | IonifyFederationSharedConfig>;
 }
 
 export interface IonifyCSSConfig {
@@ -150,6 +210,7 @@ export interface IonifyConfig {
   resolve?: IonifyResolveConfig;
   server?: IonifyServerConfig;
   build?: IonifyBuildConfig;
+  federation?: IonifyFederationConfig;
   css?: IonifyCSSConfig;
   optimizeDeps?: {
     /**
@@ -240,4 +301,14 @@ export interface IonifyConfig {
    * All variables starting with VITE_ or IONIFY_ are automatically exposed as import.meta.env.*
    */
   envPrefix?: string | string[];
+  /**
+   * Ionify Cloud connection and push/hydrate settings.
+   * Token must NOT be placed here — use IONIFY_CLOUD_TOKEN env var or `ionify login`.
+   */
+  cloud?: {
+    apiUrl?: string;
+    projectId?: string;
+    namespace?: string;
+    uploadConcurrency?: number;
+  };
 }

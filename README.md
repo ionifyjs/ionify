@@ -88,7 +88,9 @@ pnpm ionify build
 **Core engine:** Stable and production-ready  
 **Unified dev + build pipeline:** Stable and production-ready    
 **Persistent graph and CAS:** Stable and production-ready    
-**Dependency pipeline:** Stable and production-ready     
+**Dependency pipeline:** Stable and production-ready   
+**Monorepo support:** Ready and stable  
+**Microfrontend runtime:** Stable  
 **Analyzer:** Stable and production-ready     
 **AI layers:** Planned on top of the unified engine
 

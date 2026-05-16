@@ -51,7 +51,10 @@ export default defineConfig({
     // Also copy to dist/cli for CLI bundle context
     const cliWorkerDest = resolve("dist/cli/worker.cjs");
     copyFileSync(workerSrc, cliWorkerDest);
-    console.log("✅ Copied worker.cjs to dist/core/worker and dist/cli");
+    // Also copy to dist root for bundled dist/index.js context (resolves ./worker.cjs from import.meta.url)
+    const rootWorkerDest = resolve("dist/worker.cjs");
+    copyFileSync(workerSrc, rootWorkerDest);
+    console.log("✅ Copied worker.cjs to dist/, dist/core/worker and dist/cli");
     
     // Copy client runtime files to dist/client
     const clientSrc = resolve("src/client");

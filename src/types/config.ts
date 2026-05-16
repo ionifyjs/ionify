@@ -37,6 +37,22 @@ export interface IonifyServerConfig {
   https?: boolean | Record<string, unknown>;
   strictPort?: boolean;
   cors?: boolean | Record<string, unknown>;
+  /**
+   * SPA document fallback policy for the dev server.
+   * - `"auto"` (default): enable when a root HTML document exists
+   * - `true`: force enable using `entry` or `/index.html`
+   * - `false`: disable
+   * - object: configure the fallback entry and dot-rule behavior
+   */
+  spaFallback?:
+    | "auto"
+    | boolean
+    | {
+        enabled?: boolean;
+        entry?: string;
+        disableDotRule?: boolean;
+        [key: string]: unknown;
+      };
   hmr?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -45,10 +61,41 @@ export interface IonifyBuildConfig {
   target?: string | string[];
   sourcemap?: boolean | "inline" | "hidden";
   minify?: boolean | "esbuild" | "terser";
-  rollupOptions?: Record<string, unknown>;
+  /**
+   * Preserve matching specifiers as external runtime imports.
+   * These modules are recorded as graph edges and emitted unchanged in production output.
+   */
+  external?: string[];
   commonjsOptions?: Record<string, unknown>;
   dropConsole?: boolean;
   dropDebugger?: boolean;
+  [key: string]: unknown;
+}
+
+export interface IonifyFederationRemoteConfig {
+  entry: string;
+  external?: string | string[];
+  version?: string;
+  integrity?: string;
+  hash?: string;
+  [key: string]: unknown;
+}
+
+export interface IonifyFederationSharedConfig {
+  singleton?: boolean;
+  requiredVersion?: string;
+  version?: string;
+  strictVersion?: boolean;
+  eager?: boolean;
+  shareScope?: string;
+  [key: string]: unknown;
+}
+
+export interface IonifyFederationConfig {
+  host?: string;
+  remotes?: Record<string, string | IonifyFederationRemoteConfig>;
+  exposes?: Record<string, string>;
+  shared?: Record<string, boolean | IonifyFederationSharedConfig>;
   [key: string]: unknown;
 }
 
@@ -173,6 +220,7 @@ export interface IonifyConfig {
   resolve?: IonifyResolveConfig;
   server?: IonifyServerConfig;
   build?: IonifyBuildConfig;
+  federation?: IonifyFederationConfig;
   /**
    * Select which minifier to use for production output.
    * - 'auto' (default): let Ionify choose (prefers oxc when available)
@@ -231,7 +279,35 @@ export interface IonifyConfig {
    * Environment variables to expose to the client.
    */
   envPrefix?: string | string[];
+  /**
+   * Ionify Cloud settings. Token is resolved separately — do NOT store it here.
+   * Set IONIFY_CLOUD_TOKEN env var (CI/CD) or run `ionify login` (developer machines).
+   */
+  cloud?: IonifyCloudConfig;
   [key: string]: unknown;
+}
+
+/**
+ * ionify-cloud connection and push/hydrate settings.
+ * All fields are safe to commit to source control — the token lives in the
+ * IONIFY_CLOUD_TOKEN env var or ~/.ionify/credentials (written by `ionify login`).
+ */
+export interface IonifyCloudConfig {
+  /** Base URL of the ionify-cloud API. @default "https://api.ionify.cloud" */
+  apiUrl?: string;
+  /** Project UUID from the ionify-cloud dashboard. Required for push/hydrate. */
+  projectId?: string;
+  /**
+   * Namespace name for Tier-1 (source transform) uploads.
+   * Falls back to the current git branch name if not set.
+   * Scope is always "branch". Required when using `ionify push` with Tier-1.
+   */
+  namespace?: string;
+  /**
+   * Maximum number of artifact uploads to run in parallel.
+   * @default 8
+   */
+  uploadConcurrency?: number;
 }
 
 export type IonifyConfigExport = IonifyConfig | Promise<IonifyConfig>;

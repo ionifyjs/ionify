@@ -59,10 +59,42 @@ import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
 import { renderCssTokensModule } from "@core/loaders/css";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
+import { computeDepsHash } from "@cli/utils/deps-hash";
+import {
+  classifyImportSpecifiersForGraph,
+  collectConfiguredExternalSpecifiers,
+  isExternalGraphLeafId,
+} from "@core/external-policy";
+import { extractImports } from "@core/resolver";
+import {
+  FEDERATION_GRAPH_PREFIX,
+  buildFederationConfigGraphNodes,
+  buildFederationContainerBuildSpec,
+  buildFederationBuildManifest,
+  buildFederationManifestGraphNodes,
+  buildFederationVersionContract,
+  collectFederationExposeEntryPaths,
+  collectFederationRemoteImportBindings,
+  rewriteFederationGraphEdgeIds,
+  type FederationPersistedGraphNode,
+} from "@core/federation";
+import { Graph } from "@core/graph";
 
 interface BuildOptions {
   outDir?: string;
   level?: number;
+  /**
+   * Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit.
+   *
+   * When true, runBuildCommand stops immediately after the deps optimizer
+   * pass writes `.verified` — it does NOT generate a build plan, run the
+   * Rust bundler, emit `dist/`, or run the post-build compression phase.
+   *
+   * Used by the `optimize-all` command (and State A → "optimize-all" in the
+   * push prompt) to produce a complete `.ionify/deps/<depsHash>/` snapshot
+   * without paying for a full production build.
+   */
+  depsOnly?: boolean;
 }
 
 const DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
@@ -128,6 +160,26 @@ async function writeTextFileIfChanged(filePath: string, contents: string): Promi
   }
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   await fs.promises.writeFile(filePath, contents, "utf8");
+}
+
+function syncFederationGraphNodes(graph: Graph, nodes: FederationPersistedGraphNode[]): void {
+  const nextIds = new Set(nodes.map((node) => node.id));
+  for (const existingId of graph.listNodeIdsByPrefix(FEDERATION_GRAPH_PREFIX)) {
+    if (!nextIds.has(existingId)) {
+      graph.removeNodeById(existingId);
+    }
+  }
+  for (const node of nodes) {
+    graph.recordNodeById(node.id, node.hash, node.deps, node.dynamicDeps ?? [], node.kind);
+  }
+}
+
+function mergeFederationGraphNodes(...groups: FederationPersistedGraphNode[][]): FederationPersistedGraphNode[] {
+  const merged = new Map<string, FederationPersistedGraphNode>();
+  for (const group of groups) {
+    for (const node of group) merged.set(node.id, node);
+  }
+  return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function resolvePublicDir(rootDir: string, value: unknown): string | null {
@@ -408,6 +460,22 @@ function loadDepStopsFromManifest(depsRoot: string): Array<{ entryPath: string; 
   } catch {
     return [];
   }
+}
+
+function collectNativeExternalModules(plan: BuildPlan, configuredExternals: readonly string[]): string[] {
+  const externals = new Set<string>();
+
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      for (const dep of [...(mod.deps ?? []), ...(mod.dynamicDeps ?? [])]) {
+        if (isExternalGraphLeafId(dep, configuredExternals)) {
+          externals.add(dep);
+        }
+      }
+    }
+  }
+
+  return Array.from(externals).sort();
 }
 
 /**
@@ -1744,7 +1812,16 @@ async function prepareProductionManualPacks(options: {
 export async function runBuildCommand(options: BuildOptions = {}) {
   try {
     const buildStart = Date.now();
-    process.env.NODE_ENV = "production";
+    // Phase 5-Cloud-EI-DX2 — when invoked via `ionify optimize-all` (depsOnly),
+    // honor the caller's NODE_ENV so the deps snapshot lands at the depsHash
+    // matching that env. Production builds always force "production" because
+    // dist/ output must be production-mode regardless of caller env.
+    if (!options.depsOnly) {
+      process.env.NODE_ENV = "production";
+    } else if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "production") {
+      // Non-tagged NODE_ENV in depsOnly mode → default to development (dev shape).
+      process.env.NODE_ENV = "development";
+    }
     const config = await loadIonifyConfig();
     // Phase 5.4.2: Use root from config
     const projectRootOverride = config?.root ? path.resolve(config.root) : null;
@@ -1763,10 +1840,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     process.env.IONIFY_PROJECT_ID = workspace.projectId;
 
     // Align env exposure and define replacements with dev server behavior.
-    // NOTE: NODE_ENV is forced to production for builds even if env files set it.
-    process.env.MODE = process.env.MODE ?? "production";
+    // NOTE: NODE_ENV is forced to production for builds even if env files set it
+    //       — except in depsOnly (`ionify optimize-all`) mode, which honors caller.
+    process.env.MODE = process.env.MODE ?? (options.depsOnly ? process.env.NODE_ENV ?? "development" : "production");
     const envFromFiles = loadIonifyEnv(process.env.MODE, rootDir);
-    process.env.NODE_ENV = "production";
+    if (!options.depsOnly) {
+      process.env.NODE_ENV = "production";
+    }
     const envValues: Record<string, string> = {
       ...envFromFiles,
       NODE_ENV: process.env.NODE_ENV,
@@ -1821,7 +1901,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           .map((entry) => (entry.startsWith("/") ? path.join(rootDir, entry) : path.resolve(rootDir, entry)))
           .filter((entry) => typeof entry === "string" && entry.length > 0)
       : [];
-    let entries = configuredEntries.length > 0 ? configuredEntries : undefined;
+    const hostEntries = configuredEntries.length > 0 ? configuredEntries : undefined;
+    let entries = hostEntries;
 
     if (entries?.length) {
       logInfo(`Build entries: ${entries.join(", ")}`);
@@ -1859,6 +1940,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       assetOptions: (config as any)?.assets ?? (config as any)?.asset,
       runtimeContracts: {
         reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+        federation: buildFederationVersionContract(config?.federation),
       },
     };
     // Propagate config hash to native for AST/cache invalidation
@@ -1891,6 +1973,15 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const depsRoot = path.join(ionifyDir, "deps", depsHash);
     process.env.IONIFY_DEPS_ROOT = depsRoot;
     fs.mkdirSync(depsRoot, { recursive: true });
+
+    const buildExternalSpecifiers = collectConfiguredExternalSpecifiers(config);
+
+    // Phase 5-Cloud-EI: tag this build's env so a downstream `--push` can
+    // trust it without re-deriving from process.env.NODE_ENV (which may have
+    // mutated). Only emit if NODE_ENV is one of the two recognized values.
+    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "production") {
+      process.env.IONIFY_NODE_ENV = process.env.NODE_ENV;
+    }
 
     // Wave 5: Initialize AST cache with version hash
     if (native?.initAstCache) {
@@ -2120,13 +2211,90 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // into node_modules source trees \u2014 saves ~500-1100ms on large apps (UP-Portal scale).
     const depStops = loadDepStopsFromManifest(depsRoot);
 
+    // Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit. The deps
+    // optimizer pass above has already produced (or reused) every dep
+    // artifact and written the `.verified` sentinel. Stop here so callers
+    // get an idempotent snapshot without paying for build plan + bundler +
+    // compression.
+    if (options.depsOnly) {
+      logInfo(
+        `[deps] optimize-all: snapshot ready at .ionify/deps/${depsHash}/ (skipping bundler, no dist/ output).`,
+      );
+      // Touch unused locals so TS/eslint don't complain about reads above.
+      void depsManifestIndex;
+      void depStops;
+      return;
+    }
+
+    const federationExposeEntries = collectFederationExposeEntryPaths(config, rootDir);
+    const buildEntries = Array.from(
+      new Set([...(entries ?? []), ...federationExposeEntries]),
+    );
+
     logInfo("Building...");
 
-    const plan = await generateBuildPlan(entries, rawVersionInputs, depStops);
+    const plan = await generateBuildPlan(
+      buildEntries.length > 0 ? buildEntries : undefined,
+      rawVersionInputs,
+      depStops,
+      buildExternalSpecifiers,
+    );
     const totalPlannedModules = plan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
     logInfo(
       `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`,
     );
+
+    const federationGraph = new Graph(rawVersionInputs, { ionifyDir });
+    const federationRemoteBindings = collectFederationRemoteImportBindings(config, rootDir);
+    if (config?.federation) {
+      syncFederationGraphNodes(federationGraph, buildFederationConfigGraphNodes(config, rootDir));
+      for (const chunk of plan.chunks) {
+        for (const mod of chunk.modules) {
+          if (mod.kind !== "js") continue;
+          let fsPath =
+            typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+          if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+            fsPath = fromWsModuleId(mod.id, workspace.workspaceRoot);
+          }
+          const existingNode = fsPath ? federationGraph.getNode(fsPath) : undefined;
+          let nextStaticDeps = existingNode?.deps ?? mod.deps ?? [];
+          let nextDynamicDeps = existingNode?.dynamicDeps ?? mod.dynamicDeps ?? [];
+          if (fsPath && path.isAbsolute(fsPath) && fs.existsSync(fsPath)) {
+            try {
+              const code = fs.readFileSync(fsPath, "utf8");
+              const specs = native?.parseModuleIr
+                ? (native.parseModuleIr(fsPath, code)?.dependencies ?? []).map((dep: any) => dep.specifier)
+                : extractImports(code, fsPath);
+              const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+                specs,
+                fsPath,
+                buildExternalSpecifiers,
+              );
+              nextStaticDeps = [...localDeps, ...externalDeps];
+              nextDynamicDeps = [];
+            } catch {
+              // Fall back to the pre-existing persisted node shape when source re-read/parsing fails.
+            }
+          }
+          const deps = rewriteFederationGraphEdgeIds(nextStaticDeps, federationRemoteBindings);
+          const dynamicDeps = rewriteFederationGraphEdgeIds(
+            nextDynamicDeps,
+            federationRemoteBindings,
+          );
+          if (
+            JSON.stringify(deps) === JSON.stringify(nextStaticDeps) &&
+            JSON.stringify(dynamicDeps) === JSON.stringify(nextDynamicDeps)
+          ) {
+            continue;
+          }
+          if (fsPath && path.isAbsolute(fsPath)) {
+            federationGraph.recordFile(fsPath, mod.hash ?? existingNode?.hash ?? getCacheKey(mod.id), deps, dynamicDeps, mod.kind);
+          } else {
+            federationGraph.recordNodeById(mod.id, mod.hash ?? null, deps, dynamicDeps, mod.kind);
+          }
+        }
+      }
+    }
 
     // ── T3: Route node_modules deps through deps optimizer artifacts ──
     {
@@ -2687,8 +2855,17 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 	    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
 	    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
 	    const mangleEnabled = minifyEnabled;
+    const nativeExternalModules = collectNativeExternalModules(plan, buildExternalSpecifiers);
 
-    const { artifacts, stats } = await emitChunks(absOutDir, plan, moduleOutputs, {
+    const federationExposeEntryIds = collectFederationExposeEntryPaths(config, rootDir)
+      .map((entry) => toWsModuleId(entry, workspace.workspaceRoot))
+      .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0);
+
+    const hostEntryIds = (entries ?? [])
+      .map((entry) => toWsModuleId(entry, workspace.workspaceRoot))
+      .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0);
+
+    const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
 	      casRoot,
 	      versionHash: configHash,
 	      nativeOptions: {
@@ -2697,11 +2874,103 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 	        mangle: mangleEnabled,
 	        treeshake,
 	        scopeHoist,
+	        externalModules: nativeExternalModules,
+          federationExposeEntries: federationExposeEntryIds,
 	      },
 	    });
 
-    const outputHashHints = collectOutputHashHints(stats);
-    recordOutputHashHint(outputHashHints, await writeBuildManifest(absOutDir, plan, artifacts));
+	    let emittedPlan = plan;
+    let artifacts = baseArtifacts;
+    let combinedStats = { ...baseStats };
+
+	    let federationManifest = buildFederationBuildManifest({
+      config,
+      rootDir,
+      workspaceRoot: workspace.workspaceRoot,
+      outDir: absOutDir,
+      plan: emittedPlan,
+      artifacts,
+      hostEntryIds,
+    });
+    if (federationManifest?.container?.entry) {
+      const containerSpec = buildFederationContainerBuildSpec(federationManifest, absOutDir);
+      if (containerSpec) {
+        const containerPlan: BuildPlan = {
+          entries: [containerSpec.moduleId],
+          chunks: [
+            {
+              id: containerSpec.chunkId,
+              entry: true,
+              shared: false,
+              consumers: [containerSpec.moduleId],
+              css: [],
+              assets: [],
+              modules: [
+                {
+                  id: containerSpec.moduleId,
+                  fsPath: containerSpec.moduleId,
+                  hash: containerSpec.contractHash,
+                  kind: "js",
+                  deps: [],
+                  dynamicDeps: [],
+                },
+              ],
+            },
+          ],
+        };
+
+        const { artifacts: containerArtifacts, stats: containerStats } = await emitChunks(
+          absOutDir,
+          containerPlan,
+          new Map([[containerSpec.moduleId, { code: containerSpec.source, type: "js" }]]),
+          {
+            casRoot,
+            versionHash: configHash,
+            nativeOptions: {
+              minifier,
+              minify: minifyEnabled,
+              mangle: mangleEnabled,
+              treeshake,
+              scopeHoist,
+              virtualModuleIds: [containerSpec.moduleId],
+              virtualModuleSources: [containerSpec.source],
+            },
+          },
+        );
+        emittedPlan = {
+          entries: plan.entries.slice(),
+          chunks: [...plan.chunks, ...containerPlan.chunks],
+        };
+        artifacts = [...artifacts, ...containerArtifacts];
+        combinedStats = { ...combinedStats, ...containerStats };
+        federationManifest = buildFederationBuildManifest({
+          config,
+          rootDir,
+          workspaceRoot: workspace.workspaceRoot,
+          outDir: absOutDir,
+          plan: emittedPlan,
+          artifacts,
+          hostEntryIds,
+        });
+      }
+    }
+    if (config?.federation) {
+      syncFederationGraphNodes(
+        federationGraph,
+        mergeFederationGraphNodes(
+          buildFederationConfigGraphNodes(config, rootDir),
+          buildFederationManifestGraphNodes(federationManifest),
+        ),
+      );
+      federationGraph.flush();
+    }
+    const outputHashHints = collectOutputHashHints(combinedStats);
+    recordOutputHashHint(
+      outputHashHints,
+      await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
+        federation: federationManifest,
+      }),
+    );
     recordOutputHashHint(outputHashHints, await writeAssetsManifest(absOutDir, artifacts));
 
     // Emit index.html for SPA deployments (Phase 6.6+: manifest-driven output)
@@ -2709,7 +2978,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       rootDir,
       outDir: absOutDir,
       entries: entries ?? [],
-      plan,
+      hostEntryIds,
+      plan: emittedPlan,
       artifacts,
     }));
 
@@ -2717,13 +2987,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // publicAssets section and eligible for precompressBuildOutputs via outputHashHints.
     const copiedPublicAssets = await copyPublicDirToOutDir(publicDirAbs, absOutDir);
     if (copiedPublicAssets.length > 0) {
-      stats.publicAssets = copiedPublicAssets;
+      combinedStats.publicAssets = copiedPublicAssets;
       for (const asset of copiedPublicAssets) {
         outputHashHints.set(asset.file, asset.hash);
       }
     }
 
-    const statsJson = JSON.stringify(stats, null, 2);
+    const statsJson = JSON.stringify(combinedStats, null, 2);
     await writeTextFileIfChanged(path.join(absOutDir, "build.stats.json"), statsJson);
     outputHashHints.set("build.stats.json", getCacheKey(statsJson));
 
@@ -2821,8 +3091,6 @@ const LOCKFILE_ORDER = [
   "yarn.lock",
   "bun.lockb",
 ];
-const DEPS_CACHE_SCHEMA_VERSION = 1;
-
 function readLockfile(workspaceRoot: string, projectRoot: string): LockfileInfo | null {
   const roots = [workspaceRoot, projectRoot].filter(Boolean);
   const uniqueRoots: string[] = [];
@@ -2840,31 +3108,6 @@ function readLockfile(workspaceRoot: string, projectRoot: string): LockfileInfo 
     }
   }
   return null;
-}
-
-function computeDepsHash(
-  configHash: string,
-  lockfile: LockfileInfo | null,
-  opts: {
-    nodeEnv: string;
-    sourcemap: boolean;
-    bundleEsm: boolean;
-    sharedChunks: string;
-    outputVersion: number;
-  },
-): string {
-  const hash = crypto.createHash("sha256");
-  hash.update(configHash);
-  hash.update(`depsSchema=${DEPS_CACHE_SCHEMA_VERSION}`);
-  if (lockfile) {
-    hash.update(lockfile.contents);
-  }
-  hash.update(`NODE_ENV=${opts.nodeEnv}`);
-  hash.update(`optimizeDeps.sourcemap=${opts.sourcemap ? "1" : "0"}`);
-  hash.update(`optimizeDeps.bundleEsm=${opts.bundleEsm ? "1" : "0"}`);
-  hash.update(`optimizeDeps.sharedChunks=${opts.sharedChunks}`);
-  hash.update(`optimizeDeps.outputVersion=${opts.outputVersion}`);
-  return hash.digest("hex").slice(0, 16);
 }
 
 function readProjectPackageJson(rootDir: string): any | null {
@@ -3887,17 +4130,21 @@ async function emitIndexHtml(options: {
   rootDir: string;
   outDir: string;
   entries: string[];
+  hostEntryIds: string[];
   plan: Awaited<ReturnType<typeof generateBuildPlan>>;
   artifacts: Array<{ id: string; files: { js: string[]; css: string[]; assets: string[] } }>;
 }): Promise<EmittedOutputInfo | null> {
-  const { rootDir, outDir, entries, plan, artifacts } = options;
+  const { rootDir, outDir, entries, hostEntryIds, plan, artifacts } = options;
 
   const htmlInput = path.join(rootDir, "index.html");
   if (!fs.existsSync(htmlInput)) {
     return null;
   }
 
-  const entryChunks = plan.chunks.filter((chunk) => chunk.entry);
+  const hostEntryIdSet = new Set(hostEntryIds);
+  const entryChunks = plan.chunks.filter(
+    (chunk) => chunk.entry && chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer)),
+  );
 
   const entryScripts = entryChunks
     .map((chunk) => {
@@ -3954,7 +4201,7 @@ async function emitIndexHtml(options: {
 
   // Phase 17: when shared/vendor chunks are real, add deterministic modulepreload hints so
   // production does not regress into a waterfall before the module graph is discovered.
-  const entryIds = new Set(plan.entries);
+  const entryIds = new Set(hostEntryIds);
   const sharedPreloads = plan.chunks
     .filter((chunk) => !chunk.entry && chunk.shared && Array.isArray(chunk.consumers) && chunk.consumers.some((c) => entryIds.has(c)))
     .map((chunk) => {

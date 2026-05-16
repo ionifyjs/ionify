@@ -18,8 +18,17 @@ import { startDevServer } from "./commands/dev.js";
 import { runAnalyzeCommand } from "./commands/analyze.js";
 import { runBuildCommand } from "./commands/build.js";
 import { runAddCommand } from "./commands/add.js";
+import { runPushCommand } from "./commands/push.js";
+import { runHydrateCommand } from "./commands/hydrate.js";
+import { runLoginCommand, runLogoutCommand, runWhoamiCommand } from "./commands/login.js";
 
 const program = new Command();
+
+function validateEnvFlag(cmd: string, value: string): "development" | "production" {
+  if (value === "development" || value === "production") return value;
+  logError(`${cmd}: --env must be 'development' or 'production' (got '${value}')`);
+  process.exit(1);
+}
 
 program
   .name("ionify")
@@ -31,8 +40,20 @@ program
   .description("Start Ionify development server")
   .option("-p, --port <port>", "Port to run the server on", "5173")
   .option("-m, --mode <mode>", "Environment mode, loads .env.<mode> file (default: development)")
+  .option("--hydrate", "Hydrate deps from Ionify Cloud CDC before starting (Tier-2)")
+  .option("--hydrate-tier1", "Also hydrate Tier-1 source transforms before starting")
+  .option("--namespace <name>", "Tier-1 namespace for hydration (overrides config.cloud.namespace)")
+  .option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt)
   .action(async (options) => {
     try {
+      if (options.hydrate || options.hydrateTier1) {
+        await runHydrateCommand({
+          tier1: !!options.hydrateTier1,
+          tier2: !options.hydrateTier1 || !!options.hydrate,
+          namespace: options.namespace,
+          concurrency: options.concurrency,
+        });
+      }
       const port = parseInt(options.port, 10);
       await startDevServer({ port, mode: options.mode });
     } catch (err) {
@@ -41,15 +62,129 @@ program
     }
   });
 
-// Placeholder for future commands
 program
   .command("build")
   .description("Create production build using Ionify bundler")
   .option("-o, --out-dir <dir>", "Output directory", "dist")
+  .option("--push", "Push artifacts to Ionify Cloud after build (Tier-1 + Tier-2 by default)")
+  .option("--tier1", "With --push: push only Tier-1 (source transforms)")
+  .option("--tier2", "With --push: push only Tier-2 (CDC deps cache)")
+  .option("--hydrate", "Hydrate Tier-2 deps from cloud before building")
+  .option("--hydrate-tier1", "Also hydrate Tier-1 source transforms before building")
+  .option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)")
+  .option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt)
   .action(async (options) => {
     try {
+      if (options.hydrate || options.hydrateTier1) {
+        await runHydrateCommand({
+          tier1: !!options.hydrateTier1,
+          tier2: !options.hydrateTier1 || !!options.hydrate,
+          namespace: options.namespace,
+          concurrency: options.concurrency,
+        });
+      }
       await runBuildCommand({ outDir: options.outDir });
+      if (options.push) {
+        await runPushCommand({
+          tier1: !!options.tier1,
+          tier2: !!options.tier2,
+          concurrency: options.concurrency,
+          namespace: options.namespace,
+        });
+      }
     } catch {
+      process.exit(1);
+    }
+  });
+
+program
+  .command("push")
+  .description("Push build artifacts to Ionify Cloud (Tier-1 + Tier-2 by default)")
+  .option("--tier1", "Push only Tier-1 (source transform blobs + manifest)")
+  .option("--tier2", "Push only Tier-2 (CDC deps cache session)")
+  .option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)")
+  .option("--env <env>", "Restrict push to a single env (development|production); default: every verified env on disk")
+  .option("--concurrency <n>", "Upload concurrency", parseInt)
+  .action(async (options) => {
+    try {
+      const env = options.env ? validateEnvFlag("push", options.env) : undefined;
+      await runPushCommand({
+        tier1: !!options.tier1,
+        tier2: !!options.tier2,
+        namespace: options.namespace,
+        concurrency: options.concurrency,
+        env,
+      });
+    } catch (err) {
+      logError("Push failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("optimize-all")
+  .description("Fully optimize every dependency without starting dev or pushing")
+  .option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development")
+  .action(async (options) => {
+    try {
+      const env = options.env ? validateEnvFlag("optimize-all", options.env) : undefined;
+      const { runOptimizeAllCommand } = await import("./commands/optimize-all.js");
+      await runOptimizeAllCommand({ env });
+    } catch (err) {
+      logError("optimize-all failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("hydrate")
+  .description("Hydrate artifacts from Ionify Cloud (Tier-1 + Tier-2 by default)")
+  .option("--tier1", "Hydrate only Tier-1 (source transform blobs from manifest)")
+  .option("--tier2", "Hydrate only Tier-2 (CDC deps cache)")
+  .option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)")
+  .option("--env <env>", "Env to hydrate (development|production); default: NODE_ENV or production")
+  .option("--concurrency <n>", "Download concurrency", parseInt)
+  .action(async (options) => {
+    try {
+      const env = options.env ? validateEnvFlag("hydrate", options.env) : undefined;
+      await runHydrateCommand({
+        tier1: !!options.tier1,
+        tier2: !!options.tier2,
+        namespace: options.namespace,
+        concurrency: options.concurrency,
+        env,
+      });
+    } catch (err) {
+      logError("Hydrate failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("login")
+  .description("Log in to Ionify Cloud (saves token to ~/.ionify/credentials.json)")
+  .action(async () => {
+    try {
+      await runLoginCommand();
+    } catch (err) {
+      logError("Login failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("logout")
+  .description("Log out from Ionify Cloud")
+  .action(() => runLogoutCommand());
+
+program
+  .command("whoami")
+  .description("Show current Ionify Cloud identity")
+  .action(async () => {
+    try {
+      await runWhoamiCommand();
+    } catch (err) {
+      logError("whoami failed", err);
       process.exit(1);
     }
   });

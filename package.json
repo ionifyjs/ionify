@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "type": "module",
   "description": "Ionify — Instant, Intelligent, Unified Build Engine",
   "bin": {

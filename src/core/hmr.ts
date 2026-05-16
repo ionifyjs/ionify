@@ -42,12 +42,16 @@ interface PendingUpdate {
   createdAt: number;
 }
 
+const DEFAULT_PENDING_UPDATE_TTL_MS = 60_000;
+
 export class HMRServer {
   private clients = new Set<SSEClient>();
   private pending = new Map<string, PendingUpdate>();
   private retainedEvents = new Map<string, unknown>();
   private nextId = 1;
   private closed = false;
+
+  constructor(private readonly pendingUpdateTtlMs = DEFAULT_PENDING_UPDATE_TTL_MS) {}
 
   /** Handle an incoming SSE subscription request */
   handleSSE(req: IncomingMessage, res: ServerResponse) {
@@ -104,6 +108,7 @@ export class HMRServer {
   queueUpdate(modules: PendingHMRModule[]): HMRUpdateSummary | null {
     if (!modules.length) return null;
     const timestamp = Date.now();
+    this.prunePending(timestamp);
     const id = `${timestamp}-${this.nextId++}`;
     const summary: HMRUpdateSummary = {
       type: "update",
@@ -117,11 +122,23 @@ export class HMRServer {
   }
 
   consumeUpdate(id: string): PendingUpdate | undefined {
+    const now = Date.now();
+    this.prunePending(now);
     const pending = this.pending.get(id);
-    if (pending) {
+    if (!pending) return undefined;
+    if (now - pending.createdAt > this.pendingUpdateTtlMs) {
       this.pending.delete(id);
+      return undefined;
     }
     return pending;
+  }
+
+  private prunePending(now = Date.now()) {
+    for (const [id, pending] of this.pending.entries()) {
+      if (now - pending.createdAt > this.pendingUpdateTtlMs) {
+        this.pending.delete(id);
+      }
+    }
   }
 
   broadcastError(payload: { id?: string; message: string }) {

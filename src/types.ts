@@ -1,5 +1,6 @@
 export * from "./core/types/config";
 export * from "./core/types/plan";
+export * from "./runtime/federation";
 
 import type { IonifyConfig } from "./core/types/config";
 
