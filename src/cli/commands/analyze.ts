@@ -11,6 +11,7 @@ import { resolveTreeshake } from "@cli/utils/treeshake";
 import { hashVendorPackV2RoutingIndex } from "@core/deps/routing-hash";
 import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
 import { RouteHintIndex, normalizeDocumentRouteKey } from "@core/route-hints";
+import { loadStartupPolicySnapshot } from "@core/startup-policy";
 import { resolveWorkspace } from "@core/workspace";
 import { computeGraphVersion, ensureNativeGraph, native } from "@native/index";
 
@@ -199,9 +200,21 @@ export interface RouteAnalyzePolicyVisibility {
   currentEffects: string[];
   entryCriticalEvidence: RouteAnalyzeEntryCriticalEvidence | null;
   policyReuse: {
-    status: "unavailable";
+    status: "available" | "unavailable";
     reason: string;
   };
+  startupPolicy: {
+    statePath: string;
+    routeKey: string;
+    policyHash: string;
+    eagerAssets: number;
+    entryCritical: number;
+    sharedLater: number;
+    routeLazy: number;
+    background: number;
+    preFcpLoadedModules: number;
+    preFcpEvaluatedModules: number;
+  } | null;
   missingCapabilities: string[];
 }
 
@@ -1306,8 +1319,9 @@ function buildRoutePolicyVisibility(options: {
   suggestedPreloads: RouteAnalyzePreloadSummary[];
   packCoverage: RouteAnalyzePackCoverage | null;
   signals: RouteAnalyzeHistorySignals;
+  startupPolicy: RouteAnalyzePolicyVisibility["startupPolicy"];
 }): RouteAnalyzePolicyVisibility {
-  const { primaryRouteKey, routeAssets, suggestedPreloads, packCoverage, signals } = options;
+  const { primaryRouteKey, routeAssets, suggestedPreloads, packCoverage, signals, startupPolicy } = options;
   let criticalAssets = 0;
   let deferredAssets = 0;
   let criticalRequests = 0;
@@ -1340,6 +1354,11 @@ function buildRoutePolicyVisibility(options: {
   if (signals.depUsage) {
     currentEffects.push("Dep-usage evidence is available for route dependency explainability.");
   }
+  if (startupPolicy) {
+    currentEffects.push(
+      `Startup policy snapshot classifies ${startupPolicy.eagerAssets} eager asset${startupPolicy.eagerAssets === 1 ? "" : "s"} for ${startupPolicy.routeKey}.`,
+    );
+  }
 
   return {
     signals,
@@ -1354,13 +1373,20 @@ function buildRoutePolicyVisibility(options: {
           }
         : null,
     policyReuse: {
-      status: "unavailable",
-      reason: "Planner-owned history policy hashing is not implemented yet, so reuse vs recompute is not observable.",
+      status: startupPolicy ? "available" : "unavailable",
+      reason: startupPolicy
+        ? "Versioned startup-policy snapshot is available for this route."
+        : "Planner-owned history policy hashing is not implemented yet, so reuse vs recompute is not observable.",
     },
+    startupPolicy,
     missingCapabilities: [
-      "Route history currently influences preload/modulepreload selection, not full history-aware chunk membership.",
-      "Entry-critical vs deferred is derived from route-hint minDepth only and is not a planner-owned chunk policy verdict.",
-      "Planner-owned policy reuse reporting is not available until a versioned history policy layer exists.",
+      "Route history currently influences preload/modulepreload selection more strongly than full history-aware chunk membership.",
+      startupPolicy
+        ? "Startup policy exists, but source-pack-driven startup closure planning is not implemented yet."
+        : "Entry-critical vs deferred is derived from route-hint minDepth only and is not a planner-owned chunk policy verdict.",
+      startupPolicy
+        ? "Policy reuse is visible for startup preload decisions, but build/dev parity is not implemented yet."
+        : "Planner-owned policy reuse reporting is not available until a versioned history policy layer exists.",
     ],
   };
 }
@@ -1461,12 +1487,31 @@ export function summarizeRoutes(
     depsSelection: options?.depsSelection,
     limit,
   });
+  const startupPolicyStatePath = path.join(path.dirname(routeHintStatePath), "startup-policy.v1.json");
+  const startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
+  const startupPolicyRoute = normalizedPrimaryRouteKey ? startupPolicySnapshot?.routes?.[normalizedPrimaryRouteKey] ?? null : null;
+  const startupPolicy =
+    startupPolicyRoute && normalizedPrimaryRouteKey
+      ? {
+          statePath: startupPolicyStatePath,
+          routeKey: normalizedPrimaryRouteKey,
+          policyHash: startupPolicyRoute.policyHash,
+          eagerAssets: startupPolicyRoute.eagerAssets.length,
+          entryCritical: startupPolicyRoute.stats.entryCritical,
+          sharedLater: startupPolicyRoute.stats.sharedLater,
+          routeLazy: startupPolicyRoute.stats.routeLazy,
+          background: startupPolicyRoute.stats.background,
+          preFcpLoadedModules: startupPolicyRoute.stats.preFcpLoadedModules,
+          preFcpEvaluatedModules: startupPolicyRoute.stats.preFcpEvaluatedModules,
+        }
+      : null;
   const policyVisibility = buildRoutePolicyVisibility({
     primaryRouteKey: normalizedPrimaryRouteKey,
     routeAssets: primaryRouteAssetEntries,
     suggestedPreloads,
     packCoverage: coverage.packCoverage,
     signals: coverage.signals,
+    startupPolicy,
   });
 
   return {
@@ -2447,7 +2492,20 @@ function printRouteSummary(summary: RouteAnalyzeSummary): void {
     const evidence = summary.policyVisibility.entryCriticalEvidence;
     console.log(
       bullet(
-        `entry-critical evidence assets=${evidence.criticalAssets} deferred=${evidence.deferredAssets} requests=${evidence.criticalRequests}/${evidence.deferredRequests} ${dimText("(derived from minDepth)")}`,
+        `entry-critical evidence assets=${evidence.criticalAssets} deferred=${evidence.deferredAssets} requests=${evidence.criticalRequests}/${evidence.deferredRequests} ${dimText(summary.policyVisibility.startupPolicy ? "(startup policy + history)" : "(derived from minDepth)")}`,
+      ),
+    );
+  }
+  if (summary.policyVisibility.startupPolicy) {
+    const startupPolicy = summary.policyVisibility.startupPolicy;
+    console.log(
+      bullet(
+        `startup-policy route=${startupPolicy.routeKey} eager=${startupPolicy.eagerAssets} preFcpLoaded=${startupPolicy.preFcpLoadedModules} preFcpEvaluated=${startupPolicy.preFcpEvaluatedModules} ${dimText(`hash=${startupPolicy.policyHash.slice(0, 12)}`)}`,
+      ),
+    );
+    console.log(
+      bullet(
+        `classifications entry-critical=${startupPolicy.entryCritical} shared-later=${startupPolicy.sharedLater} route-lazy=${startupPolicy.routeLazy} background=${startupPolicy.background}`,
       ),
     );
   }

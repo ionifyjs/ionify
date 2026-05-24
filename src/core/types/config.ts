@@ -167,6 +167,37 @@ export interface IonifyScopeHoistConfig {
   combineVariables?: boolean;
 }
 
+export type IonifyStartupPolicyMode = "auto" | "observe" | "enforce" | "off";
+
+export interface IonifyStartupPolicyConfig {
+  mode?: IonifyStartupPolicyMode;
+  observeEvaluations?: boolean;
+  minRouteDocuments?: number;
+  maxEagerDepAssets?: number;
+  maxEagerSourceAssets?: number;
+  maxEagerTotalAssets?: number;
+  maxEagerDepBytes?: number;
+  maxEagerSourceBytes?: number;
+  maxEagerTotalBytes?: number;
+}
+
+export interface IonifyConfigEnv {
+  /**
+   * Application mode selected by CLI/config env loading.
+   *
+   * Examples:
+   * - `ionify dev --mode staging` => `mode: "staging"`
+   * - `ionify build --mode staging` => `mode: "staging"` while `NODE_ENV`
+   *   remains `"production"` for production transforms.
+   */
+  mode: string;
+  /**
+   * Environment values loaded from `.env`, `.env.local`, `.env.<mode>`, and
+   * `.env.<mode>.local`, plus explicit shell-provided `VITE_`/`IONIFY_` vars.
+   */
+  env: Record<string, string>;
+}
+
 export interface IonifyConfig {
   /**
    * Project root directory. All paths are resolved relative to root.
@@ -211,6 +242,7 @@ export interface IonifyConfig {
   server?: IonifyServerConfig;
   build?: IonifyBuildConfig;
   federation?: IonifyFederationConfig;
+  startupPolicy?: boolean | IonifyStartupPolicyMode | IonifyStartupPolicyConfig;
   css?: IonifyCSSConfig;
   optimizeDeps?: {
     /**

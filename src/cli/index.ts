@@ -66,6 +66,7 @@ program
   .command("build")
   .description("Create production build using Ionify bundler")
   .option("-o, --out-dir <dir>", "Output directory", "dist")
+  .option("-m, --mode <mode>", "Environment mode, loads .env.<mode> while keeping production build semantics")
   .option("--push", "Push artifacts to Ionify Cloud after build (Tier-1 + Tier-2 by default)")
   .option("--tier1", "With --push: push only Tier-1 (source transforms)")
   .option("--tier2", "With --push: push only Tier-2 (CDC deps cache)")
@@ -75,6 +76,10 @@ program
   .option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt)
   .action(async (options) => {
     try {
+      if (options.mode) {
+        process.env.MODE = options.mode;
+        process.env.IONIFY_MODE = options.mode;
+      }
       if (options.hydrate || options.hydrateTier1) {
         await runHydrateCommand({
           tier1: !!options.hydrateTier1,
@@ -83,7 +88,7 @@ program
           concurrency: options.concurrency,
         });
       }
-      await runBuildCommand({ outDir: options.outDir });
+      await runBuildCommand({ outDir: options.outDir, mode: options.mode });
       if (options.push) {
         await runPushCommand({
           tier1: !!options.tier1,

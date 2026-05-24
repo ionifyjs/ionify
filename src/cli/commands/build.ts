@@ -79,9 +79,11 @@ import {
   type FederationPersistedGraphNode,
 } from "@core/federation";
 import { Graph } from "@core/graph";
+import { GRAPH_KIND_VIRTUAL, classifyStructuralGraphKind, isRuntimeGraphKind } from "@core/graph-kind";
 
 interface BuildOptions {
   outDir?: string;
+  mode?: string;
   level?: number;
   /**
    * Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit.
@@ -324,6 +326,32 @@ type CssCasMeta = {
 
 function isCssModuleFile(filePath: string): boolean {
   return /\.module\.css$/i.test(filePath);
+}
+
+function recordStructuralGraphFiles(absPaths: string[], workspaceRoot: string, configHash: string): void {
+  if (!native?.graphRecord) return;
+  const seen = new Set<string>();
+  for (const absPath of absPaths) {
+    if (typeof absPath !== "string" || absPath.length === 0 || !path.isAbsolute(absPath)) continue;
+    if (seen.has(absPath)) continue;
+    seen.add(absPath);
+    const id = toWsModuleId(absPath, workspaceRoot);
+    if (!id) continue;
+    try {
+      const existing = typeof (native as any).graphGet === "function" ? (native as any).graphGet(id) : null;
+      if (existing && isRuntimeGraphKind(existing.kind)) continue;
+      if (!fs.existsSync(absPath)) {
+        native.graphRecord(id, null, [], [], GRAPH_KIND_VIRTUAL, configHash);
+        continue;
+      }
+      const stat = fs.statSync(absPath);
+      if (!stat.isFile()) continue;
+      const hash = crypto.createHash("sha256").update(fs.readFileSync(absPath)).digest("hex");
+      native.graphRecord(id, hash, [], [], classifyStructuralGraphKind(absPath), configHash);
+    } catch {
+      // Non-fatal: CSS dependency freshness can still be detected by the CAS stamp hash.
+    }
+  }
 }
 
 function computeDepsContentStampHash(
@@ -1812,6 +1840,11 @@ async function prepareProductionManualPacks(options: {
 export async function runBuildCommand(options: BuildOptions = {}) {
   try {
     const buildStart = Date.now();
+    const buildMode =
+      options.mode ??
+      process.env.IONIFY_MODE ??
+      process.env.MODE ??
+      (options.depsOnly ? process.env.NODE_ENV ?? "development" : "production");
     // Phase 5-Cloud-EI-DX2 — when invoked via `ionify optimize-all` (depsOnly),
     // honor the caller's NODE_ENV so the deps snapshot lands at the depsHash
     // matching that env. Production builds always force "production" because
@@ -1822,7 +1855,9 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       // Non-tagged NODE_ENV in depsOnly mode → default to development (dev shape).
       process.env.NODE_ENV = "development";
     }
-    const config = await loadIonifyConfig();
+    process.env.MODE = buildMode;
+    process.env.IONIFY_MODE = buildMode;
+    const config = await loadIonifyConfig(process.cwd(), buildMode);
     // Phase 5.4.2: Use root from config
     const projectRootOverride = config?.root ? path.resolve(config.root) : null;
     const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
@@ -1842,7 +1877,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Align env exposure and define replacements with dev server behavior.
     // NOTE: NODE_ENV is forced to production for builds even if env files set it
     //       — except in depsOnly (`ionify optimize-all`) mode, which honors caller.
-    process.env.MODE = process.env.MODE ?? (options.depsOnly ? process.env.NODE_ENV ?? "development" : "production");
+    process.env.MODE = buildMode;
     const envFromFiles = loadIonifyEnv(process.env.MODE, rootDir);
     if (!options.depsOnly) {
       process.env.NODE_ENV = "production";
@@ -2768,6 +2803,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               : "0";
 
           const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => path.resolve(p))));
+          recordStructuralGraphFiles(depsAbs, workspace.workspaceRoot, configHash);
           const depsStampHash = computeDepsContentStampHash(
             depsAbs,
             moduleMetaById,

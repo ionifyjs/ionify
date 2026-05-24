@@ -182,11 +182,12 @@ export function buildDefineConfig(
   }
 
   // Always define import.meta.env.DEV and import.meta.env.PROD
+  const isProductionRuntime = envValues.NODE_ENV === "production";
   if (!("import.meta.env.DEV" in define)) {
-    define["import.meta.env.DEV"] = envValues.MODE !== "production";
+    define["import.meta.env.DEV"] = !isProductionRuntime;
   }
   if (!("import.meta.env.PROD" in define)) {
-    define["import.meta.env.PROD"] = envValues.MODE === "production";
+    define["import.meta.env.PROD"] = isProductionRuntime;
   }
 
   // Compatibility: many ecosystem packages (React, React Router, etc.) still gate behavior on
@@ -202,11 +203,10 @@ export function buildDefineConfig(
   //    bare-object usage patterns like destructuring / spread).
   //    Build the same shape Vite uses so project code can rely on it.
   if (!("import.meta.env" in define)) {
-    const isDev = envValues.MODE !== "production";
     const envObj: Record<string, unknown> = {
       MODE: envValues.MODE ?? "development",
-      DEV: isDev,
-      PROD: !isDev,
+      DEV: !isProductionRuntime,
+      PROD: isProductionRuntime,
       BASE_URL: "/",
       SSR: false,
     };

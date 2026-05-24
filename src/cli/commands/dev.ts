@@ -34,6 +34,7 @@ import selfsigned from "selfsigned";
 import { logInfo, logError, logWarn } from "@cli/utils/logger";
 import { getCacheKey } from "@core/cache";
 import {
+  analyzeFeaturePackSharedClosurePressure,
   planAutoFeaturePackGroups,
   deriveFeaturePackRoutingMap,
   isFeaturePackSlimAligned,
@@ -44,8 +45,18 @@ import { extractDepCouplingGroups } from "@core/deps/dep-coupling";
 import { computeChunkGroupIdFromStableIds } from "@core/deps/vendor-pack-utils";
 import { hashFeaturePackRoutingIndex, hashVendorPackV2RoutingIndex } from "@core/deps/routing-hash";
 import { VendorPackV2IndexManager, vendorPackV2MemberKey } from "@core/deps/vendor-pack-v2";
+import { resolveAuthoritativeDepPreloadFiles } from "@core/deps/preload-routing";
 import { Graph } from "@core/graph";
 import { RouteHintIndex, normalizeDocumentRouteKey, type RouteHintKind } from "@core/route-hints";
+import {
+  buildStartupPolicySnapshot,
+  loadStartupPolicySnapshot,
+  persistStartupPolicySnapshot,
+  selectStartupPolicyPreloads,
+  StartupObservationIndex,
+  type StartupPolicyEagerBudget,
+  type StartupPolicySnapshot,
+} from "@core/startup-policy";
 import { extractImports } from "@core/resolver";
 import { ModuleResolver } from "@core/resolver/module-resolver";
 import { classifyImportSpecifiersForGraph, collectConfiguredExternalSpecifiers } from "@core/external-policy";
@@ -94,6 +105,7 @@ import {
   rewriteFederationGraphEdgeIds,
   type FederationPersistedGraphNode,
 } from "@core/federation";
+import { toWsModuleId } from "@core/module-id";
 
 const IONIFY_CSS_JS_MARKER = "// ionify:css";
 const IONIFY_VENDOR_PACK_MARKER = "// ionify:vendor-pack";
@@ -700,6 +712,58 @@ function injectModulePreload(html: string, href: string): string {
   return `${tag}\n${html}`;
 }
 
+function injectInlineScript(html: string, script: string): string {
+  const tag = `<script>${script}</script>`;
+  if (html.includes(tag)) return html;
+
+  const headCloseMatch = html.match(/<\/head>/i);
+  if (headCloseMatch?.index !== undefined) {
+    const idx = headCloseMatch.index;
+    return `${html.slice(0, idx)}${tag}\n${html.slice(idx)}`;
+  }
+
+  const bodyOpenMatch = html.match(/<body[^>]*>/i);
+  if (bodyOpenMatch?.index !== undefined) {
+    const idx = bodyOpenMatch.index + bodyOpenMatch[0].length;
+    return `${html.slice(0, idx)}\n${tag}${html.slice(idx)}`;
+  }
+
+  return `${tag}\n${html}`;
+}
+
+function injectStartupEvaluationMarker(code: string): string {
+  const marker = "globalThis.__IONIFY_STARTUP__?.markEvaluated?.(import.meta.url);";
+  return code.startsWith(marker) ? code : `${marker}\n${code}`;
+}
+
+function instrumentJavaScriptBuffer(buffer: Buffer, enabled: boolean): Buffer {
+  if (!enabled) return buffer;
+  return Buffer.from(injectStartupEvaluationMarker(buffer.toString("utf8")));
+}
+
+function extractBarePackageRoot(specifier: string): string | null {
+  const raw = String(specifier || "").trim();
+  if (!raw) return null;
+  if (
+    raw.startsWith(".") ||
+    raw.startsWith("/") ||
+    raw.startsWith("http://") ||
+    raw.startsWith("https://")
+  ) {
+    return null;
+  }
+  if (raw.startsWith("@")) {
+    const parts = raw.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : raw;
+  }
+  const slashIndex = raw.indexOf("/");
+  return slashIndex === -1 ? raw : raw.slice(0, slashIndex);
+}
+
+function extractPackageRootFromLabel(label: string): string | null {
+  return extractBarePackageRoot(label);
+}
+
 function buildRouteHintClientKey(req: IncomingMessage): string | null {
   const forwarded = req.headers["x-forwarded-for"];
   const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
@@ -741,6 +805,7 @@ function pruneDepsCache(ionifyDir: string, depsHash: string) {
 
 type DepsManifestIndexEntry = {
   entryPath: string;
+  artifactHash: string | null;
   packageLabel: string;
   hasSourcemap: boolean;
   sizeBytes: number;
@@ -762,6 +827,12 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
     const map = new Map<string, DepsManifestIndexEntry>();
     for (const [entryPath, entry] of Object.entries(entries)) {
       if (!entry?.outFile) continue;
+      const artifactHash =
+        typeof (entry as any).artifactHash === "string" && (entry as any).artifactHash.length > 0
+          ? (entry as any).artifactHash
+          : typeof (entry as any).artifact_hash === "string" && (entry as any).artifact_hash.length > 0
+            ? (entry as any).artifact_hash
+            : null;
       const sizeBytes =
         typeof (entry as any).sizeBytes === "number"
           ? (entry as any).sizeBytes
@@ -809,6 +880,7 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
         .filter((v): v is string => typeof v === "string" && v.length > 0);
       map.set(entry.outFile, {
         entryPath,
+        artifactHash,
         packageLabel: entry.package || "unknown",
         hasSourcemap: entry.hasSourcemap === true,
         sizeBytes,
@@ -1092,6 +1164,8 @@ export async function startDevServer({
 }: StartDevServerOptions = {}): Promise<DevServerHandle> {
   const bootStartMs = Date.now();
   const envMode = mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "development";
+  process.env.IONIFY_MODE = envMode;
+  process.env.MODE = envMode;
   // Phase 5.4.2: Load config first to get root option
   const userConfig = await loadIonifyConfig(process.cwd(), envMode);
   const configuredExternalSpecifiers = collectConfiguredExternalSpecifiers(userConfig);
@@ -1267,6 +1341,124 @@ export async function startDevServer({
     } catch {
       return filePath;
     }
+  };
+  const recordDepLeafGraphNodes = (depAbsPaths: readonly string[]): void => {
+    if (depAbsPaths.length === 0) return;
+    if (depsManifestIndex.size === 0) refreshDepsManifestIndex();
+    const manifestEntries = Array.from(depsManifestIndex.values());
+
+    const byCanonicalEntry = new Map<string, DepsManifestIndexEntry>();
+    for (const entry of manifestEntries) {
+      if (!entry.artifactHash) continue;
+      byCanonicalEntry.set(realpathOrSelf(entry.entryPath), entry);
+    }
+
+    const seen = new Set<string>();
+    for (const depAbs of depAbsPaths) {
+      if (typeof depAbs !== "string" || depAbs.length === 0) continue;
+      if (!depAbs.includes(`${path.sep}node_modules${path.sep}`)) continue;
+      const canonical = realpathOrSelf(depAbs);
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      const existing = graph.getNode(canonical) ?? graph.getNode(depAbs);
+      if (existing?.hash) continue;
+      const depId = toWsModuleId(depAbs, workspace.workspaceRoot);
+      if (!depId) continue;
+      const entry = byCanonicalEntry.get(canonical);
+      let hash = entry?.artifactHash ?? null;
+      if (!hash) {
+        try {
+          hash = crypto.createHash("sha256").update(fs.readFileSync(canonical)).digest("hex");
+        } catch {
+          continue;
+        }
+      }
+      graph.recordNodeById(depId, hash, [], [], "dep", configHash);
+    }
+  };
+  const graphCompletionExts = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const completeLocalGraphClosure = (seedAbsPaths: readonly string[]): void => {
+    const queue = seedAbsPaths.filter((dep) => typeof dep === "string" && dep.length > 0);
+    const seen = new Set<string>();
+    let processed = 0;
+
+    while (queue.length && processed < 2000) {
+      const absPath = queue.shift()!;
+      if (!path.isAbsolute(absPath)) continue;
+      const canonical = realpathOrSelf(absPath);
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+
+      if (canonical.includes(`${path.sep}node_modules${path.sep}`)) {
+        recordDepLeafGraphNodes([canonical]);
+        continue;
+      }
+      if (graph.getNode(canonical)) continue;
+      if (!fs.existsSync(canonical)) continue;
+
+      const extName = path.extname(canonical).toLowerCase();
+      if (isAssetExt(extName)) {
+        try {
+          const assetHash = crypto.createHash("sha256").update(fs.readFileSync(canonical)).digest("hex");
+          graph.recordFile(canonical, assetHash, [], [], "asset");
+        } catch {
+          // best effort
+        }
+        continue;
+      }
+      if (!graphCompletionExts.has(extName)) continue;
+
+      let code: string;
+      try {
+        code = fs.readFileSync(canonical, "utf8");
+      } catch {
+        continue;
+      }
+      processed++;
+
+      let hash: string;
+      let specs: string[];
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(canonical, code);
+          hash = ir.hash;
+          specs = ir.dependencies.map((dep: any) => dep.specifier);
+        } catch {
+          hash = getCacheKey(code);
+          specs = extractImports(code, canonical);
+        }
+      } else {
+        hash = getCacheKey(code);
+        specs = extractImports(code, canonical);
+      }
+
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        canonical,
+        configuredExternalSpecifiers,
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings,
+      );
+      recordDepLeafGraphNodes(localDeps);
+      graph.recordFile(canonical, hash, nextDeps);
+      for (const dep of localDeps) queue.push(dep);
+    }
+  };
+  const pendingGraphCompletionSeeds = new Set<string>();
+  const enqueueLocalGraphCompletion = (seedAbsPaths: readonly string[]): void => {
+    for (const depAbs of seedAbsPaths) {
+      if (typeof depAbs !== "string" || depAbs.length === 0 || !path.isAbsolute(depAbs)) continue;
+      pendingGraphCompletionSeeds.add(depAbs);
+    }
+  };
+  const drainPendingGraphCompletion = async (): Promise<void> => {
+    if (pendingGraphCompletionSeeds.size === 0) return;
+    const seeds = Array.from(pendingGraphCompletionSeeds);
+    pendingGraphCompletionSeeds.clear();
+    completeLocalGraphClosure(seeds);
+    graph.flush();
   };
   const upsertObservedPackEntry = (groupMap: Map<string, PackEntry>, entry: PackEntry): boolean => {
     const canonicalEntryPath = realpathOrSelf(entry.entryPath);
@@ -1658,10 +1850,109 @@ export async function startDevServer({
   vendorPackV2.loadFromDisk();
   const routeHintStatePath = path.join(ionifyDir, "route-hints.v1.json");
   const routeHints = new RouteHintIndex(routeHintStatePath);
+  const startupPolicyRaw = (userConfig as any)?.startupPolicy;
+  const startupPolicyObject =
+    startupPolicyRaw && typeof startupPolicyRaw === "object" && !Array.isArray(startupPolicyRaw)
+      ? (startupPolicyRaw as Record<string, unknown>)
+      : {};
+  const startupPolicyModeRaw = String(
+    process.env.IONIFY_STARTUP_POLICY ??
+      startupPolicyObject.mode ??
+      (startupPolicyRaw === false ? "off" : "auto"),
+  ).toLowerCase();
+  const startupPolicyEnabled = startupPolicyModeRaw !== "off" && startupPolicyRaw !== false;
+  const startupPolicyPreloadAuthorityEnabled = startupPolicyEnabled && startupPolicyModeRaw !== "observe";
+  const startupPolicyObserveEvaluations =
+    startupPolicyEnabled &&
+    (process.env.IONIFY_STARTUP_OBSERVE_EVALUATIONS === "1" ||
+      process.env.IONIFY_STARTUP_EVAL_OBSERVATION === "1" ||
+      startupPolicyObject.observeEvaluations === true);
+  const startupPolicyEagerBudget: StartupPolicyEagerBudget = {
+    minRouteDocuments:
+      typeof startupPolicyObject.minRouteDocuments === "number"
+        ? startupPolicyObject.minRouteDocuments
+        : 3,
+    maxEagerDepAssets:
+      typeof startupPolicyObject.maxEagerDepAssets === "number"
+        ? startupPolicyObject.maxEagerDepAssets
+        : 4,
+    maxEagerSourceAssets:
+      typeof startupPolicyObject.maxEagerSourceAssets === "number"
+        ? startupPolicyObject.maxEagerSourceAssets
+        : 4,
+    maxEagerTotalAssets:
+      typeof startupPolicyObject.maxEagerTotalAssets === "number"
+        ? startupPolicyObject.maxEagerTotalAssets
+        : 6,
+    maxEagerDepBytes:
+      typeof startupPolicyObject.maxEagerDepBytes === "number"
+        ? startupPolicyObject.maxEagerDepBytes
+        : 256 * 1024,
+    maxEagerSourceBytes:
+      typeof startupPolicyObject.maxEagerSourceBytes === "number"
+        ? startupPolicyObject.maxEagerSourceBytes
+        : 128 * 1024,
+    maxEagerTotalBytes:
+      typeof startupPolicyObject.maxEagerTotalBytes === "number"
+        ? startupPolicyObject.maxEagerTotalBytes
+        : 384 * 1024,
+  };
+  const startupObservationStatePath = path.join(ionifyDir, "startup-observations.v1.json");
+  const startupPolicyStatePath = path.join(ionifyDir, "startup-policy.v1.json");
+  const startupObservations = new StartupObservationIndex(startupObservationStatePath);
+  let startupPolicySnapshot: StartupPolicySnapshot | null = loadStartupPolicySnapshot(startupPolicyStatePath);
+  const startupInstrumentJavaScriptBuffer = (buffer: Buffer): Buffer =>
+    instrumentJavaScriptBuffer(buffer, startupPolicyObserveEvaluations);
+  const startupInstrumentJavaScriptCode = (code: string): string =>
+    startupPolicyObserveEvaluations ? injectStartupEvaluationMarker(code) : code;
+  const bootstrapSourceExts = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const resolveBootstrapEntryFile = (rawEntryPath: string): string | null => {
+    const raw = String(rawEntryPath || "").trim();
+    if (!raw) return null;
+    const candidates = path.isAbsolute(raw)
+      ? [raw, path.join(rootDir, raw.replace(/^\/+/, ""))]
+      : [path.resolve(rootDir, raw)];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+  };
+  const bootstrapEntryFiles = (() => {
+    if (Array.isArray(resolvedEntries) && resolvedEntries.length > 0) {
+      return resolvedEntries
+        .map((entryPath) => resolveBootstrapEntryFile(String(entryPath)))
+        .filter((entryPath): entryPath is string => typeof entryPath === "string" && entryPath.length > 0);
+    }
+    const entries: string[] = [];
+    for (const candidate of [
+      path.join(rootDir, "src", "main.tsx"),
+      path.join(rootDir, "src", "main.ts"),
+      path.join(rootDir, "src", "index.tsx"),
+      path.join(rootDir, "src", "index.ts"),
+    ]) {
+      if (fs.existsSync(candidate)) entries.push(candidate);
+    }
+    return entries;
+  })();
+  const resolveAuthoritativeDepPreloadUrls = (hintUrl: string): string[] => {
+    if (!hintUrl.startsWith(DEPS_PREFIX) || !hintUrl.endsWith(".js")) return [];
+    const fileName = hintUrl.slice(DEPS_PREFIX.length);
+    const fileNames = resolveAuthoritativeDepPreloadFiles({
+      fileName,
+      fileExists: (candidateFileName) => fs.existsSync(path.join(depsRoot, candidateFileName)),
+      fileNameToPackFile: vendorPackV2.fileNameToPackFile,
+      packFileToChunkFiles: vendorPackV2.packFileToChunkFiles,
+      packFileToSharedFile: vendorPackV2.packFileToSharedFile,
+      currentStableSharedFileNames: [vendorPackSharedFileName, vendorCoreSharedFileName].filter(
+        (value): value is string => typeof value === "string" && value.endsWith(".js"),
+      ),
+    });
+    return fileNames.map((candidateFileName) => `${DEPS_PREFIX}${candidateFileName}`);
+  };
   const isRouteHintPreloadValid = (hintUrl: string, kind: RouteHintKind): boolean => {
     if (kind === "dep") {
-      if (!hintUrl.startsWith(DEPS_PREFIX) || !hintUrl.endsWith(".js")) return false;
-      return fs.existsSync(path.join(depsRoot, hintUrl.slice(DEPS_PREFIX.length)));
+      return resolveAuthoritativeDepPreloadUrls(hintUrl).length > 0;
     }
 
     const parsedHint = url.parse(hintUrl);
@@ -1681,21 +1972,177 @@ export async function startDevServer({
   };
   const expandRouteHintPreloadUrls = (hintUrl: string, kind: RouteHintKind): string[] => {
     if (kind !== "dep" || !hintUrl.startsWith(DEPS_PREFIX)) return [hintUrl];
-    const fileName = hintUrl.slice(DEPS_PREFIX.length);
-    const expanded = new Set<string>();
-    const chunkFiles =
-      vendorPackV2.packFileToChunkFiles.get(fileName) ??
-      (() => {
-        const shared = vendorPackV2.packFileToSharedFile.get(fileName) ?? null;
-        return shared ? [shared] : [];
-      })();
-    for (const chunkFile of chunkFiles) {
-      if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
-      if (!fs.existsSync(path.join(depsRoot, chunkFile))) continue;
-      expanded.add(`${DEPS_PREFIX}${chunkFile}`);
+    const authoritative = resolveAuthoritativeDepPreloadUrls(hintUrl);
+    return authoritative.length > 0 ? authoritative : [hintUrl];
+  };
+  const estimateStartupAssetSize = (assetUrl: string, kind: RouteHintKind): number | null => {
+    const parsed = url.parse(assetUrl);
+    const pathname = parsed.pathname || "";
+    if (!pathname) return null;
+    const candidatePath =
+      kind === "dep" && pathname.startsWith(DEPS_PREFIX)
+        ? path.join(depsRoot, pathname.slice(DEPS_PREFIX.length))
+        : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
+    if (!candidatePath || !fs.existsSync(candidatePath)) return null;
+    try {
+      const stat = fs.statSync(candidatePath);
+      return stat.isFile() ? stat.size : null;
+    } catch {
+      return null;
     }
-    expanded.add(hintUrl);
-    return Array.from(expanded);
+  };
+  const refreshStartupPolicySnapshot = (): StartupPolicySnapshot => {
+    const next = buildStartupPolicySnapshot({
+      routeKeys: routeHints.listRouteKeys(),
+      routeAssetsForRoute: (routeKey) => routeHints.getRouteAssetEntries(routeKey),
+      assetSummaries: routeHints.summarizeAssets(),
+      observations: startupObservations,
+      assetSizeBytes: estimateStartupAssetSize,
+      isAssetValid: isRouteHintPreloadValid,
+      eagerBudget: startupPolicyEagerBudget,
+    });
+    if (!startupPolicySnapshot || startupPolicySnapshot.policyHash !== next.policyHash) {
+      persistStartupPolicySnapshot(startupPolicyStatePath, next);
+    }
+    startupPolicySnapshot = next;
+    return next;
+  };
+  const buildStartupPolicyClientScript = (documentRouteKey: string): string =>
+    `(()=>{const routeKey=${JSON.stringify(documentRouteKey)};const reportUrl="/__ionify_startup/report";const loaded=[];const loadedSet=new Set();const evaluated=[];const evaluatedSet=new Set();let fcpTime=Number.POSITIVE_INFINITY;let reported=false;const normalize=(value)=>{try{const parsed=new URL(String(value),location.href);if(parsed.origin!==location.origin)return null;return parsed.pathname+parsed.search;}catch{return null;}};const trackLoaded=(name,startTime)=>{const url=normalize(name);if(!url)return;loaded.push({url,startTime:Number(startTime)||0});};globalThis.__IONIFY_STARTUP__={markEvaluated:(value)=>{const url=normalize(value);if(!url||evaluatedSet.has(url))return;evaluatedSet.add(url);evaluated.push({url,time:(globalThis.performance&&performance.now)?performance.now():0});}};const send=()=>{if(reported)return;reported=true;const effectiveFcp=Number.isFinite(fcpTime)?fcpTime:Number.POSITIVE_INFINITY;const preFcpLoadedUrls=[];for(const item of loaded){if(item.startTime<=effectiveFcp&&!loadedSet.has(item.url)){loadedSet.add(item.url);preFcpLoadedUrls.push(item.url);}}const preFcpEvaluatedUrls=[];for(const item of evaluated){if(item.time<=effectiveFcp&&!preFcpEvaluatedUrls.includes(item.url))preFcpEvaluatedUrls.push(item.url);}const payload={routeKey,documentUrl:location.pathname+location.search,preFcpLoadedUrls,preFcpEvaluatedUrls};const body=JSON.stringify(payload);const fallbackBeacon=()=>{if(!navigator.sendBeacon)return;try{const blob=new Blob([body],{type:"application/json"});navigator.sendBeacon(reportUrl,blob);}catch{}};fetch(reportUrl,{method:"POST",headers:{\"content-type\":\"application/json\"},body}).catch(()=>{fallbackBeacon();});};try{new PerformanceObserver((list)=>{for(const entry of list.getEntries()){if(entry.name===\"first-contentful-paint\"){fcpTime=Math.min(fcpTime,entry.startTime);setTimeout(send,0);}}}).observe({type:\"paint\",buffered:true});}catch{}try{new PerformanceObserver((list)=>{for(const entry of list.getEntries()){if(entry.entryType===\"resource\")trackLoaded(entry.name,entry.startTime);}}).observe({type:\"resource\",buffered:true});}catch{}if(globalThis.performance&&typeof performance.getEntriesByType===\"function\"){for(const entry of performance.getEntriesByType(\"resource\"))trackLoaded(entry.name,entry.startTime);}globalThis.addEventListener(\"pagehide\",()=>setTimeout(send,0),{once:true});globalThis.addEventListener(\"load\",()=>setTimeout(send,250),{once:true});})();`;
+  const collectBootstrapPackageRootToDepFiles = () => {
+    const next = new Map<string, Set<string>>();
+    const register = (packageRoot: string | null, fileName: string | null | undefined) => {
+      if (!packageRoot || !fileName) return;
+      const normalizedRoot = packageRoot.trim();
+      const normalizedFileName = String(fileName).trim();
+      if (!normalizedRoot || !normalizedFileName) return;
+      let set = next.get(normalizedRoot);
+      if (!set) {
+        set = new Set<string>();
+        next.set(normalizedRoot, set);
+      }
+      set.add(normalizedFileName);
+    };
+    for (const state of featureLastReadyState.values()) {
+      if (
+        !state ||
+        state.status !== "ready" ||
+        !state.chunkGroupId ||
+        !state.sharedFileName ||
+        !Array.isArray(state.entries)
+      ) {
+        continue;
+      }
+      for (const entry of state.entries) {
+        if (!entry?.fileName) continue;
+        register(extractPackageRootFromLabel(entry.packageLabel), entry.fileName);
+      }
+    }
+    return next;
+  };
+  const collectBootstrapRoutedPackPreloadUrls = (): string[] => {
+    if (!vendorPacksEnabled || vendorPackV2.fileNameToPackFile.size === 0) return [];
+    if (!native?.resolveModule || bootstrapEntryFiles.length === 0) return [];
+
+    const queue = bootstrapEntryFiles.slice();
+    const visited = new Set<string>();
+    const routedPreloads = new Set<string>();
+    const resolvedDepFiles = new Set<string>();
+    const observedBarePackageRoots = new Set<string>();
+    const maxSourceFiles = 32;
+
+    while (queue.length > 0 && visited.size < maxSourceFiles) {
+      const nextPath = queue.shift();
+      if (!nextPath || !fs.existsSync(nextPath)) continue;
+      const canonicalPath = (() => {
+        try {
+          return fs.realpathSync(nextPath);
+        } catch {
+          return nextPath;
+        }
+      })();
+      if (visited.has(canonicalPath)) continue;
+      visited.add(canonicalPath);
+      if (!bootstrapSourceExts.has(path.extname(canonicalPath).toLowerCase())) continue;
+
+      let code = "";
+      try {
+        code = fs.readFileSync(canonicalPath, "utf8");
+      } catch {
+        continue;
+      }
+
+      let specs: string[] = [];
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(canonicalPath, code);
+          specs = Array.isArray(ir?.dependencies) ? ir.dependencies.map((dep: any) => dep.specifier).filter((value: unknown): value is string => typeof value === "string" && value.length > 0) : [];
+        } catch {
+          specs = extractImports(code, canonicalPath);
+        }
+      } else {
+        specs = extractImports(code, canonicalPath);
+      }
+
+      for (const spec of specs) {
+        const packageRoot = extractBarePackageRoot(spec);
+        if (packageRoot) observedBarePackageRoots.add(packageRoot);
+      }
+
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        canonicalPath,
+        configuredExternalSpecifiers,
+      );
+
+      for (const localDep of localDeps) {
+        if (!path.isAbsolute(localDep)) continue;
+        if (!fs.existsSync(localDep)) continue;
+        if (localDep.includes(`${path.sep}node_modules${path.sep}`)) continue;
+        if (!bootstrapSourceExts.has(path.extname(localDep).toLowerCase())) continue;
+        queue.push(localDep);
+      }
+
+      for (const externalDep of externalDeps) {
+        const packageRoot = extractBarePackageRoot(externalDep);
+        if (packageRoot) observedBarePackageRoots.add(packageRoot);
+        try {
+          const resolved = native.resolveModule(externalDep, rootDir);
+          const fsPath = (resolved as any)?.fsPath ?? (resolved as any)?.fs_path ?? null;
+          if (!fsPath || typeof fsPath !== "string") continue;
+          const pkg = (resolved as any)?.pkg ?? null;
+          const packageName = typeof pkg?.name === "string" ? pkg.name : externalDep;
+          const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+          const subpath = computeSubpathForDep(fsPath, pkg);
+          const entry = registerDepEntry({
+            entryPath: fsPath,
+            packageName,
+            packageVersion,
+            subpath,
+          });
+          resolvedDepFiles.add(entry.fileName);
+        } catch {
+          // Ignore resolution failures and continue with the conservative set.
+        }
+      }
+    }
+
+    const bootstrapPackageRootToDepFiles = collectBootstrapPackageRootToDepFiles();
+    for (const packageRoot of Array.from(observedBarePackageRoots).sort()) {
+      const fileNames = bootstrapPackageRootToDepFiles.get(packageRoot);
+      if (!fileNames || fileNames.size === 0) continue;
+      for (const depFileName of fileNames) {
+        resolvedDepFiles.add(depFileName);
+      }
+    }
+
+    for (const depFileName of Array.from(resolvedDepFiles).sort()) {
+      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(`${DEPS_PREFIX}${depFileName}`)) {
+        routedPreloads.add(preloadUrl);
+      }
+    }
+
+    return Array.from(routedPreloads);
   };
   const minimumRequestPositivePackMembers = depsSharedChunksEnabled ? 4 : 3;
   const hasPositivePackRequestSavings = (memberCount: number): boolean => {
@@ -1828,7 +2275,7 @@ export async function startDevServer({
       if (value) obj[key] = value;
     }
     const payload: VendorFeaturePackIndex = {
-      version: 1,
+      version: 2,
       depsHash,
       outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
       updatedAt: new Date().toISOString(),
@@ -2875,13 +3322,34 @@ export async function startDevServer({
       .join("|");
   const featurePackSourceExts = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
   const plannedFeatureGroups = new Map<FeaturePackGroup, string>();
+  const featurePlanReportPath = path.join(depsRoot, "vendor-pack.feature.plan-report.json");
   const computeFeatureCandidates = (): Array<
-    PackEntry & { score: number; sizeBytes: number; importerKeys: string[]; entryRootKeys: string[] }
+    PackEntry & {
+      score: number;
+      sizeBytes: number;
+      importerKeys: string[];
+      entryRootKeys: string[];
+      routeKeys: string[];
+      routeRequestCounts: Record<string, number>;
+    }
   > => {
     const entries = reconcilePackEntries(Array.from(featureObserved.values()), canonicalFileNameForEntry);
     const candidates: Array<
-      PackEntry & { score: number; sizeBytes: number; importerKeys: string[]; entryRootKeys: string[] }
+      PackEntry & {
+        score: number;
+        sizeBytes: number;
+        importerKeys: string[];
+        entryRootKeys: string[];
+        routeKeys: string[];
+        routeRequestCounts: Record<string, number>;
+      }
     > = [];
+    const depRouteHints = new Map(
+      routeHints
+        .summarizeAssets("dep")
+        .filter((summary) => summary.url.startsWith(DEPS_PREFIX) && summary.url.endsWith(".js"))
+        .map((summary) => [summary.url.slice(DEPS_PREFIX.length), summary] as const),
+    );
     for (const entry of entries) {
       if (!entry.entryPath || !fs.existsSync(entry.entryPath)) continue;
       if (!featurePackSourceExts.has(path.extname(entry.entryPath).toLowerCase())) continue;
@@ -2893,12 +3361,20 @@ export async function startDevServer({
       const edgeCount = manifestEntry?.edgeCount ?? 0;
       const externalCount = manifestEntry?.externalCount ?? 0;
       const sizeKb = Math.max(sizeBytes / 1024, 1);
+      const routeHint = depRouteHints.get(entry.fileName) ?? null;
+      const routeKeys = Array.isArray(routeHint?.routeKeys) ? routeHint.routeKeys.slice() : [];
+      const routeRequestCounts =
+        routeHint && routeHint.routeRequestCounts && typeof routeHint.routeRequestCounts === "object"
+          ? { ...routeHint.routeRequestCounts }
+          : {};
+      const routeCount = routeKeys.length;
       const score =
         12 * Math.min(Math.max(requestCount, 1), 6) +
         8 * Math.min(externalCount, 10) +
         4 * Math.min(moduleCount / 40, 6) +
         2 * Math.min(edgeCount / 80, 6) +
-        4 * Math.log2(sizeKb);
+        4 * Math.log2(sizeKb) -
+        Math.max(0, routeCount - 1) * 5;
       const usage = depUsageIndex?.get(entry.fileName);
       candidates.push({
         ...entry,
@@ -2906,6 +3382,8 @@ export async function startDevServer({
         sizeBytes,
         importerKeys: Array.isArray(usage?.importerKeys) ? usage!.importerKeys.slice() : [],
         entryRootKeys: Array.isArray(usage?.entryRootKeys) ? usage!.entryRootKeys.slice() : [],
+        routeKeys,
+        routeRequestCounts,
       });
     }
     return candidates;
@@ -2941,6 +3419,39 @@ export async function startDevServer({
   };
   const computePlannedFeatureGroups = (): Map<FeaturePackGroup, PackEntry[]> => {
     const candidates = computeFeatureCandidates();
+    const candidatesByFileName = new Map(candidates.map((candidate) => [candidate.fileName, candidate] as const));
+    const normalizeSourceHintKey = (hintUrl: string): string => {
+      const queryIndex = hintUrl.indexOf("?");
+      const pathname = queryIndex === -1 ? hintUrl : hintUrl.slice(0, queryIndex);
+      return pathname.replace(/^\/+/, "");
+    };
+    const sourceRouteHints = new Map(
+      routeHints
+        .summarizeAssets("source")
+        .filter((summary) => summary.url.startsWith("/"))
+        .map((summary) => [normalizeSourceHintKey(summary.url), summary] as const),
+    );
+    const pressureCandidatesByFileName = new Map(
+      candidates.map((candidate) => {
+        const routeRequestCounts: Record<string, number> = { ...candidate.routeRequestCounts };
+        for (const importerKey of candidate.importerKeys) {
+          const sourceHint = sourceRouteHints.get(importerKey);
+          if (!sourceHint) continue;
+          for (const [routeKey, requestCount] of Object.entries(sourceHint.routeRequestCounts)) {
+            if (!routeKey || !Number.isFinite(requestCount) || requestCount <= 0) continue;
+            routeRequestCounts[routeKey] = Math.max(routeRequestCounts[routeKey] ?? 0, requestCount);
+          }
+        }
+        return [
+          candidate.fileName,
+          {
+            ...candidate,
+            routeKeys: Object.keys(routeRequestCounts).sort(),
+            routeRequestCounts,
+          },
+        ] as const;
+      }),
+    );
     const usedGroups = new Set<string>(listFeaturePackGroups());
     const coupledGroups = extractDepCouplingGroups(
       candidates.map((c) => ({ fileName: c.fileName, entryPath: c.entryPath })),
@@ -2963,6 +3474,64 @@ export async function startDevServer({
       const group = assignFeaturePlanGroup(usedGroups, plan);
       next.set(group, plan.entries.map((entry) => ({ ...entry })));
     }
+    writeJsonFile(featurePlanReportPath, {
+      version: 2,
+      depsHash,
+      updatedAt: new Date().toISOString(),
+      candidates: candidates
+        .slice()
+        .sort((a, b) => b.score - a.score || a.fileName.localeCompare(b.fileName))
+        .map((candidate) => ({
+          fileName: candidate.fileName,
+          packageLabel: candidate.packageLabel,
+          score: candidate.score,
+          sizeBytes: candidate.sizeBytes,
+          importerKeys: candidate.importerKeys,
+          entryRootKeys: candidate.entryRootKeys,
+          routeKeys: candidate.routeKeys,
+          routeRequestCounts: candidate.routeRequestCounts,
+          pressureRouteKeys: pressureCandidatesByFileName.get(candidate.fileName)?.routeKeys ?? [],
+          pressureRouteRequestCounts: pressureCandidatesByFileName.get(candidate.fileName)?.routeRequestCounts ?? {},
+        })),
+      plans: Array.from(next.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([group, entries]) => ({
+          currentActiveSharedArtifact: (() => {
+            const baseState = featureLastReadyState.get(group);
+            const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
+            const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
+            if (!activeState?.sharedFileName) return null;
+            const sharedPath = path.join(depsRoot, activeState.sharedFileName);
+            const sharedBytes = fs.existsSync(sharedPath) ? fs.statSync(sharedPath).size : null;
+            return {
+              mode: activeState === slimState ? "slim" : "base",
+              sharedFileName: activeState.sharedFileName,
+              sharedBytes,
+            };
+          })(),
+          group,
+          totalBytes: entries.reduce((sum, entry) => sum + (depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0), 0),
+          sharedClosurePressure: (() => {
+            const baseState = featureLastReadyState.get(group);
+            const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
+            const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
+            const activeSharedBytes =
+              activeState?.sharedFileName && fs.existsSync(path.join(depsRoot, activeState.sharedFileName))
+                ? fs.statSync(path.join(depsRoot, activeState.sharedFileName)).size
+                : null;
+            return analyzeFeaturePackSharedClosurePressure({
+              entries,
+              candidatesByFileName: pressureCandidatesByFileName,
+              activeSharedBytes,
+            });
+          })(),
+          members: entries.map((entry) => ({
+            fileName: entry.fileName,
+            packageLabel: entry.packageLabel,
+            routeKeys: candidates.find((candidate) => candidate.fileName === entry.fileName)?.routeKeys ?? [],
+          })),
+        })),
+    });
     return next;
   };
   const replanFeaturePacks = () => {
@@ -3661,6 +4230,7 @@ export async function startDevServer({
 
   const computeTransformHash = (baseHash: string): string => {
     const parts: string[] = [];
+    parts.push(`depsRouting:${depsHash}:${DEPS_OPTIMIZER_OUTPUT_VERSION}`);
     parts.push(`vendorPackV2Policy:${VENDOR_PACK_V2_REWRITE_POLICY_VERSION}`);
     const featureHash = getFeaturePackRoutingHash();
     if (featureHash) parts.push(`featurePacks:${featureHash}`);
@@ -3915,7 +4485,7 @@ export async function startDevServer({
 
   const envFromFiles = loadIonifyEnv(envMode, rootDir);
   process.env.NODE_ENV = process.env.NODE_ENV ?? "development";
-  process.env.MODE = process.env.MODE ?? envMode;
+  process.env.MODE = envMode;
   const envValues: Record<string, string> = {
     ...envFromFiles,
     NODE_ENV: process.env.NODE_ENV,
@@ -4079,6 +4649,7 @@ export async function startDevServer({
         [...localDeps, ...externalDeps],
         federationRemoteBindings,
       );
+      enqueueLocalGraphCompletion(localDeps);
       graph.recordFile(mod.absPath, hash, nextDeps);
       scheduleDependencyWatches(localDeps);
 
@@ -4242,6 +4813,45 @@ export async function startDevServer({
         sendJson(res, 200, { ok: true });
         return;
       }
+      if (reqPath === "/__ionify_startup/report") {
+        if (!startupPolicyEnabled) {
+          res.statusCode = 404;
+          res.end("Not found");
+          return;
+        }
+        if (req.method !== "POST") {
+          res.writeHead(405, { Allow: "POST" });
+          res.end("Method Not Allowed");
+          return;
+        }
+        let body: any;
+        try {
+          body = await parseJsonBody(req);
+        } catch {
+          body = null;
+        }
+        const routeKey = normalizeDocumentRouteKey(typeof body?.routeKey === "string" ? body.routeKey : "/");
+        const preFcpLoadedUrls = Array.isArray(body?.preFcpLoadedUrls)
+          ? body.preFcpLoadedUrls.filter((value: unknown): value is string => {
+              if (typeof value !== "string" || !value.startsWith("/")) return false;
+              return isRouteHintPreloadValid(value, value.startsWith(DEPS_PREFIX) ? "dep" : "source");
+            })
+          : [];
+        const preFcpEvaluatedUrls = Array.isArray(body?.preFcpEvaluatedUrls)
+          ? body.preFcpEvaluatedUrls.filter((value: unknown): value is string => {
+              if (typeof value !== "string" || !value.startsWith("/")) return false;
+              return isRouteHintPreloadValid(value, value.startsWith(DEPS_PREFIX) ? "dep" : "source");
+            })
+          : [];
+        startupObservations.recordRouteObservation({
+          routeKey,
+          preFcpLoadedUrls,
+          preFcpEvaluatedUrls,
+        });
+        refreshStartupPolicySnapshot();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       if (reqPath.startsWith(DEPS_PREFIX)) {
         const fileName = reqPath.slice(DEPS_PREFIX.length);
@@ -4363,7 +4973,7 @@ export async function startDevServer({
 
 		            const raw = fs.readFileSync(depsFilePath, "utf8");
 		            const rewritten = rewriteIonifySharedChunkImportsForVendorPackV2(raw) ?? raw;
-		            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", Buffer.from(rewritten, "utf8"), {
+		            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(Buffer.from(rewritten, "utf8")), {
 		              etag,
 		              cacheControl: "public, max-age=31536000, immutable",
 		            });
@@ -4393,7 +5003,7 @@ export async function startDevServer({
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304)`);
             return;
           }
-          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", fs.readFileSync(depsFilePath), {
+          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
             etag,
             cacheControl: "public, max-age=31536000, immutable",
           });
@@ -4453,7 +5063,7 @@ export async function startDevServer({
                 cacheControl: "public, max-age=31536000, immutable",
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", fs.readFileSync(depsFilePath), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
                 etag,
                 cacheControl: "public, max-age=31536000, immutable",
               });
@@ -4515,7 +5125,7 @@ export async function startDevServer({
                 cacheControl: "public, max-age=31536000, immutable",
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", fs.readFileSync(depsFilePath), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
                 etag,
                 cacheControl: "public, max-age=31536000, immutable",
               });
@@ -4575,7 +5185,7 @@ export async function startDevServer({
             });
           } else {
             const outBuffer = fs.readFileSync(resolvedOutPath);
-            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", outBuffer, {
+            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(outBuffer), {
               etag,
               cacheControl: "public, max-age=31536000, immutable",
             });
@@ -4767,6 +5377,7 @@ export async function startDevServer({
           // Mode + dependency-isolated CAS key to prevent cross-mode collisions and stale CSS
           // when @import or PostCSS plugin dependencies change.
           const prevDeps = graph.getNode(effectiveFsPath)?.deps ?? [];
+          graph.recordStructuralFiles(prevDeps);
           scheduleDependencyWatches(prevDeps);
           const depsStampHash = computeDepsStampHash(prevDeps);
           let artifactHash = getCacheKey(
@@ -4804,6 +5415,7 @@ export async function startDevServer({
                 modules: isModule,
               });
               const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
+              graph.recordStructuralFiles(depsAbs);
               const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
               if (changed) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
@@ -4855,6 +5467,7 @@ export async function startDevServer({
                     modules: isModule,
                   });
                   const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
+                  graph.recordStructuralFiles(depsAbs);
                   const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
                   if (changed) {
                     logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
@@ -4906,6 +5519,7 @@ export async function startDevServer({
               );
               casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
               casFile = path.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+              graph.recordStructuralFiles(depsAbs);
               const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
               if (changed) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
@@ -5023,6 +5637,7 @@ export async function startDevServer({
         [...localDeps, ...externalDeps],
         federationRemoteBindings,
       );
+      enqueueLocalGraphCompletion(localDeps);
       const changed = graph.recordFile(effectiveFsPath, hash, nextDeps);
 
       if (!watcher.isWatched(effectiveFsPath)) {
@@ -5070,20 +5685,31 @@ export async function startDevServer({
           clientKey: routeHintClientKey,
           observedAtMs: routeHintObservedAtMs,
         });
+        const currentStartupPolicySnapshot = startupPolicyEnabled ? refreshStartupPolicySnapshot() : null;
 
         let htmlOut = envApplied;
         const preloadUrl = (hintUrl: string) => {
           if (!hintUrl) return;
           htmlOut = injectModulePreload(htmlOut, hintUrl);
         };
+        if (startupPolicyEnabled) {
+          htmlOut = injectInlineScript(htmlOut, buildStartupPolicyClientScript(documentRouteKey));
+        }
 
         const routeAwarePreloads = new Set<string>();
-        for (const hint of routeHints.selectPreloads(documentRouteKey, {
-          maxEntries: 24,
-          maxDepEntries: 8,
-          maxSourceEntries: 16,
-          minRequestCount: 1,
-        })) {
+        const startupPolicyPreloads = startupPolicyPreloadAuthorityEnabled
+          ? selectStartupPolicyPreloads(currentStartupPolicySnapshot, documentRouteKey)
+          : [];
+        const preloadHints =
+          startupPolicyPreloads.length > 0
+            ? startupPolicyPreloads
+            : routeHints.selectPreloads(documentRouteKey, {
+                maxEntries: 24,
+                maxDepEntries: 8,
+                maxSourceEntries: 16,
+                minRequestCount: 1,
+              });
+        for (const hint of preloadHints) {
           if (!isRouteHintPreloadValid(hint.url, hint.kind)) continue;
           for (const preloadUrlCandidate of expandRouteHintPreloadUrls(hint.url, hint.kind)) {
             routeAwarePreloads.add(preloadUrlCandidate);
@@ -5095,13 +5721,16 @@ export async function startDevServer({
             preloadUrl(routePreload);
           }
           logInfo(
-            `[phase22] Route hints ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}`,
+            startupPolicyPreloads.length > 0
+              ? `[phase23] Startup policy ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}`
+              : `[phase22] Route hints ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}`,
           );
         } else {
           // Phase 6.4: No-duplication policy.
-          // Prefer pack/routing preloads when vendor deps are already covered by a v2 pack route.
-          // This avoids redundant requests/bytes (e.g. legacy vendor.<depsHash>.js importing per-entry wrappers
-          // that are already routed to vendor-pack v2 modules).
+          // Prefer pack/routing preloads when the current v2 routing index can
+          // conservatively explain the bootstrap graph. This keeps first-hit HTML
+          // aligned with the active vendor-pack routing authority and avoids
+          // trusting stale pack files still sitting on disk.
           const preloadDepsUrl = (hintUrl: string) => {
             if (!hintUrl.startsWith(DEPS_PREFIX)) return;
             const fileName = hintUrl.slice(DEPS_PREFIX.length);
@@ -5110,7 +5739,7 @@ export async function startDevServer({
             preloadUrl(hintUrl);
           };
 
-          const packPreloads = new Set<string>();
+          const packPreloads = new Set<string>(collectBootstrapRoutedPackPreloadUrls());
           const packFilesForVendorDeps = new Set<string>();
           if (vendorPacksEnabled) {
             for (const dep of vendorDeps) {
@@ -5138,6 +5767,10 @@ export async function startDevServer({
             for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
               preloadDepsUrl(`${DEPS_PREFIX}${packFileName}`);
             }
+          } else if (packPreloads.size > 0) {
+            const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
+            if (sharedPreload) preloadDepsUrl(sharedPreload);
+            for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
           } else {
             ensureVendorPackFile();
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
@@ -5161,7 +5794,11 @@ export async function startDevServer({
           clientKey: routeHintClientKey,
           observedAtMs: routeHintObservedAtMs,
         });
-        const finalBuffer = Buffer.from(envApplied);
+        const startupInstrumented =
+          guessContentType(effectiveFsPath).startsWith("application/javascript")
+            ? startupInstrumentJavaScriptCode(envApplied)
+            : envApplied;
+        const finalBuffer = Buffer.from(startupInstrumented);
         const etag = weakEtagFromContent(`mod-${configHash}`, finalBuffer);
         sendBuffer(req, res, 200, guessContentType(effectiveFsPath), finalBuffer, {
           etag,
@@ -5322,6 +5959,7 @@ export async function startDevServer({
   const shutdown = async (exitProcess: boolean) => {
     flushVendorPackRequestCounts(true);
     prepareShutdown();
+    await drainPendingGraphCompletion();
     if (!closingPromise) {
       closingPromise = new Promise<void>((resolve, reject) => {
         // Add a timeout to force cleanup after 3 seconds
