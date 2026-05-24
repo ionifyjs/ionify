@@ -83,6 +83,10 @@ pnpm ionify build
 
 ---
 
+## What's New
+
+- Fix bug #5: stale dev dependency URLs could survive dependency routing changes and produce `/@deps/*` startup failures. Issue: https://github.com/ionifyjs/ionify/issues/5.
+
 ## Project Status
 
 **Core engine:** Stable and production-ready  
@@ -94,6 +98,18 @@ pnpm ionify build
 **Analyzer:** Stable and production-ready     
 **AI layers:** Planned on top of the unified engine
 
+---
+
+## Recent Implemented
+
+- Environment Modes
+Ionify loads `.env`, `.env.local`, `.env.<mode>`, and `.env.<mode>.local`.
+Use `--mode` to select the app mode while keeping production build semantics:
+
+- **Startup policy seed:** Ionify now records first-route startup observations and persists a startup policy snapshot for dev analysis.
+- **Smarter first-hit preloads:** current routed vendor-pack v2 assets are preferred over stale legacy fallback preloads.
+- **Route-aware analyzer visibility:** `ionify analyze` now exposes startup-policy signals, eager/deferred visibility, and route-level policy context.
+- **Improved cloud push state UX:** clearer dependency snapshot states, cloud snapshot reuse messaging, and more explicit Tier-1/Tier-2 summaries.
 
 ---
 
