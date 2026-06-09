@@ -395,16 +395,53 @@ export function tryNativeTransform(mode: "oxc" | "swc" | "hybrid", code: string,
   return null;
 }
 
-export function ensureNativeGraph(graphPath?: string, version?: string): boolean {
+type EnsureNativeGraphOptions = {
+  retryMs?: number;
+  retryIntervalMs?: number;
+};
+
+function isGraphLockError(err: unknown): boolean {
+  const message = String(err);
+  return /could not acquire lock|Resource temporarily unavailable|WouldBlock|database is locked|lock/i.test(message);
+}
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, ms);
+}
+
+export function ensureNativeGraph(graphPath?: string, version?: string, options: EnsureNativeGraphOptions = {}): boolean {
   if (!nativeBinding?.graphInit) return false;
+  const retryMs = Math.max(0, Math.floor(options.retryMs ?? 0));
+  const retryIntervalMs = Math.max(10, Math.floor(options.retryIntervalMs ?? 50));
+  const deadline = retryMs > 0 ? Date.now() + retryMs : 0;
+  let attempts = 0;
+  let lastErr: unknown = null;
+
   try {
-    nativeBinding.graphInit(graphPath, version);
-    return true;
+    while (true) {
+      attempts += 1;
+      try {
+        nativeBinding.graphInit(graphPath, version);
+        return true;
+      } catch (err) {
+        lastErr = err;
+        if (retryMs <= 0 || !isGraphLockError(err) || Date.now() >= deadline) {
+          break;
+        }
+        sleepSync(Math.min(retryIntervalMs, Math.max(0, deadline - Date.now())));
+      }
+    }
   } catch (err) {
-    console.error(`[Native] Failed to initialize graph: ${err}`);
-    // ignore initialization errors; JS fallback will handle persistence
-    return false;
+    lastErr = err;
   }
+
+  const attemptNote = attempts > 1 ? ` after ${attempts} attempts` : "";
+  console.error(`[Native] Failed to initialize graph${attemptNote}: ${lastErr}`);
+  // ignore initialization errors; JS fallback will handle persistence
+  return false;
 }
 
 type ConfigHashInput = {

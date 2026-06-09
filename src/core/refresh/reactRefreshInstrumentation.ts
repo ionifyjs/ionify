@@ -21,6 +21,7 @@ export interface InstrumentOptions {
 }
 
 export const REACT_REFRESH_RUNTIME_MODULE = "/__ionify_hmr_client.js";
+export const REACT_REFRESH_HMR_CONTRACT_VERSION = "entry-root-full-reload-v1";
 
 export interface InstrumentResult {
   shouldInstrument: boolean;
@@ -209,6 +210,17 @@ function needsReactRefresh(ext: string, isDev: boolean): boolean {
   return ext === ".jsx" || ext === ".tsx";
 }
 
+export function hasReactRootRenderSideEffect(code: string): boolean {
+  const sample = code.slice(0, 64 * 1024);
+  return (
+    /\bcreateRoot\s*\(/.test(sample) ||
+    /\bhydrateRoot\s*\(/.test(sample) ||
+    /\bReactDOM\s*\.\s*createRoot\s*\(/.test(sample) ||
+    /\bReactDOM\s*\.\s*hydrateRoot\s*\(/.test(sample) ||
+    /\bReactDOM\s*\.\s*render\s*\(/.test(sample)
+  );
+}
+
 // --- PUBLIC API (wraps existing functions, preserves exact behavior) ---
 
 /**
@@ -233,16 +245,20 @@ export async function instrumentReactRefresh(options: InstrumentOptions): Promis
     `import { setupReactRefresh, normalizeRefreshModuleId } from "${REACT_REFRESH_RUNTIME_MODULE}";\n` +
     `const __ionifyRefresh__ = setupReactRefresh(import.meta.hot ?? { accept() {}, dispose() {} }, normalizeRefreshModuleId(import.meta.url));\n`;
 
-  const epilogue =
-    `\n__ionifyRefresh__?.finalize?.();\n\n` +
-    `if (import.meta.hot) {\n` +
-    `  import.meta.hot.accept((newModule) => {\n` +
-    `    __ionifyRefresh__?.refresh?.(newModule);\n` +
-    `  });\n` +
-    `  import.meta.hot.dispose(() => {\n` +
-    `    __ionifyRefresh__?.dispose?.();\n` +
-    `  });\n` +
-    `}\n`;
+  const shouldSelfAccept = !(isEntry && hasReactRootRenderSideEffect(code));
+  const epilogue = shouldSelfAccept
+    ? (
+      `\n__ionifyRefresh__?.finalize?.();\n\n` +
+      `if (import.meta.hot) {\n` +
+      `  import.meta.hot.accept((newModule) => {\n` +
+      `    __ionifyRefresh__?.refresh?.(newModule);\n` +
+      `  });\n` +
+      `  import.meta.hot.dispose(() => {\n` +
+      `    __ionifyRefresh__?.dispose?.();\n` +
+      `  });\n` +
+      `}\n`
+    )
+    : `\n__ionifyRefresh__?.finalize?.();\n`;
 
   return { shouldInstrument: true, prologue, registrations, epilogue };
 }

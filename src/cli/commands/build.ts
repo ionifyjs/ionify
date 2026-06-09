@@ -528,13 +528,13 @@ export function rerouteDepsArtifacts(options: {
   casRoot: string;
   configHash: string;
   workspaceRoot: string;
-}): { rerouted: number; pruned: number; sharedPrewarmed: number } {
+}): { rerouted: number; pruned: number; sharedPrewarmed: number; idRewritten: number } {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
 
   // Build reverse map: canonical entry path → { outFile, artifactPath, artifactHash, sharedImports }
   const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string; artifactHash: string; sharedImports: string[] }>();
   const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
+  if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
   try {
     const raw = fs.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
@@ -557,13 +557,32 @@ export function rerouteDepsArtifacts(options: {
       depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, sharedImports });
     }
   } catch {
-    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
+    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
   }
 
-  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0 };
+  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
 
   let rerouted = 0;
   let pruned = 0;
+  let idRewritten = 0;
+
+  // ── Identity reroute (dep-boundary invariant) ────────────────────────────────
+  // A rerouted dep leaf must also stop carrying its raw `ws://node_modules/...`
+  // identity into the plan/manifest. Its single identity becomes the optimized
+  // `.ionify/deps/<hash>/<wrapper>` artifact — mirroring dev, where the served
+  // import is already `/@deps/<wrapper>` and node_modules is provenance only,
+  // never the routing identity. `idRemap` (old node_modules id → artifact id) is
+  // applied to every surviving module's dep edges in a second pass so no consumer
+  // references a raw node_modules identity either.
+  const idRemap = new Map<string, string>();
+
+  // Two distinct node_modules plan modules (e.g. different pnpm virtual paths for
+  // the same package) can resolve to the SAME `.ionify/deps` artifact. They are the
+  // same dependency: keep exactly one plan module under the artifact id and drop the
+  // rest, remapping every old id to the survivor. This preserves single ownership and
+  // prevents the chunk surface from emitting the same synthetic export name twice
+  // (which would trip swc_bundler's span-hygiene invariant).
+  const claimedNewIds = new Set<string>();
 
   // Track rerouted module paths per chunk so we can scan their /@deps/ imports.
   // key: chunkId → set of rerouted artifact paths
@@ -631,6 +650,31 @@ export function rerouteDepsArtifacts(options: {
         // as artifact boundaries. After rerouting they are concrete JS artifact files;
         // all downstream consumers (CAS hydration loop, Rust bundler) expect kind="js".
         (mod as any).kind = "js";
+
+        // Identity reroute: replace the raw node_modules id with the artifact id so
+        // the plan/manifest carries only the dep-artifact boundary (never node_modules).
+        // Resolution is unaffected — consumers import `/@deps/<wrapper>` (resolved by
+        // the Rust loader to the artifact path), so the id is a label, not a route.
+        const oldId = typeof mod.id === "string" ? mod.id : null;
+        let newId: string | null = null;
+        try {
+          newId = toWsModuleId(artifact.artifactPath, workspaceRoot);
+        } catch {
+          newId = null;
+        }
+        if (oldId && newId && oldId !== newId) {
+          idRemap.set(oldId, newId);
+          if (claimedNewIds.has(newId)) {
+            // Duplicate of an artifact already kept as a plan module — drop this one.
+            // Its old id still resolves to the survivor via idRemap in the dep-edge pass.
+            pruned += 1;
+            continue;
+          }
+          claimedNewIds.add(newId);
+          mod.id = newId;
+          idRewritten += 1;
+        }
+
         keptModules.push(mod);
         rerouted += 1;
 
@@ -646,6 +690,40 @@ export function rerouteDepsArtifacts(options: {
       }
     }
     chunk.modules = keptModules;
+  }
+
+  // ── Pass 2: remap dependency edges off raw node_modules identities ───────────
+  // After rerouting, no surviving module may reference a node_modules id in its
+  // deps/dynamicDeps. Kept dep leaves → their artifact id; pruned transitive deps
+  // (already bundled inside a wrapper, so not standalone plan modules) → dropped.
+  // This keeps the manifest dep graph self-consistent with the rerouted identities.
+  if (idRemap.size > 0 || pruned > 0) {
+    const remapDepList = (list: string[]): string[] => {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const dep of list) {
+        let mapped: string | null = dep;
+        if (idRemap.has(dep)) {
+          mapped = idRemap.get(dep)!;
+        } else if (typeof dep === "string" && dep.includes("node_modules")) {
+          // Pruned transitive (no standalone artifact) — bundled inside a wrapper.
+          mapped = null;
+        }
+        if (mapped && !seen.has(mapped)) {
+          seen.add(mapped);
+          out.push(mapped);
+        }
+      }
+      return out;
+    };
+    for (const chunk of plan.chunks) {
+      for (const mod of chunk.modules) {
+        if (Array.isArray(mod.deps)) mod.deps = remapDepList(mod.deps);
+        if (Array.isArray((mod as any).dynamicDeps)) {
+          (mod as any).dynamicDeps = remapDepList((mod as any).dynamicDeps);
+        }
+      }
+    }
   }
 
   // ── Phase U extension: Pre-warm shared dep artifacts into Tier-1 CAS ──
@@ -767,11 +845,18 @@ export function rerouteDepsArtifacts(options: {
     }
 
     // Inject synthetic plan modules for the discovered shared artifacts.
-    // They use the absolute path as both id and fsPath so the Rust bundler's
+    // id = workspace-scoped artifact id (portable, deterministic — never an absolute
+    // OS path in the manifest); fsPath = absolute path so the Rust bundler's
     // modules_by_path map resolves them to CAS correctly.
     for (const { absPath, hash } of sharedFilesToAdd) {
+      let sharedId = absPath;
+      try {
+        sharedId = toWsModuleId(absPath, workspaceRoot) ?? absPath;
+      } catch {
+        sharedId = absPath;
+      }
       chunk.modules.push({
-        id: absPath,
+        id: sharedId,
         fsPath: absPath,
         hash,
         kind: "js",
@@ -781,7 +866,7 @@ export function rerouteDepsArtifacts(options: {
     }
   }
 
-  return { rerouted, pruned, sharedPrewarmed };
+  return { rerouted, pruned, sharedPrewarmed, idRewritten };
 }
 
 function computeBuildSlimmingSavedPercent(depsRoot: string, depsHash: string): number | null {
@@ -2334,7 +2419,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // ── T3: Route node_modules deps through deps optimizer artifacts ──
     {
       const casRoot = path.join(ionifyDir, "cas");
-      const { rerouted, pruned, sharedPrewarmed } = rerouteDepsArtifacts({
+      const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
         plan,
         depsRoot,
         casRoot,
@@ -2343,7 +2428,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       });
       if (rerouted > 0 || pruned > 0) {
         logInfo(
-          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted, ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
+          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted (${idRewritten} ids → artifact identity), ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
         );
       }
     }

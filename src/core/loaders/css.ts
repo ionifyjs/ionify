@@ -13,6 +13,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { createRequire } from "module";
 import postcss, { AcceptedPlugin, ProcessOptions } from "postcss";
 import postcssLoadConfig from "postcss-load-config";
 import postcssModules from "postcss-modules";
@@ -111,10 +112,16 @@ function resolveCssSpecifier(spec: string, filePath: string, rootDir: string): s
   const trimmed = spec.trim();
   if (!trimmed) return null;
   if (/^(data:|https?:|\/\/)/i.test(trimmed)) return null;
-  const resolved = trimmed.startsWith("/")
-    ? path.resolve(rootDir, "." + trimmed)
-    : path.resolve(path.dirname(filePath), trimmed);
-  return resolved;
+  if (trimmed.startsWith("/")) return path.resolve(rootDir, "." + trimmed);
+  if (trimmed.startsWith("@/")) return path.resolve(rootDir, "src", trimmed.slice(2));
+  if (trimmed.startsWith(".") || trimmed.startsWith("..")) return path.resolve(path.dirname(filePath), trimmed);
+
+  const specifier = trimmed.startsWith("~") ? trimmed.slice(1) : trimmed;
+  try {
+    return createRequire(filePath).resolve(specifier);
+  } catch {
+    return path.resolve(path.dirname(filePath), trimmed);
+  }
 }
 
 function discoverUrlDeps(css: string, filePath: string, rootDir: string): string[] {

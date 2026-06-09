@@ -18,6 +18,7 @@ import { build } from "esbuild";
 import type { IonifyConfig } from "../../types/config";
 import { logError, logInfo, logWarn } from "./logger.js";
 import { configureResolverAliases, resetResolverAliasCache } from "@core/resolver";
+import { loadEnv as loadIonifyEnv, type EnvRecord } from "@cli/utils/env";
 
 const CONFIG_BASENAMES = [
   "ionify.config.ts",
@@ -29,6 +30,28 @@ const CONFIG_BASENAMES = [
 
 let cachedConfig: IonifyConfig | null = null;
 let configLoaded = false;
+
+function resolveConfigMode(mode?: string): string {
+  return mode || process.env.MODE || process.env.IONIFY_MODE || process.env.NODE_ENV || "development";
+}
+
+function buildConfigEnv(mode: string, rootDir: string): EnvRecord {
+  const env = loadIonifyEnv(mode, rootDir);
+  const merged: EnvRecord = {
+    ...env,
+    MODE: mode,
+  };
+  if (typeof process.env.NODE_ENV === "string") {
+    merged.NODE_ENV = process.env.NODE_ENV;
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== "string") continue;
+    if (key.startsWith("VITE_") || key.startsWith("IONIFY_")) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
 
 function findProjectRoot(startDir: string): string | null {
   let dir = path.resolve(startDir);
@@ -58,10 +81,14 @@ async function bundleConfig(entry: string) {
         path: 'ionify-virtual',
         namespace: 'ionify-ns'
       }));
+      build.onResolve({ filter: /^@ionify\/ionify$/ }, () => ({
+        path: 'ionify-virtual',
+        namespace: 'ionify-ns'
+      }));
       build.onLoad({ filter: /.*/, namespace: 'ionify-ns' }, () => ({
         contents: `
           export function defineConfig(config) {
-            return typeof config === 'function' ? config : () => config;
+            return config;
           }
         `,
         loader: 'js'
@@ -111,6 +138,7 @@ function findConfigFile(cwd: string): string | null {
 export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Promise<IonifyConfig | null> {
   if (configLoaded) return cachedConfig;
   configLoaded = true;
+  const configMode = resolveConfigMode(mode);
 
   const configPath = findConfigFile(cwd);
   if (!configPath) {
@@ -124,6 +152,8 @@ export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Prom
   }
 
   try {
+    const configDir = path.dirname(configPath);
+    const configEnv = buildConfigEnv(configMode, configDir);
     const bundled = await bundleConfig(configPath);
     const dataUrl = `data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`;
     const imported = await import(dataUrl);
@@ -133,7 +163,7 @@ export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Prom
     
     // If the config is a function (from defineConfig), call it
     if (resolved && typeof resolved === 'function') {
-      resolved = resolved({ mode: mode || process.env.MODE || process.env.IONIFY_MODE || process.env.NODE_ENV || 'development' });
+      resolved = resolved({ mode: configMode, env: configEnv });
     }
     
     if (resolved && typeof (resolved as unknown as Promise<unknown>)?.then === "function") {

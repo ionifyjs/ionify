@@ -199,6 +199,31 @@ export interface IonifyOptimizeDepsConfig {
   [key: string]: unknown;
 }
 
+export type IonifyStartupPolicyMode = "auto" | "observe" | "enforce" | "off";
+
+export interface IonifyStartupPolicyConfig {
+  /**
+   * Dev startup policy mode.
+   * - "auto" (default): observe startup history and enforce only bounded, stable eager closures.
+   * - "observe": collect policy evidence without making HTML preloads authoritative.
+   * - "enforce": same policy path as auto, useful for experiments with custom budgets.
+   * - "off": disable startup policy collection and enforcement.
+   */
+  mode?: IonifyStartupPolicyMode;
+  /**
+   * Record module evaluation timing by injecting a tiny marker into JS responses.
+   * Disabled by default because it changes served module bytes and can affect startup metrics.
+   */
+  observeEvaluations?: boolean;
+  minRouteDocuments?: number;
+  maxEagerDepAssets?: number;
+  maxEagerSourceAssets?: number;
+  maxEagerTotalAssets?: number;
+  maxEagerDepBytes?: number;
+  maxEagerSourceBytes?: number;
+  maxEagerTotalBytes?: number;
+}
+
 export interface IonifyConfig {
   /**
    * Project root directory. All paths are resolved relative to root.
@@ -221,6 +246,7 @@ export interface IonifyConfig {
   server?: IonifyServerConfig;
   build?: IonifyBuildConfig;
   federation?: IonifyFederationConfig;
+  startupPolicy?: boolean | IonifyStartupPolicyMode | IonifyStartupPolicyConfig;
   /**
    * Select which minifier to use for production output.
    * - 'auto' (default): let Ionify choose (prefers oxc when available)

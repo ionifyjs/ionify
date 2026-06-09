@@ -21,6 +21,8 @@ import { runAddCommand } from "./commands/add.js";
 import { runPushCommand } from "./commands/push.js";
 import { runHydrateCommand } from "./commands/hydrate.js";
 import { runLoginCommand, runLogoutCommand, runWhoamiCommand } from "./commands/login.js";
+import { runBindCommand } from "./commands/bind.js";
+import { runStatusCommand } from "./commands/status.js";
 
 const program = new Command();
 
@@ -167,12 +169,51 @@ program
 
 program
   .command("login")
-  .description("Log in to Ionify Cloud (saves token to ~/.ionify/credentials.json)")
-  .action(async () => {
+  .description("Log in to Ionify Cloud (auth only; project binding is separate)")
+  .option("--api <url>", "Ionify Cloud API URL", "https://api.ionify.cloud")
+  .option("--token <token>", "Existing project token from the dashboard")
+  .action(async (options) => {
     try {
-      await runLoginCommand();
+      await runLoginCommand({
+        apiUrl: options.api,
+        token: options.token,
+      });
     } catch (err) {
       logError("Login failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("bind")
+  .description("Bind the current folder to an Ionify Cloud project")
+  .requiredOption("--project <projectId>", "Project ID from the dashboard")
+  .option("--api <url>", "Ionify Cloud API URL")
+  .option("--slug <slug>", "Project slug/name used in the Fingerprint V1 hash")
+  .option("--allow-local", "Create a local_unverified binding when no git remote exists")
+  .action(async (options) => {
+    try {
+      await runBindCommand({
+        projectId: options.project,
+        apiUrl: options.api,
+        slug: options.slug,
+        allowLocal: !!options.allowLocal,
+      });
+    } catch (err) {
+      logError("Bind failed", err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("status")
+  .description("Show local binding and Ionify Cloud project status")
+  .option("--json", "Print machine-readable status JSON")
+  .action(async (options) => {
+    try {
+      await runStatusCommand({ json: !!options.json });
+    } catch (err) {
+      logError("Status failed", err);
       process.exit(1);
     }
   });

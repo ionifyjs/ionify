@@ -196,9 +196,10 @@ async function applyUpdate(payload) {
     return;
   }
 
-  // if any module deleted, fallback to hard reload
-  if (modules.some((m) => m.status === "deleted")) {
-    warn("module deleted, reloading page");
+  // Entry/root-render modules have top-level DOM side effects. Importing them
+  // during HMR can create a second React root in the same container, so reload.
+  if (modules.some((m) => m.status === "deleted" || m.status === "reload")) {
+    warn("module requires full reload");
     location.reload();
     return;
   }

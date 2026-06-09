@@ -66,6 +66,7 @@ import { TransformWorkerPool } from "@core/worker/pool";
 import { HMRServer, injectHMRClient, PendingHMRModule } from "@core/hmr";
 import { compileCss, renderCssModule, renderCssRawStringModule, renderCssUrlModule, renderCssTokensModule } from "@core/loaders/css";
 import { isAssetExt, contentTypeForAsset, assetAsModule, normalizeUrlFromFs } from "@core/loaders/asset";
+import { isEntryModule } from "@core/refresh/entryDetection";
 import { applyRegisteredLoaders } from "@core/loaders/registry";
 import { loadIonifyConfig } from "@cli/utils/config";
 import { resolveMinifier } from "@cli/utils/minifier";
@@ -91,7 +92,11 @@ import {
   scanDepUsage,
   type DepUsageIndex,
 } from "@core/deps/usage";
-import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
+import {
+  REACT_REFRESH_RUNTIME_MODULE,
+  REACT_REFRESH_HMR_CONTRACT_VERSION,
+  hasReactRootRenderSideEffect,
+} from "@core/refresh/reactRefreshInstrumentation";
 import { applyDefineReplacements, buildDefineConfig } from "@core/utils/define";
 import { isNotModified, weakEtagFromContent, weakEtagFromStat } from "@core/http-cache";
 import crypto from "crypto";
@@ -1138,6 +1143,13 @@ type HMRModuleResponse =
       hash: string;
       deps: string[];
       reason: PendingHMRModule["reason"];
+      status: "reload";
+    }
+  | {
+      url: string;
+      hash: string;
+      deps: string[];
+      reason: PendingHMRModule["reason"];
       status: "updated";
       code: string;
     };
@@ -1249,6 +1261,7 @@ export async function startDevServer({
     assetOptions: (userConfig as any)?.assets ?? (userConfig as any)?.asset,
     runtimeContracts: {
       reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+      reactRefreshHmr: REACT_REFRESH_HMR_CONTRACT_VERSION,
       federation: buildFederationVersionContract(userConfig?.federation),
     },
   };
@@ -4230,6 +4243,7 @@ export async function startDevServer({
 
   const computeTransformHash = (baseHash: string): string => {
     const parts: string[] = [];
+    parts.push(`reactRefreshHmr:${REACT_REFRESH_HMR_CONTRACT_VERSION}`);
     parts.push(`depsRouting:${depsHash}:${DEPS_OPTIMIZER_OUTPUT_VERSION}`);
     parts.push(`vendorPackV2Policy:${VENDOR_PACK_V2_REWRITE_POLICY_VERSION}`);
     const featureHash = getFeaturePackRoutingHash();
@@ -4652,6 +4666,17 @@ export async function startDevServer({
       enqueueLocalGraphCompletion(localDeps);
       graph.recordFile(mod.absPath, hash, nextDeps);
       scheduleDependencyWatches(localDeps);
+
+      if (isEntryModule(mod.absPath, userConfig ?? undefined) || hasReactRootRenderSideEffect(code)) {
+        updates.push({
+          url: mod.url,
+          hash,
+          deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
+          reason: mod.reason,
+          status: "reload",
+        });
+        continue;
+      }
 
 	      const extName = path.extname(mod.absPath);
 	      const result = await transformer.run({

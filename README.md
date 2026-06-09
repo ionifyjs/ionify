@@ -2,80 +2,208 @@
 
 **The World's First Persistent Build Intelligence Engine.**
 
-Ionify unifies development and production workflows into one persistent pipeline: dependency graph + content-addressable cache + hybrid transforms + analysis-ready architecture.
+Ionify is a Rust-powered build engine that replaces disposable execution with persistent build intelligence.
+
+Instead of repeatedly rediscovering dependency behavior, transforming the same modules, and rebuilding the same artifacts, Ionify persists project knowledge and reuses valid work across development, production, CI, and future cloud infrastructure.
 
 ---
 
-## What is Ionify?
+## Traditional Prebundling Optimizes Dependencies.
 
-**Ionify changes the game with "Build Persistence":**
+## Ionify Publishes Dependency Contracts.
 
-- **Unified Intelligence:** The same engine for Dev and Production. No more "works in dev, breaks in build."
-- **Rust-Native Performance:** Built on the **OXC** core for brutal speed and **SWC** for bulletproof compatibility.
-- **CAS (Content-Addressable Storage):** Version-isolated caching that ensures you never transform the same code twice.
+Modern build tools optimize dependencies for faster startup.
+
+Ionify introduces a **Dependency Publication Layer (DPL)** that publishes dependency behavior as reusable infrastructure.
+
+Published dependency contracts include:
+
+* Export ABI Manifests
+* Export Surface Hashes
+* Singleton Ownership
+* Fail-Closed Resolution
+* Deterministic Artifact Identity
+
+The result:
+
+**One Dependency.
+One Contract.
+One Authority.**
+
+---
+
+## What Makes Ionify Different?
+
+### One Graph
+
+A persistent dependency graph that survives:
+
+* Restarts
+* Branch switches
+* Dev/build transitions
+* Workspace boundaries
+
+The graph is treated as infrastructure, not temporary state.
+
+---
+
+### One CAS
+
+Every transformed artifact is stored by identity.
+
+If the inputs have not changed, Ionify reuses existing work instead of repeating it.
+
+Artifacts are immutable.
+
+Valid work is never recomputed.
+
+---
+
+### One Dependency Authority
+
+Dependencies are analyzed once and published as reusable contracts.
+
+The same dependency authority is consumed by:
+
+* Dev Server
+* Production Bundler
+* Federation
+* Vendor Packs
+* Future Cloud Infrastructure
+
+No dependency drift.
+
+No multiple realities.
+
+---
+
+### One Pipeline
+
+Traditional tooling often creates:
+
+* Dev Reality
+* Build Reality
+* CI Reality
+* Production Reality
+
+Ionify uses a unified deterministic pipeline:
+
+```text
+Resolver
+  → Dependency Publication
+  → Persistent Graph
+  → Transform
+  → CAS
+  → Planner
+  → Output
+```
+
+The goal is simple:
+
+Development and production should not disagree.
 
 ---
 
 ## Architecture
 
-- The Persistence Layer
-Unlike traditional tools, Ionify maintains a long-lived dependency graph that survives across runs.
+```text
+Source Files
+      ↓
+Native Resolver
+      ↓
+Dependency Publication Layer
+      ↓
+Persistent Graph
+      ↓
+Hybrid Transform Engine
+      ↓
+Content Addressable Storage
+      ↓
+Planner
+      ↓
+Dev Server / Production Build
+```
 
-- Resolver: High-speed native module resolution.
+### Rust-Native Core
 
-- Persistent Graph: Saves the entire project structure to a native Rust database (Sled/SQLite).
+Ionify performs performance-critical work in Rust:
 
-- Hybrid Transform: Uses a high-performance OXC primary engine with an SWC fallback for 100% resilience.
+* Dependency Resolution
+* Graph Management
+* Artifact Planning
+* Bundling
+* Persistent Storage
 
-- CAS: Every transformed module is stored in a version-isolated Content-Addressable Store.
+Using:
+
+* OXC (Primary Transform Engine)
+* SWC (Compatibility Fallback)
+* sled (Persistent Graph Storage)
 
 ---
 
-### Enterprise Proof
+## Build Intelligence Federation
 
-> Ionify has been battle-tested on enterprise projects with **11,000+ modules** and **25,000+ dependencies** with 100% stability.
+Traditional Module Federation shares runtime code.
+
+Ionify Federation aims to share build intelligence.
+
+A remote can publish:
+
+* Dependency Ownership
+* Artifact Identity
+* Dependency Contracts
+* Startup Knowledge
+
+The long-term goal is:
+
+**Build Intelligence Federation**
+
+Not just runtime code sharing.
 
 ---
 
-## 🚀 Quick Start (The Fast Track)
+## Enterprise Validation
 
-The easiest way to start a new high-performance project with Ionify is using our interactive scratchpad:
+Ionify has been validated on applications containing:
+
+* 11,000+ internal modules
+* 25,000+ dependencies
+
+while maintaining deterministic behavior and structural reuse.
+
+---
+
+## Quick Start
+
+### Create a New Project
 
 ```bash
 pnpm create ionify@latest
 ```
 
-This will set up a pre-configured environment optimized for the Ionify Persistence Engine.
-
-🛠 Manual Installation
-
-If you want to integrate Ionify into an existing project:
-
-1.Install the core:
+### Install Into an Existing Project
 
 ```bash
 pnpm add -D @ionify/ionify
 ```
 
-2.Initialize Configuration:
+Create:
 
-
-Create an `ionify.config.ts` in your root
-
-```typescript
+```ts
 export default {
   entry: "/src/main.ts",
   outDir: "dist",
 };
 ```
 
-### Development Server
+Run:
 
 ```bash
 pnpm ionify dev
 ```
 
-### Production Build
+Build:
 
 ```bash
 pnpm ionify build
@@ -83,56 +211,34 @@ pnpm ionify build
 
 ---
 
-## What's New
+## Current Status
 
-- Fix bug #5: stale dev dependency URLs could survive dependency routing changes and produce `/@deps/*` startup failures. Issue: https://github.com/ionifyjs/ionify/issues/5.
-
-## Project Status
-
-**Core engine:** Stable and production-ready  
-**Unified dev + build pipeline:** Stable and production-ready    
-**Persistent graph and CAS:** Stable and production-ready    
-**Dependency pipeline:** Stable and production-ready   
-**Monorepo support:** Ready and stable  
-**Microfrontend runtime:** Stable  
-**Analyzer:** Stable and production-ready     
-**AI layers:** Planned on top of the unified engine
-
----
-
-## Recent Implemented
-
-- Environment Modes
-Ionify loads `.env`, `.env.local`, `.env.<mode>`, and `.env.<mode>.local`.
-Use `--mode` to select the app mode while keeping production build semantics:
-
-- **Startup policy seed:** Ionify now records first-route startup observations and persists a startup policy snapshot for dev analysis.
-- **Smarter first-hit preloads:** current routed vendor-pack v2 assets are preferred over stale legacy fallback preloads.
-- **Route-aware analyzer visibility:** `ionify analyze` now exposes startup-policy signals, eager/deferred visibility, and route-level policy context.
-- **Improved cloud push state UX:** clearer dependency snapshot states, cloud snapshot reuse messaging, and more explicit Tier-1/Tier-2 summaries.
-
----
-
-## Language Stack
-
-| Component               | Technology          |
-| ----------------------- | ------------------- |
-| Core Engine             | Rust                |
-| CLI / SDK / Plugin API  | TypeScript          |
-| Graph Persistence       | Native (sled/SQLite)|
-| Primary Parser          | OXC                 |
-| Fallback Parser         | SWC                 |
-| Future Analyzer UI      | React + TypeScript  |
+| Capability                   | Status         |
+| ---------------------------- | -------------- |
+| Persistent Graph             | ✅ Stable       |
+| Content Addressable Storage  | ✅ Stable       |
+| Native Dependency Resolver   | ✅ Stable       |
+| Dependency Publication Layer | ✅ Stable       |
+| One Dependency Authority     | ✅ Stable       |
+| Unified Dev + Build Pipeline | ✅ Stable       |
+| Federation Foundation        | ✅ Stable       |
+| Workspace Engine             | ✅ Stable       |
+| Ionify Analyze               | ✅ Stable       |
+| Cloud CAS                    | 🚧 In Progress |
+| AI Optimization Layer        | 🚧 Planned     |
 
 
 ---
 
 ## Links
 
-- **Website:** [ionify.cloud](https://ionify.cloud)
-- **GitHub:** [github.com/ionifyjs/ionify](https://github.com/ionifyjs/ionify)
-- **Issues:** [github.com/ionifyjs/ionify/issues](https://github.com/ionifyjs/ionify/issues)
-- **Contact:** contact@ionify.cloud
+Website: https://ionify.cloud
+
+GitHub: https://github.com/ionifyjs/ionify
+
+Issues: https://github.com/ionifyjs/ionify/issues
+
+Contact: [khaledsalem@ionify.cloud](mailto:khaledsalem@ionify.cloud)
 
 ---
 
