@@ -227,6 +227,14 @@ pnpm ionify build
 | Cloud CAS                    | 🚧 In Progress |
 | AI Optimization Layer        | 🚧 Planned     |
 
+---
+
+## What's New?
+
+- Reduce warm build time 
+- Validated over +11K Module and +25K Dep. Reduced build time to 196ms
+- This reduce effective on CI direct, module fedration, and Monorepos.
+- For small projects the warm build time reduced to be near instant
 
 ---
 
