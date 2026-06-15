@@ -219,3 +219,36 @@ export function buildDefineConfig(
 
   return define;
 }
+
+/**
+ * Vite-compatible `%ENV%` HTML/JS placeholder pattern: `%KEY%` with an uppercase
+ * SCREAMING_SNAKE key (e.g. `%MODE%`, `%VITE_API_URL%`).
+ */
+export const ENV_PLACEHOLDER_PATTERN = /%([A-Z0-9_]+)%/g;
+
+/**
+ * Substitute Vite-style `%ENV%` placeholders in raw text (index.html, served JS).
+ *
+ * Replaces `%KEY%` with `envValues[KEY]` for `NODE_ENV`, `MODE`, and any
+ * prefix-matched var (default `VITE_` / `IONIFY_`). Unknown or undefined keys are
+ * left **unchanged** (Vite parity — an un-set `%FOO%` stays literal rather than
+ * becoming an empty string, surfacing the missing var instead of silently 404ing).
+ *
+ * This is the SINGLE source of truth shared by the dev server (serve-time HTML/JS)
+ * and the production build (`emitIndexHtml`), so the two pipelines can never drift —
+ * the exact unification bug that left `%VITE_*%` un-substituted in `dist/index.html`.
+ */
+export function substituteEnvPlaceholders(
+  input: string,
+  envValues: Record<string, string>,
+  envPrefix: string | string[] = ["VITE_", "IONIFY_"],
+): string {
+  const prefixes = Array.isArray(envPrefix) ? envPrefix : [envPrefix];
+  return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key) => {
+    const known =
+      key === "NODE_ENV" || key === "MODE" || prefixes.some((prefix) => key.startsWith(prefix));
+    if (!known) return match;
+    const replacement = envValues[key];
+    return replacement !== undefined ? replacement : match;
+  });
+}

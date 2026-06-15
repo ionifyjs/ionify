@@ -17,6 +17,8 @@ import { getCacheKey } from "@core/cache";
 import { resolveImport } from "@core/resolver";
 import { publicPathForFile, MODULE_REQUEST_PREFIX } from "@core/utils/public-path";
 import { getCasArtifactPath } from "@core/utils/cas";
+import { isCssLikeExt } from "@core/utils/css-ext";
+import { isTypeDeclarationPath } from "@core/utils/declaration-file";
 import { native, tryBundleNodeModule, tryNativeTransform } from "@native/index";
 import {
   registerDepEntry,
@@ -447,7 +449,6 @@ function rewriteVendorPackV2Imports(code: string, rootDir: string): string {
 
 function shouldTransform(ext: string, filePath: string): boolean {
   if (!JS_EXTENSIONS.has(ext)) return false;
-  if (filePath.endsWith(".d.ts")) return false;
   return true;
 }
 
@@ -594,7 +595,7 @@ async function swcTranspile(
   ext: string,
   reactRefresh: boolean,
 ): Promise<string> {
-  const isTypeScript = ext === ".ts" || ext === ".tsx";
+  const isTypeScript = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts" || isTypeDeclarationPath(filePath);
   const isTsx = ext === ".tsx";
   const isJsx = ext === ".jsx";
 
@@ -605,6 +606,7 @@ async function swcTranspile(
           tsx: isTsx,
           decorators: true,
           dynamicImport: true,
+          dts: false,
         }
       : {
           syntax: "ecmascript" as const,
@@ -614,7 +616,7 @@ async function swcTranspile(
         };
 
 	  const result = await swcTransform(code, {
-	    filename: filePath,
+	    filename: runtimeTransformFilename(filePath),
 	    jsc: {
 	      parser: swcParser,
 	      target: "es2022",
@@ -637,6 +639,14 @@ async function swcTranspile(
 	  });
 
   return result.code ?? code;
+}
+
+function runtimeTransformFilename(filePath: string): string {
+  if (!isTypeDeclarationPath(filePath)) return filePath;
+  return filePath
+    .replace(/\.d\.ts$/i, ".ts")
+    .replace(/\.d\.mts$/i, ".mts")
+    .replace(/\.d\.cts$/i, ".cts");
 }
 
 function currentMode(): "oxc" | "swc" | "hybrid" {
@@ -697,10 +707,12 @@ export const jsLoader: Loader = {
       const isDev = process.env.NODE_ENV !== "production";
       const reactRefresh = shouldUseReactRefresh({ ext, code, isDev, config });
       const mode = currentMode();
+      const runtimeFilename = runtimeTransformFilename(filePath);
+      const isTypeScriptRuntime = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts" || isTypeDeclarationPath(filePath);
       const nativeResult = tryNativeTransform(mode, code, {
-        filename: filePath,
+        filename: runtimeFilename,
         jsx: ext === ".jsx" || ext === ".tsx",
-        typescript: ext === ".ts" || ext === ".tsx",
+        typescript: isTypeScriptRuntime,
         react_refresh: false,
       });
       const transpiled = nativeResult ? (nativeResult.code ?? code) : await swcTranspile(code, filePath, ext, false);
@@ -914,8 +926,9 @@ export const jsLoader: Loader = {
         const resolvedExt = resolved.slice(resolved.lastIndexOf("."));
         let augmentedSuffix = suffix;
         
-        // CSS files need ?inline to be converted to JS modules (unless already has query)
-        if (resolvedExt === ".css" && !suffix) {
+        // CSS (and preprocessor .scss/.sass/.less/.styl) need ?inline to become JS modules
+        // (unless already queried). The preprocessor pre-pass compiles them to CSS.
+        if (isCssLikeExt(resolvedExt) && !suffix) {
           augmentedSuffix = "?inline";
         }
         

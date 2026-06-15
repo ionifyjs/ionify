@@ -1,6 +1,7 @@
 import type { IonModule, ModuleId, DependencyKind, IonDependency } from './ir';
 import { native } from '../native';
 import { createHash } from 'crypto';
+import { isCssLikePath } from '@core/utils/css-ext';
 
 /**
  * Parser backend interface for swappable parser implementations
@@ -85,7 +86,7 @@ export class JsFallbackParserBackend implements ParserBackend {
         seenSpecifiers.add(specifier);
         dependencies.push({
           specifier,
-          kind: specifier.endsWith('.css') ? 'Css' as DependencyKind : 'Static' as DependencyKind,
+          kind: isCssLikePath(specifier) ? 'Css' as DependencyKind : 'Static' as DependencyKind,
           resolved_id: undefined,
         });
       }

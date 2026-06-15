@@ -12,17 +12,19 @@ if (!process.env.NODE_COMPILE_CACHE) {
   if (home) process.env.NODE_COMPILE_CACHE = home + "/.ionify/global/compile-cache";
 }
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { logInfo, logError } from "./utils/logger.js";
 import { startDevServer } from "./commands/dev.js";
 import { runAnalyzeCommand } from "./commands/analyze.js";
 import { runBuildCommand } from "./commands/build.js";
+import { runPublishCommand } from "./commands/publish.js";
 import { runAddCommand } from "./commands/add.js";
 import { runPushCommand } from "./commands/push.js";
 import { runHydrateCommand } from "./commands/hydrate.js";
 import { runLoginCommand, runLogoutCommand, runWhoamiCommand } from "./commands/login.js";
 import { runBindCommand } from "./commands/bind.js";
 import { runStatusCommand } from "./commands/status.js";
+import { runMigrateCommand } from "./commands/migrate.js";
 
 const program = new Command();
 
@@ -99,6 +101,26 @@ program
           namespace: options.namespace,
         });
       }
+    } catch {
+      process.exit(1);
+    }
+  });
+
+program
+  .command("publish")
+  .description("Publish production contracts or artifacts into .ionify without writing build output")
+  .option("-m, --mode <mode>", "Environment mode, loads .env.<mode> while keeping production publication semantics")
+  .option("--contracts", "Publish Production Contracts (graph, plan, dependency contracts, transform artifacts)")
+  .option("--artifacts", "Publish Production Artifacts (contracts plus chunk artifacts)")
+  .addOption(new Option("--phase <phase>", "Internal compatibility alias: A/contracts or B/artifacts").hideHelp())
+  .action(async (options) => {
+    try {
+      await runPublishCommand({
+        mode: options.mode,
+        phase: options.phase,
+        contracts: !!options.contracts,
+        artifacts: !!options.artifacts,
+      });
     } catch {
       process.exit(1);
     }
@@ -237,8 +259,17 @@ program
 
 program
   .command("migrate")
-  .description("Migrate from Vite/Rollup config (not implemented yet)")
-  .action(() => logInfo("Migrate command coming soon..."));
+  .description("Convert a Vite project to Ionify (config + scripts), with backups + a report")
+  .option("-f, --force", "Overwrite an existing ionify.config.ts (a .bak is kept)")
+  .option("-C, --cwd <dir>", "Project directory to migrate (defaults to current directory)")
+  .action(async (options) => {
+    try {
+      await runMigrateCommand({ cwd: options.cwd, force: !!options.force });
+    } catch (err) {
+      logError("Migration failed", err);
+      process.exit(1);
+    }
+  });
 
 program
   .command("add")

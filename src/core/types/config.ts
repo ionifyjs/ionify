@@ -181,6 +181,46 @@ export interface IonifyStartupPolicyConfig {
   maxEagerTotalBytes?: number;
 }
 
+export type IonifyProductionPublishingLevel = "auto" | "contracts" | "artifacts";
+
+export interface IonifyProductionPublishingConfig {
+  /**
+   * Publication depth for the dev lifecycle.
+   * - `"auto"` (default): publish Production Contracts first, then Production Artifacts during deeper idle.
+   * - `"contracts"`: publish only graph/plan/dependency contracts and Transform Artifacts.
+   * - `"artifacts"`: publish contracts plus Chunk Artifacts.
+   */
+  level?: IonifyProductionPublishingLevel;
+  /**
+   * Idle delay before Production Contracts publication starts.
+   * @default 2500
+   */
+  idleDelayMs?: number;
+  /**
+   * Deeper idle delay before Production Artifacts publication starts.
+   * @default idleDelayMs * 4
+   */
+  artifactsIdleDelayMs?: number;
+  /**
+   * Alias for artifactsIdleDelayMs.
+   */
+  deepIdleDelayMs?: number;
+  /**
+   * Delay Production Artifacts when 1-minute load average is above
+   * availableParallelism * cpuLoadFactor.
+   * @default 1.5
+   */
+  cpuLoadFactor?: number;
+  /**
+   * Build mode used by automatic Production Publishing from dev.
+   * Defaults to `"production"` so `ionify dev` publishes artifacts that the
+   * default `ionify build` can verify/materialize. Set this only when your
+   * build command also uses the same mode, e.g. `ionify build --mode staging`.
+   * @default "production"
+   */
+  mode?: string;
+}
+
 export interface IonifyConfigEnv {
   /**
    * Application mode selected by CLI/config env loading.
@@ -243,6 +283,11 @@ export interface IonifyConfig {
   build?: IonifyBuildConfig;
   federation?: IonifyFederationConfig;
   startupPolicy?: boolean | IonifyStartupPolicyMode | IonifyStartupPolicyConfig;
+  /**
+   * Production Publishing is enabled by default in dev.
+   * Set to `false` to disable, `"auto"` to keep the default, or an object to tune idle/backpressure.
+   */
+  productionArtifactPublishing?: IonifyProductionPublishingLevel | false | IonifyProductionPublishingConfig;
   css?: IonifyCSSConfig;
   optimizeDeps?: {
     /**

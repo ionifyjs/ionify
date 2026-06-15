@@ -63,6 +63,8 @@ export function extractImports(source: string, filename = "inline.ts"): string[]
       /(?:import\s+(?:[^'"]+\s+from\s+)??['"]([^'"]+)['"])|(?:export\s+[^'"]+\s+from\s+['"]([^'"]+)['"])|(?:import\s*?\(\s*?['"]([^'"]+)['"]\s*?\))/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(source))) {
+      const statement = m[0] ?? "";
+      if (/^\s*(?:import|export)\s+type\b/.test(statement)) continue;
       const spec = m[1] || m[2] || m[3];
       if (spec) deps.add(spec);
     }
@@ -86,12 +88,37 @@ export function extractImports(source: string, filename = "inline.ts"): string[]
 
         const anyNode = node as Record<string, unknown>;
         const type = anyNode.type;
+        const specifiers = Array.isArray(anyNode.specifiers) ? anyNode.specifiers : [];
+        const isTypeOnlyDecl = anyNode.typeOnly === true;
+        const hasOnlyTypeSpecifiers =
+          specifiers.length > 0 &&
+          specifiers.every((specifier) => {
+            if (!specifier || typeof specifier !== "object") return false;
+            return (specifier as Record<string, unknown>).typeOnly === true;
+          });
 
-        if (type === "ImportDeclaration" && anyNode.source && typeof (anyNode.source as any).value === "string") {
+        if (
+          type === "ImportDeclaration" &&
+          !isTypeOnlyDecl &&
+          !hasOnlyTypeSpecifiers &&
+          anyNode.source &&
+          typeof (anyNode.source as any).value === "string"
+        ) {
           deps.add((anyNode.source as any).value);
-        } else if (type === "ExportAllDeclaration" && anyNode.source && typeof (anyNode.source as any).value === "string") {
+        } else if (
+          type === "ExportAllDeclaration" &&
+          !isTypeOnlyDecl &&
+          anyNode.source &&
+          typeof (anyNode.source as any).value === "string"
+        ) {
           deps.add((anyNode.source as any).value);
-        } else if (type === "ExportNamedDeclaration" && anyNode.source && typeof (anyNode.source as any).value === "string") {
+        } else if (
+          type === "ExportNamedDeclaration" &&
+          !isTypeOnlyDecl &&
+          !hasOnlyTypeSpecifiers &&
+          anyNode.source &&
+          typeof (anyNode.source as any).value === "string"
+        ) {
           deps.add((anyNode.source as any).value);
         } else if (type === "CallExpression") {
           const callee = (anyNode.callee ?? {}) as Record<string, unknown>;

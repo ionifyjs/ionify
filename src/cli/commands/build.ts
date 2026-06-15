@@ -19,10 +19,12 @@ import crypto from "crypto";
 import zlib from "zlib";
 import { logInfo, logError, logWarn } from "@cli/utils/logger";
 import { loadIonifyConfig } from "@cli/utils/config";
+import { readLockfile } from "@cli/utils/lockfile";
 import { resolveMinifier, type MinifierChoice } from "@cli/utils/minifier";
 import { resolveTreeshake } from "@cli/utils/treeshake";
 import { native, computeGraphVersion, getDepsOptimizerOutputVersion } from "@native/index";
 import { COMPRESSION_CAS_VERSION, getCasArtifactPath, getCompressionCasArtifactPath } from "@core/utils/cas";
+import { isCssModuleLikePath } from "@core/utils/css-ext";
 import { resolveScopeHoist } from "@cli/utils/scope-hoist";
 import { resolveOptimizationLevel, getOptimizationPreset } from "@cli/utils/optimization-level";
 import { resolveParser, applyParserEnv } from "@cli/utils/parser";
@@ -38,9 +40,11 @@ import { TransformWorkerPool, type TransformJobResult } from "@core/worker/pool"
 import { getCacheKey } from "@core/cache";
 import { resolveWorkspace } from "@core/workspace";
 import { loadEnv as loadIonifyEnv } from "@cli/utils/env";
-import { applyDefineReplacements, buildDefineConfig } from "@core/utils/define";
+import { applyDefineReplacements, buildDefineConfig, substituteEnvPlaceholders } from "@core/utils/define";
+import { computeDefineSignature } from "@core/utils/define-signature";
 import { WS_MODULE_PREFIX, fromWsModuleId, toWsModuleId } from "@core/module-id";
 import { computeChunkGroupIdFromStableIds } from "@core/deps/vendor-pack-utils";
+import { loadDepStopsFromManifest } from "@core/deps/dep-stops";
 import { reconcilePackEntries, resolveChunkedPackEntries } from "@core/deps/feature-pack-planner";
 import {
   buildCanonicalDepFileNameIndex,
@@ -58,8 +62,8 @@ import {
 import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
 import { renderCssTokensModule } from "@core/loaders/css";
 import { isForbiddenFsPath } from "@core/utils/public-path";
-import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
 import { computeDepsHash } from "@cli/utils/deps-hash";
+import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
 import {
   classifyImportSpecifiersForGraph,
   collectConfiguredExternalSpecifiers,
@@ -80,6 +84,7 @@ import {
 } from "@core/federation";
 import { Graph } from "@core/graph";
 import { GRAPH_KIND_VIRTUAL, classifyStructuralGraphKind, isRuntimeGraphKind } from "@core/graph-kind";
+import { resolveProductionBuildEntries } from "@core/build-entry-inference";
 
 interface BuildOptions {
   outDir?: string;
@@ -101,26 +106,50 @@ interface BuildOptions {
 
 const DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
 
-function stableStringify(value: unknown): string {
-  return JSON.stringify(value, (_key, val) => {
-    if (!val || typeof val !== "object") return val;
-    if (Array.isArray(val)) return val;
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(val as Record<string, unknown>).sort()) {
-      out[k] = (val as Record<string, unknown>)[k];
-    }
-    return out;
-  });
+function isBuildProfileEnabled(): boolean {
+  return process.env.IONIFY_BUNDLE_PROFILE === "1" || process.env.IONIFY_BUNDLE_PROFILE === "true";
 }
 
-function computeDefineSignature(defineConfig: Record<string, unknown>): string {
-  const keys = Object.keys(defineConfig).sort();
-  if (keys.length === 0) return "";
-  const parts: string[] = [];
-  for (const key of keys) {
-    parts.push(`${key}=${stableStringify((defineConfig as any)[key])}`);
-  }
-  return parts.join("|");
+function logBuildProfile(label: string, startedAt: number): void {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(`[BuildProfile] ${label}_ms=${Date.now() - startedAt}`);
+}
+
+function createProductionGraphVersionInputs(options: {
+  config: any;
+  parserMode: string;
+  minifier: string;
+  treeshake: unknown;
+  scopeHoist: unknown;
+  entries: string[] | undefined;
+}): Record<string, unknown> {
+  const { config, parserMode, minifier, treeshake, scopeHoist, entries } = options;
+  const pluginNames = Array.isArray(config?.plugins)
+    ? config.plugins
+        .map((p: any) => (typeof p === "string" ? p : p?.name))
+        .filter((name: unknown): name is string => typeof name === "string" && name.length > 0)
+    : undefined;
+
+  return {
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    plugins: pluginNames,
+    entry: entries ?? null,
+    resolveOptions: {
+      alias: config?.resolve?.alias,
+      extensions: config?.resolve?.extensions,
+      conditions: config?.resolve?.conditions,
+      mainFields: config?.resolve?.mainFields,
+    },
+    cssOptions: config?.css,
+    assetOptions: config?.assets ?? config?.asset,
+    runtimeContracts: {
+      reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+      federation: buildFederationVersionContract(config?.federation),
+    },
+  };
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -188,54 +217,6 @@ function resolvePublicDir(rootDir: string, value: unknown): string | null {
   if (value === false) return null;
   const dir = typeof value === "string" && value.trim().length > 0 ? value.trim() : "public";
   return path.isAbsolute(dir) ? dir : path.resolve(rootDir, dir);
-}
-
-function resolveHtmlModuleEntryPath(htmlInput: string, rootDir: string, src: string): string | null {
-  const trimmed = typeof src === "string" ? src.trim() : "";
-  if (!trimmed) return null;
-  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(trimmed)) return null;
-  if (trimmed.startsWith("data:") || trimmed.startsWith("javascript:") || trimmed.startsWith("#")) return null;
-
-  const withoutQuery = trimmed.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
-  if (!withoutQuery) return null;
-
-  if (withoutQuery.startsWith("/")) {
-    return path.join(rootDir, withoutQuery.replace(/^[/\\]+/, ""));
-  }
-
-  return path.resolve(path.dirname(htmlInput), withoutQuery);
-}
-
-function inferBuildEntriesFromHtml(rootDir: string): string[] {
-  const htmlInput = path.join(rootDir, "index.html");
-  if (!fs.existsSync(htmlInput)) return [];
-
-  let html = "";
-  try {
-    html = fs.readFileSync(htmlInput, "utf8");
-  } catch {
-    return [];
-  }
-
-  const moduleScriptRe =
-    /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>/gi;
-  const entries: string[] = [];
-  const seen = new Set<string>();
-
-  for (const match of html.matchAll(moduleScriptRe)) {
-    const src = typeof match[1] === "string" ? match[1] : "";
-    const resolved = resolveHtmlModuleEntryPath(htmlInput, rootDir, src);
-    if (!resolved) continue;
-    if (!fs.existsSync(resolved)) {
-      logWarn(`[Build] Skipping inferred entry "${src}" from index.html because the file does not exist`);
-      continue;
-    }
-    if (seen.has(resolved)) continue;
-    seen.add(resolved);
-    entries.push(resolved);
-  }
-
-  return entries;
 }
 
 type CopiedAssetEntry = {
@@ -325,7 +306,7 @@ type CssCasMeta = {
 };
 
 function isCssModuleFile(filePath: string): boolean {
-  return /\.module\.css$/i.test(filePath);
+  return isCssModuleLikePath(filePath);
 }
 
 function recordStructuralGraphFiles(absPaths: string[], workspaceRoot: string, configHash: string): void {
@@ -460,37 +441,7 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
   }
 }
 
-/**
- * T19 — Load dep-stop entries from the deps manifest for use in graph_build_from_entries.
- *
- * Returns an array of { entryPath, artifactHash } for every manifest entry that has a
- * pre-computed artifact hash. These are passed to generateBuildPlan \u2192 graphBuildFromEntries
- * so the native BFS can stop at Tier-2 dep artifact boundaries instead of crawling
- * node_modules source trees (CAS-First principle: dep artifacts ARE the dep boundary).
- *
- * Returns [] if manifest does not exist or has no entries with a pre-computed artifactHash.
- * Graceful degradation: missing/empty result \u2192 generateBuildPlan falls back to full BFS.
- */
-function loadDepStopsFromManifest(depsRoot: string): Array<{ entryPath: string; artifactHash: string }> {
-  const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return [];
-  try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const entries: Record<string, any> = parsed?.entries ?? {};
-    const stops: Array<{ entryPath: string; artifactHash: string }> = [];
-    for (const [entryPath, entry] of Object.entries(entries)) {
-      const artifactHash: string = (entry as any)?.artifactHash ?? "";
-      if (!artifactHash) continue; // pre-T19 manifests: skip, fall back to full BFS for this dep
-      stops.push({ entryPath, artifactHash });
-    }
-    return stops;
-  } catch {
-    return [];
-  }
-}
-
-function collectNativeExternalModules(plan: BuildPlan, configuredExternals: readonly string[]): string[] {
+export function collectNativeExternalModules(plan: BuildPlan, configuredExternals: readonly string[]): string[] {
   const externals = new Set<string>();
 
   for (const chunk of plan.chunks) {
@@ -629,8 +580,13 @@ export function rerouteDepsArtifacts(options: {
           : null;
         const artifactCasFile = artifactCasDir ? path.join(artifactCasDir, "transformed.js") : null;
 
-        if (artifact.artifactHash && artifactCasFile && fs.existsSync(artifactCasFile)) {
-          // Full fast path: hash known + CAS warm → zero file reads for this dep.
+        if (
+          artifact.artifactHash &&
+          artifactCasFile &&
+          fs.existsSync(artifactCasFile) &&
+          casTextFileMatchesHash(artifactCasFile, artifact.artifactHash)
+        ) {
+          // Full fast path: hash known + CAS warm + content-addressed slot verified.
           resolvedHash = artifact.artifactHash;
         } else {
           // Fallback: read the artifact bytes to compute hash and/or fill CAS.
@@ -638,10 +594,8 @@ export function rerouteDepsArtifacts(options: {
           resolvedHash = artifact.artifactHash || getCacheKey(artifactCode);
           const casDir = getCasArtifactPath(casRoot, configHash, resolvedHash);
           const casFile = path.join(casDir, "transformed.js");
-          if (!fs.existsSync(casFile)) {
-            fs.mkdirSync(casDir, { recursive: true });
-            fs.writeFileSync(casFile, artifactCode, "utf8");
-          }
+          fs.mkdirSync(casDir, { recursive: true });
+          fs.writeFileSync(casFile, artifactCode, "utf8");
         }
 
         mod.fsPath = artifact.artifactPath;
@@ -867,6 +821,14 @@ export function rerouteDepsArtifacts(options: {
   }
 
   return { rerouted, pruned, sharedPrewarmed, idRewritten };
+}
+
+function casTextFileMatchesHash(filePath: string, expectedHash: string): boolean {
+  try {
+    return getCacheKey(fs.readFileSync(filePath, "utf8")) === expectedHash;
+  } catch {
+    return false;
+  }
 }
 
 function computeBuildSlimmingSavedPercent(depsRoot: string, depsHash: string): number | null {
@@ -1958,6 +1920,15 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     process.env.IONIFY_STATE_DIR = ionifyDir;
     process.env.IONIFY_WORKSPACE_ID = workspace.workspaceId;
     process.env.IONIFY_PROJECT_ID = workspace.projectId;
+    // Preprocessor options for the transform worker's CSS pre-pass (Sass/Less). The pool inherits
+    // process.env; the worker reads + parses this (worker.cjs runCssTransform). JSON-only (function
+    // options like sass importers can't cross the worker boundary anyway).
+    try {
+      const preOpts = (config as any)?.css?.preprocessorOptions;
+      process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = preOpts ? JSON.stringify(preOpts) : "";
+    } catch {
+      process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = "";
+    }
 
     // Align env exposure and define replacements with dev server behavior.
     // NOTE: NODE_ENV is forced to production for builds even if env files set it
@@ -2016,53 +1987,27 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Avoiding process.env mutation ensures deterministic builds and test isolation.
     
     // Get entries from config and resolve to absolute paths BEFORE canonicalization
-    const configuredEntries = config?.entry
-      ? (Array.isArray(config.entry) ? config.entry : [config.entry])
-          .map((entry) => (entry.startsWith("/") ? path.join(rootDir, entry) : path.resolve(rootDir, entry)))
-          .filter((entry) => typeof entry === "string" && entry.length > 0)
-      : [];
-    const hostEntries = configuredEntries.length > 0 ? configuredEntries : undefined;
-    let entries = hostEntries;
+    const resolvedBuildEntries = resolveProductionBuildEntries(config, rootDir, (message) => logWarn(message));
+    let entries = resolvedBuildEntries.entries;
 
-    if (entries?.length) {
+    if (entries?.length && resolvedBuildEntries.source === "config") {
       logInfo(`Build entries: ${entries.join(", ")}`);
+    } else if (entries?.length && resolvedBuildEntries.source === "html") {
+      logInfo(`Build entries inferred from index.html: ${entries.join(", ")}`);
     } else {
-      const inferredEntries = inferBuildEntriesFromHtml(rootDir);
-      if (inferredEntries.length > 0) {
-        entries = inferredEntries;
-        logInfo(`Build entries inferred from index.html: ${entries.join(", ")}`);
-      } else {
-        logInfo(`No entries in config or index.html, planner will infer from graph`);
-      }
+      logInfo(`No entries in config or index.html, planner will infer from graph`);
     }
     
     // Create version inputs for automatic cache invalidation
     // computeGraphVersion handles canonicalization internally to ensure consistency
-    const pluginNames = Array.isArray(config?.plugins)
-      ? config.plugins
-          .map((p: any) => (typeof p === "string" ? p : p?.name))
-          .filter((name): name is string => typeof name === "string" && name.length > 0)
-      : undefined;
-    const rawVersionInputs: Parameters<typeof computeGraphVersion>[0] = {
+    const rawVersionInputs = createProductionGraphVersionInputs({
+      config,
       parserMode,
       minifier,
       treeshake,
       scopeHoist,
-      plugins: pluginNames,
-      entry: entries ?? null,
-      resolveOptions: {
-        alias: (config as any)?.resolve?.alias,
-        extensions: (config as any)?.resolve?.extensions,
-        conditions: (config as any)?.resolve?.conditions,
-        mainFields: (config as any)?.resolve?.mainFields,
-      },
-      cssOptions: (config as any)?.css,
-      assetOptions: (config as any)?.assets ?? (config as any)?.asset,
-      runtimeContracts: {
-        reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
-        federation: buildFederationVersionContract(config?.federation),
-      },
-    };
+      entries,
+    }) as Parameters<typeof computeGraphVersion>[0];
     // Propagate config hash to native for AST/cache invalidation
     const configHash = computeGraphVersion(rawVersionInputs);
     logInfo(`[Build] Version hash: ${configHash}`);
@@ -2353,12 +2298,20 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     logInfo("Building...");
 
-    const plan = await generateBuildPlan(
-      buildEntries.length > 0 ? buildEntries : undefined,
-      rawVersionInputs,
-      depStops,
-      buildExternalSpecifiers,
-    );
+    const planStart = Date.now();
+    const publishedPlan: BuildPlan | null = null;
+    const plan = publishedPlan
+      ? publishedPlan
+      : await generateBuildPlan(
+          buildEntries.length > 0 ? buildEntries : undefined,
+          rawVersionInputs,
+          depStops,
+          buildExternalSpecifiers,
+        );
+    logBuildProfile("generateBuildPlan", planStart);
+    if (publishedPlan) {
+      logInfo(`[Build] Using published Production Plan (${plan.chunks.length} chunk(s), identity verified)`);
+    }
     const totalPlannedModules = plan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
     logInfo(
       `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`,
@@ -2418,6 +2371,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     // ── T3: Route node_modules deps through deps optimizer artifacts ──
     {
+      const rerouteStart = Date.now();
       const casRoot = path.join(ionifyDir, "cas");
       const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
         plan,
@@ -2431,6 +2385,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           `[Build] Deps artifact rerouting: ${rerouted} entries rerouted (${idRewritten} ids → artifact identity), ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
         );
       }
+      logBuildProfile("depsReroute", rerouteStart);
     }
 
     const outDir = options.outDir || "dist";
@@ -2443,6 +2398,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       Array<{ id: string; fsPath?: string | null; hash?: string | null; kind?: string | null }>
     >();
     const moduleMetaById = new Map<string, { fsPath: string; kind: "js" | "css"; hash: string | null }>();
+    const moduleIndexStart = Date.now();
     for (const chunk of plan.chunks) {
       for (const mod of chunk.modules) {
         if (mod.kind !== "js" && mod.kind !== "css") continue;
@@ -2473,6 +2429,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         else moduleRefsById.set(mod.id, [mod as any]);
       }
     }
+    logBuildProfile("moduleIndex", moduleIndexStart);
 
     const moduleOutputs = new Map<string, { code: string; type: "js" | "css" | "asset" }>();
 
@@ -2487,15 +2444,17 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // (chunk CAS) are keyed by that hash, so a stale graph causes the build to
     // serve old bundled output even when sources changed.
     //
-    // Strategy: mtime-first, read-only-on-suspicion.
-    // A stamp file (.ionify/freshness-ts) records the high-res time of the last
-    // completed freshness scan.  On each build:
+    // Strategy: per-source stamp cache.
+    // A single global "last scan" timestamp is not a correctness proof: if a stale
+    // build writes the stamp after a source edit, future builds can skip hashing the
+    // edited file forever. Instead, cache each source hash under its own
+    // (module id, fsPath, dev, ino, mtime, ctime, size) identity:
     //   1. stat() every source module — O(N) syscalls, ~0.003ms/file, no I/O.
-    //   2. Only readFileSync+hash files whose mtime > stampMs (i.e. changed since
-    //      last scan).  On a warm build with no edits: zero reads.
-    //   3. When a hash mismatch is found: patch meta.hash + plan ref.hash in-memory
+    //   2. Reuse a cached hash only when the file identity metadata matches exactly.
+    //      Otherwise readFileSync+hash that one file.
+    //   3. Always compare the proven disk hash to graph.db's module hash.
+    //   4. When a hash mismatch is found: patch meta.hash + plan ref.hash in-memory
     //      and write the new hash back to graph.db via graphRecord.
-    //   4. Write stampMs = Date.now() to the stamp file after the scan.
     //
     // Cost on up-portal warm builds (no edits):
     //   ~300 source files × 0.003ms stat = ~0.9ms  (vs 5ms readFileSync+hash).
@@ -2504,16 +2463,29 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     //   - jsCasFileById / CAS hydration pass → Tier-1 miss → re-transform ✓
     //   - ref.hash on plan module objects → Rust chunkHash changes → Tier-4 miss ✓
     {
-      const stampFile = path.join(ionifyDir, "freshness-ts");
-      let stampMs = 0;
+      const freshnessStart = Date.now();
+      const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
+      type FreshnessCacheEntry = {
+        fsPath: string;
+        dev: number;
+        ino: number;
+        mtimeMs: number;
+        ctimeMs: number;
+        size: number;
+        hash: string;
+      };
+      let freshnessCache: Record<string, FreshnessCacheEntry> = {};
       try {
-        const raw = fs.readFileSync(stampFile, "utf8").trim();
-        stampMs = parseInt(raw, 10) || 0;
+        const parsed = JSON.parse(fs.readFileSync(freshnessCacheFile, "utf8"));
+        if (parsed && typeof parsed === "object") {
+          freshnessCache = parsed as Record<string, FreshnessCacheEntry>;
+        }
       } catch {
-        // No stamp yet → treat all files as potentially stale (full scan once).
+        // No cache yet → hash each source once.
       }
 
       let staleCount = 0;
+      const nextFreshnessCache: Record<string, FreshnessCacheEntry> = {};
       for (const [id, meta] of moduleMetaById.entries()) {
         if (!meta.hash || !meta.fsPath) continue;
         // Skip dep artifacts (under .ionify/) and node_modules (already content-hashed
@@ -2523,11 +2495,29 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         if (meta.kind !== "js" && meta.kind !== "css") continue;
         try {
           const st = fs.statSync(fp);
-          // mtime ≤ stamp → graph is authoritative, no read needed.
-          if (st.mtimeMs <= stampMs) continue;
-          // File was modified since last scan → read and hash to confirm.
-          const content = fs.readFileSync(fp);
-          const diskHash = crypto.createHash("sha256").update(content).digest("hex");
+          const cacheKey = `${id}\n${fp}`;
+          const cached = freshnessCache[cacheKey];
+          const diskHash =
+            cached &&
+            cached.fsPath === fp &&
+            cached.dev === st.dev &&
+            cached.ino === st.ino &&
+            cached.mtimeMs === st.mtimeMs &&
+            cached.ctimeMs === st.ctimeMs &&
+            cached.size === st.size &&
+            typeof cached.hash === "string" &&
+            cached.hash.length > 0
+              ? cached.hash
+              : getCacheKey(fs.readFileSync(fp));
+          nextFreshnessCache[cacheKey] = {
+            fsPath: fp,
+            dev: st.dev,
+            ino: st.ino,
+            mtimeMs: st.mtimeMs,
+            ctimeMs: st.ctimeMs,
+            size: st.size,
+            hash: diskHash,
+          };
           if (diskHash !== meta.hash) {
             meta.hash = diskHash;
             // Patch plan module objects so the Rust bundler uses the correct chunkHash.
@@ -2554,14 +2544,17 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         logInfo(`[Build] ${staleCount} source module(s) changed since last graph update — CAS keys refreshed`);
       }
 
-      // Update stamp unconditionally — even if no staleness was found.
-      // This ensures next build's mtime comparisons are anchored to now.
+      // Update the per-source freshness cache after the scan. This is a performance
+      // accelerator only; build correctness does not depend on it being present.
       try {
         fs.mkdirSync(ionifyDir, { recursive: true });
-        fs.writeFileSync(stampFile, String(Date.now()), "utf8");
+        const tmpFreshness = `${freshnessCacheFile}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmpFreshness, `${JSON.stringify(nextFreshnessCache)}\n`, "utf8");
+        fs.renameSync(tmpFreshness, freshnessCacheFile);
       } catch {
-        // Non-fatal: next build will fall back to full stat scan.
+        // Non-fatal: next build will fall back to hashing sources.
       }
+      logBuildProfile("freshnessScan", freshnessStart);
     }
 
     const defineJobs: Array<{ id: string; artifactHash: string; baseCode: string }> = [];
@@ -2594,13 +2587,16 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const casExistsMap = new Map<string, boolean>();
     if (jsCasFileById.size > 0) {
       const batchPaths = Array.from(jsCasFileById.values());
+      const casBatchStart = Date.now();
       const batchExists = (native as any).casBatchCheck(batchPaths) as boolean[];
+      logBuildProfile("casBatchCheck", casBatchStart);
       for (let i = 0; i < batchPaths.length; i++) {
         casExistsMap.set(batchPaths[i], batchExists[i]);
       }
     }
 
     // CAS hydration pass: skip transforms when artifacts already exist.
+    const hydrationStart = Date.now();
     for (const [id, meta] of moduleMetaById.entries()) {
       const refs = moduleRefsById.get(id) ?? [];
       const baseHashFromPlan = meta.hash;
@@ -2769,11 +2765,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         cssNeedsJsWrapper: meta.kind === "css" ? cssNeedsJsWrapper : undefined,
       });
     }
+    logBuildProfile("casHydration", hydrationStart);
 
     const transformsNeeded = jobs.length;
     const percentHits = modulesInPlan > 0 ? Math.round((casHits * 100) / modulesInPlan) : 100;
 
     // Derive define variants from base transforms already present in CAS.
+    const defineStart = Date.now();
     for (const job of defineJobs) {
       const cacheDir = getCasArtifactPath(casRoot, configHash, job.artifactHash);
       try {
@@ -2784,8 +2782,12 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         // ignore CAS write errors
       }
     }
+    if (defineJobs.length > 0) {
+      logBuildProfile("defineVariantDerive", defineStart);
+    }
 
     if (jobs.length > 0) {
+      const transformStart = Date.now();
       const transformResultsById = new Map<string, TransformJobResult>();
       const nativeHandledIds = new Set<string>();
       const jobById = new Map(jobs.map((job) => [job.id, job]));
@@ -2941,6 +2943,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         const finalCode = isJs ? applyDefineReplacements(result.code, defineConfig) : result.code;
         moduleOutputs.set(job.id, { code: finalCode, type: result.type });
       }
+      logBuildProfile("transformsAndCasWrites", transformStart);
     } // end if (jobs.length > 0)
 
     // Ensure native bundler plan hashes are aligned with derived CSS artifact hashes so
@@ -2971,7 +2974,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     const absOutDir = path.resolve(outDir);
 
-	    logInfo(`[Build] Emitting chunks via native bundler`);
 	    const buildMinifyRaw = (config as any)?.build?.minify;
 	    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
 	    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
@@ -2986,23 +2988,40 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       .map((entry) => toWsModuleId(entry, workspace.workspaceRoot))
       .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0);
 
-    const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
-	      casRoot,
-	      versionHash: configHash,
-	      nativeOptions: {
-	        minifier,
-	        minify: minifyEnabled,
-	        mangle: mangleEnabled,
-	        treeshake,
-	        scopeHoist,
-	        externalModules: nativeExternalModules,
-          federationExposeEntries: federationExposeEntryIds,
-	      },
-	    });
+    const emitStart = Date.now();
+    const reusedOutputs =
+      transformsNeeded === 0 && defineJobs.length === 0 && !config?.federation
+        ? tryReusePreviousBuildOutputs(absOutDir, plan)
+        : null;
 
-	    let emittedPlan = plan;
-    let artifacts = baseArtifacts;
-    let combinedStats = { ...baseStats };
+    let emittedPlan = plan;
+    let artifacts: Array<{ id: string; files: ReusedChunkFiles }>;
+    let combinedStats: Record<string, any>;
+
+    if (reusedOutputs) {
+      artifacts = reusedOutputs.artifacts;
+      combinedStats = { ...reusedOutputs.stats };
+      logInfo(`[Build] Reused previous dist outputs (${artifacts.length} chunk(s), manifest+stats verified)`);
+      logBuildProfile("emitChunksAndFiles", emitStart);
+    } else {
+      logInfo(`[Build] Emitting chunks via native bundler`);
+      const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
+	        casRoot,
+	        versionHash: configHash,
+	        nativeOptions: {
+	          minifier,
+	          minify: minifyEnabled,
+	          mangle: mangleEnabled,
+	          treeshake,
+	          scopeHoist,
+	          externalModules: nativeExternalModules,
+            federationExposeEntries: federationExposeEntryIds,
+	        },
+	      });
+      artifacts = baseArtifacts;
+      combinedStats = { ...baseStats };
+      logBuildProfile("emitChunksAndFiles", emitStart);
+    }
 
 	    let federationManifest = buildFederationBuildManifest({
       config,
@@ -3085,6 +3104,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       );
       federationGraph.flush();
     }
+    const manifestStart = Date.now();
     const outputHashHints = collectOutputHashHints(combinedStats);
     recordOutputHashHint(
       outputHashHints,
@@ -3102,6 +3122,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       hostEntryIds,
       plan: emittedPlan,
       artifacts,
+      envValues,
+      envPrefix,
     }));
 
     // Copy publicDir assets BEFORE writing build.stats.json so they are included in the
@@ -3117,6 +3139,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const statsJson = JSON.stringify(combinedStats, null, 2);
     await writeTextFileIfChanged(path.join(absOutDir, "build.stats.json"), statsJson);
     outputHashHints.set("build.stats.json", getCacheKey(statsJson));
+    logBuildProfile("manifestAssetsStats", manifestStart);
 
     const coreBuildElapsed = Date.now() - buildStart;
     logInfo(`Build plan generated → ${path.join(absOutDir, "manifest.json")}`);
@@ -3198,37 +3221,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logError("ionify build failed", err);
     throw err;
   }
-}
-
-type LockfileInfo = {
-  name: string;
-  path: string;
-  contents: Buffer;
-};
-
-const LOCKFILE_ORDER = [
-  "pnpm-lock.yaml",
-  "package-lock.json",
-  "yarn.lock",
-  "bun.lockb",
-];
-function readLockfile(workspaceRoot: string, projectRoot: string): LockfileInfo | null {
-  const roots = [workspaceRoot, projectRoot].filter(Boolean);
-  const uniqueRoots: string[] = [];
-  for (const r of roots) {
-    const abs = path.resolve(r);
-    if (!uniqueRoots.includes(abs)) uniqueRoots.push(abs);
-  }
-
-  for (const root of uniqueRoots) {
-    for (const name of LOCKFILE_ORDER) {
-      const filePath = path.join(root, name);
-      if (!fs.existsSync(filePath)) continue;
-      const contents = fs.readFileSync(filePath);
-      return { name, path: filePath, contents };
-    }
-  }
-  return null;
 }
 
 function readProjectPackageJson(rootDir: string): any | null {
@@ -3670,6 +3662,101 @@ type CompressionEntryResult = {
   sidecarsCopiedFromCas: number;
   sidecarsCompressed: number;
 };
+
+type ReusedChunkFiles = { js: string[]; css: string[]; assets: string[] };
+
+function normalizePlanChunkForReuse(chunk: BuildPlan["chunks"][number]) {
+  return {
+    id: chunk.id,
+    entry: chunk.entry,
+    shared: chunk.shared,
+    consumers: [...(chunk.consumers ?? [])],
+    modules: chunk.modules.map((mod) => ({
+      id: mod.id,
+      kind: mod.kind,
+      deps: [...(mod.deps ?? [])],
+      dynamicDeps: [...(mod.dynamicDeps ?? [])],
+      artifactHash: mod.hash ?? undefined,
+    })),
+  };
+}
+
+function tryReusePreviousBuildOutputs(
+  outDir: string,
+  plan: BuildPlan,
+): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+  const manifestPath = path.join(outDir, "manifest.json");
+  const statsPath = path.join(outDir, "build.stats.json");
+  let manifestStat: fs.Stats;
+  let statsStat: fs.Stats;
+  let manifest: any;
+  let stats: Record<string, any>;
+  try {
+    manifestStat = fs.statSync(manifestPath);
+    statsStat = fs.statSync(statsPath);
+    if (!manifestStat.isFile() || !statsStat.isFile()) return null;
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    stats = JSON.parse(fs.readFileSync(statsPath, "utf8"));
+  } catch {
+    return null;
+  }
+
+  if (JSON.stringify(manifest?.entries ?? []) !== JSON.stringify(plan.entries)) return null;
+  const previousChunks: any[] = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+  if (previousChunks.length !== plan.chunks.length) return null;
+
+  const currentById = new Map(plan.chunks.map((chunk) => [chunk.id, normalizePlanChunkForReuse(chunk)]));
+  const artifacts: Array<{ id: string; files: ReusedChunkFiles }> = [];
+  const allFiles = new Set<string>();
+
+  for (const previous of previousChunks) {
+    const current = currentById.get(previous?.id);
+    if (!current) return null;
+    const comparablePrevious = {
+      id: previous.id,
+      entry: previous.entry,
+      shared: previous.shared,
+      consumers: previous.consumers ?? [],
+      modules: (previous.modules ?? []).map((mod: any) => ({
+        id: mod.id,
+        kind: mod.kind,
+        deps: mod.deps ?? [],
+        dynamicDeps: mod.dynamicDeps ?? [],
+        artifactHash: mod.artifactHash,
+      })),
+    };
+    if (JSON.stringify(comparablePrevious) !== JSON.stringify(current)) return null;
+
+    const files: ReusedChunkFiles = {
+      js: Array.isArray(previous.files?.js) ? previous.files.js : [],
+      css: Array.isArray(previous.files?.css) ? previous.files.css : [],
+      assets: Array.isArray(previous.files?.assets) ? previous.files.assets : [],
+    };
+    artifacts.push({ id: previous.id, files });
+    for (const rel of [...files.js, ...files.css, ...files.assets]) {
+      if (typeof rel === "string" && rel.length > 0) allFiles.add(toPosixPath(rel));
+    }
+  }
+
+  for (const rel of allFiles) {
+    const meta = stats?.[rel];
+    if (!meta || typeof meta !== "object") return null;
+    if (typeof meta.bytes !== "number" || !Number.isFinite(meta.bytes)) return null;
+    if (typeof meta.hash !== "string" || meta.hash.length === 0) return null;
+    try {
+      const fileStat = fs.statSync(path.join(outDir, rel));
+      if (!fileStat.isFile()) return null;
+      if (fileStat.size !== meta.bytes) return null;
+      // If a user or tool modified dist after build.stats.json was written, do not
+      // trust the old hash oracle; fall back to normal emission and rewrite.
+      if (fileStat.mtimeMs > statsStat.mtimeMs + 1) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return { artifacts, stats };
+}
 
 function collectOutputHashHints(stats: Record<string, any>): Map<string, string> {
   const hints = new Map<string, string>();
@@ -4254,8 +4341,10 @@ async function emitIndexHtml(options: {
   hostEntryIds: string[];
   plan: Awaited<ReturnType<typeof generateBuildPlan>>;
   artifacts: Array<{ id: string; files: { js: string[]; css: string[]; assets: string[] } }>;
+  envValues: Record<string, string>;
+  envPrefix: string | string[];
 }): Promise<EmittedOutputInfo | null> {
-  const { rootDir, outDir, entries, hostEntryIds, plan, artifacts } = options;
+  const { rootDir, outDir, entries, hostEntryIds, plan, artifacts, envValues, envPrefix } = options;
 
   const htmlInput = path.join(rootDir, "index.html");
   if (!fs.existsSync(htmlInput)) {
@@ -4296,6 +4385,12 @@ async function emitIndexHtml(options: {
   }
 
   let html = await fs.promises.readFile(htmlInput, "utf8");
+
+  // Vite-compatible `%ENV%` substitution — identical to the dev server's serve-time
+  // pass (shared `substituteEnvPlaceholders`), so a `<script src="%VITE_X%">` in
+  // index.html resolves the same way in dev and in dist (was left un-substituted →
+  // 404 → "Unexpected token '<'"). Unknown placeholders are left literal.
+  html = substituteEnvPlaceholders(html, envValues, envPrefix);
 
   if (entryCss.length) {
     const unique: string[] = [];

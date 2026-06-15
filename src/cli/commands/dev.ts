@@ -26,6 +26,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import http from "http";
 import https from "https";
 import url from "url";
+import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -64,11 +65,13 @@ import { IonifyWatcher } from "@core/watcher";
 import { TransformEngine, transformCache } from "@core/transform";
 import { TransformWorkerPool } from "@core/worker/pool";
 import { HMRServer, injectHMRClient, PendingHMRModule } from "@core/hmr";
-import { compileCss, renderCssModule, renderCssRawStringModule, renderCssUrlModule, renderCssTokensModule } from "@core/loaders/css";
+import { compileCss, renderCssModule, renderCssRawStringModule, renderCssUrlModule, renderCssTokensModule, rewriteCssUrls } from "@core/loaders/css";
+import { isCssLikeExt, isCssLikePath, isCssModuleLikePath } from "@core/utils/css-ext";
 import { isAssetExt, contentTypeForAsset, assetAsModule, normalizeUrlFromFs } from "@core/loaders/asset";
 import { isEntryModule } from "@core/refresh/entryDetection";
 import { applyRegisteredLoaders } from "@core/loaders/registry";
 import { loadIonifyConfig } from "@cli/utils/config";
+import { readLockfile } from "@cli/utils/lockfile";
 import { resolveMinifier } from "@cli/utils/minifier";
 import { loadEnv as loadIonifyEnv } from "@cli/utils/env";
 import { resolveTreeshake } from "@cli/utils/treeshake";
@@ -97,7 +100,7 @@ import {
   REACT_REFRESH_HMR_CONTRACT_VERSION,
   hasReactRootRenderSideEffect,
 } from "@core/refresh/reactRefreshInstrumentation";
-import { applyDefineReplacements, buildDefineConfig } from "@core/utils/define";
+import { applyDefineReplacements, buildDefineConfig, substituteEnvPlaceholders } from "@core/utils/define";
 import { isNotModified, weakEtagFromContent, weakEtagFromStat } from "@core/http-cache";
 import crypto from "crypto";
 import zlib from "zlib";
@@ -363,7 +366,7 @@ function ensureDevHttpsOptions(
 function guessContentType(filePath: string): string {
   const ext = path.extname(filePath);
   if (ext === ".html") return "text/html; charset=utf-8";
-  if (ext === ".css") return "text/css; charset=utf-8";
+  if (isCssLikeExt(ext)) return "text/css; charset=utf-8";
   if (ext === ".json") return "application/json; charset=utf-8";
   if ([".mjs", ".js", ".ts", ".tsx", ".jsx", ".cjs", ".mts", ".cts"].includes(ext))
     return "application/javascript; charset=utf-8";
@@ -519,82 +522,6 @@ function sendBuffer(
 
   res.statusCode = status;
   res.end(body);
-}
-
-type LockfileInfo = {
-  name: string;
-  path: string;
-  contents: Buffer;
-  packageCount: number | null;
-};
-
-const LOCKFILE_ORDER = [
-  "pnpm-lock.yaml",
-  "package-lock.json",
-  "yarn.lock",
-  "bun.lockb",
-];
-
-function readLockfile(workspaceRoot: string, projectRoot: string): LockfileInfo | null {
-  const roots = [workspaceRoot, projectRoot].filter(Boolean);
-  const uniqueRoots: string[] = [];
-  for (const r of roots) {
-    const abs = path.resolve(r);
-    if (!uniqueRoots.includes(abs)) uniqueRoots.push(abs);
-  }
-
-  for (const root of uniqueRoots) {
-    for (const name of LOCKFILE_ORDER) {
-      const filePath = path.join(root, name);
-      if (!fs.existsSync(filePath)) continue;
-      const contents = fs.readFileSync(filePath);
-      const packageCount = estimateLockfilePackageCount(name, contents);
-      return { name, path: filePath, contents, packageCount };
-    }
-  }
-  return null;
-}
-
-function estimateLockfilePackageCount(name: string, contents: Buffer): number | null {
-  if (name === "package-lock.json") {
-    try {
-      const parsed = JSON.parse(contents.toString("utf8"));
-      if (parsed?.packages && typeof parsed.packages === "object") {
-        return Object.keys(parsed.packages).length;
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  if (name === "pnpm-lock.yaml") {
-    const text = contents.toString("utf8");
-    const lines = text.split(/\r?\n/);
-    const legacyCount = lines.filter((line) => line.trimStart().startsWith("/")).length;
-    if (legacyCount > 0) return legacyCount;
-
-    let inPackages = false;
-    let packageCount = 0;
-    for (const line of lines) {
-      if (!inPackages) {
-        if (/^packages:\s*$/.test(line)) inPackages = true;
-        continue;
-      }
-      if (/^\S/.test(line)) break;
-      if (/^ {2}\S.*:\s*$/.test(line)) {
-        packageCount += 1;
-      }
-    }
-
-    return packageCount || null;
-  }
-
-  if (name === "yarn.lock") {
-    const text = contents.toString("utf8");
-    return text.split("\n").filter((line) => line && !line.startsWith(" ") && line.endsWith(":")).length;
-  }
-
-  return null;
 }
 
 function readProjectPackageJson(rootDir: string): any | null {
@@ -1166,6 +1093,19 @@ export interface DevServerHandle {
   server: http.Server | https.Server;
   port: number;
   close: () => Promise<void>;
+}
+
+export function resolveDevProductionPublishingBuildMode(
+  productionArtifactPublishing: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const raw =
+    productionArtifactPublishing &&
+    typeof productionArtifactPublishing === "object" &&
+    typeof (productionArtifactPublishing as any).mode === "string"
+      ? (productionArtifactPublishing as any).mode
+      : env.IONIFY_PRODUCTION_PUBLISHING_MODE;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : "production";
 }
 
 export async function startDevServer({
@@ -3615,6 +3555,187 @@ export async function startDevServer({
   // Track server load so background builds can wait for idle periods.
   let activeRequests = 0;
 
+  type ProductionPublishingLevel = "contracts" | "artifacts";
+  const papConfigRaw = (userConfig as any)?.productionArtifactPublishing ?? "auto";
+  const papEnvRaw = process.env.IONIFY_PRODUCTION_PUBLISHING ?? process.env.IONIFY_PAP ?? process.env.IONIFY_PRODUCTION_PUBLICATION;
+  const papEnvNormalized = typeof papEnvRaw === "string" ? papEnvRaw.trim().toLowerCase() : "";
+  const papDisabledByEnv = papEnvNormalized === "0" || papEnvNormalized === "false" || papEnvNormalized === "off";
+  const papEnabledByEnv =
+    papEnvNormalized === "1" ||
+    papEnvNormalized === "true" ||
+    papEnvNormalized === "on" ||
+    papEnvNormalized === "auto" ||
+    papEnvNormalized === "contracts" ||
+    papEnvNormalized === "artifacts";
+  const papEnabled =
+    papConfigRaw !== false &&
+    !papDisabledByEnv &&
+    (papEnabledByEnv || process.env.VITEST !== "true");
+  const papIdleDelayMsRaw =
+    papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.idleDelayMs === "number"
+      ? papConfigRaw.idleDelayMs
+      : Number(process.env.IONIFY_PAP_IDLE_MS ?? 2500);
+  const papIdleDelayMs = Number.isFinite(papIdleDelayMsRaw)
+    ? Math.max(500, Math.min(60_000, Math.floor(papIdleDelayMsRaw)))
+    : 2500;
+  const papPhaseRaw =
+    typeof papConfigRaw === "string"
+      ? papConfigRaw
+      : papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.level === "string"
+        ? papConfigRaw.level
+        : papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.phase === "string"
+          ? papConfigRaw.phase
+          : process.env.IONIFY_PRODUCTION_PUBLISHING_LEVEL ?? process.env.IONIFY_PAP_PHASE ?? papEnvRaw;
+  const papLevelRaw = String(papPhaseRaw ?? "auto").trim().toLowerCase();
+  const papTargetLevel =
+    papLevelRaw === "contracts" || papLevelRaw === "contract" || papLevelRaw === "a" || papLevelRaw === "production_contracts"
+      ? "contracts"
+      : "artifacts";
+  const papArtifactsEnabled = papTargetLevel === "artifacts";
+  const papArtifactsIdleDelayMsRaw =
+    papConfigRaw && typeof papConfigRaw === "object" && typeof (papConfigRaw as any).artifactsIdleDelayMs === "number"
+      ? (papConfigRaw as any).artifactsIdleDelayMs
+      : papConfigRaw && typeof papConfigRaw === "object" && typeof (papConfigRaw as any).deepIdleDelayMs === "number"
+        ? (papConfigRaw as any).deepIdleDelayMs
+        : Number(process.env.IONIFY_PRODUCTION_PUBLISHING_ARTIFACTS_IDLE_MS ?? process.env.IONIFY_PAP_ARTIFACTS_IDLE_MS ?? papIdleDelayMs * 4);
+  const papArtifactsIdleDelayMs = Number.isFinite(papArtifactsIdleDelayMsRaw)
+    ? Math.max(papIdleDelayMs + 500, Math.min(120_000, Math.floor(papArtifactsIdleDelayMsRaw)))
+    : Math.max(10_000, papIdleDelayMs * 4);
+  const papCpuLoadFactorRaw =
+    papConfigRaw && typeof papConfigRaw === "object" && typeof (papConfigRaw as any).cpuLoadFactor === "number"
+      ? (papConfigRaw as any).cpuLoadFactor
+      : Number(process.env.IONIFY_PRODUCTION_PUBLISHING_CPU_LOAD_FACTOR ?? 1.5);
+  const papCpuLoadFactor = Number.isFinite(papCpuLoadFactorRaw) && papCpuLoadFactorRaw > 0
+    ? papCpuLoadFactorRaw
+    : 1.5;
+  const papBuildMode = resolveDevProductionPublishingBuildMode(papConfigRaw, process.env);
+  let papTimer: ReturnType<typeof setTimeout> | null = null;
+  let papRunning = false;
+  let papRunningLevel: ProductionPublishingLevel | null = null;
+  let papChild: ReturnType<typeof spawn> | null = null;
+  let papContractsPublished = false;
+  let papArtifactsPublished = false;
+  let papDirty = false;
+
+  const isProductionPublishingCpuPressured = (): boolean => {
+    const parallelism = Math.max(1, typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length || 1);
+    return os.loadavg()[0] > parallelism * papCpuLoadFactor;
+  };
+
+  const cancelProductionArtifactsPublication = (reason: string): void => {
+    if (papRunningLevel !== "artifacts" || !papChild || papChild.killed) return;
+    papDirty = true;
+    papArtifactsPublished = false;
+    logInfo(`[publish] Canceling Production Artifacts publication (${reason})`);
+    try {
+      papChild.kill("SIGTERM");
+    } catch {
+      /* child may have already exited */
+    }
+  };
+
+  const scheduleProductionArtifactPublication = (
+    reason: string,
+    level: ProductionPublishingLevel = "contracts",
+  ): void => {
+    if (!papEnabled || shuttingDown) return;
+    if (level === "artifacts" && !papArtifactsEnabled) return;
+    if (level === "contracts" && papContractsPublished && !papDirty) {
+      if (papArtifactsEnabled && !papArtifactsPublished) {
+        scheduleProductionArtifactPublication("contracts-ready", "artifacts");
+      }
+      return;
+    }
+    if (level === "artifacts" && papArtifactsPublished && !papDirty) return;
+    if (papTimer) clearTimeout(papTimer);
+    const delayMs = level === "artifacts" ? papArtifactsIdleDelayMs : papIdleDelayMs;
+    papTimer = setTimeout(() => {
+      papTimer = null;
+      if (shuttingDown) return;
+      if (papRunning) {
+        papDirty = true;
+        return;
+      }
+      if (level === "artifacts") {
+        if (activeRequests > 0 || isProductionPublishingCpuPressured()) {
+          scheduleProductionArtifactPublication(activeRequests > 0 ? "active-requests" : "cpu-pressure", "artifacts");
+          return;
+        }
+      }
+      papRunning = true;
+      papRunningLevel = level;
+      void (async () => {
+        let nextLevel: ProductionPublishingLevel | null = null;
+        try {
+          while (activeRequests > 0 && !shuttingDown) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          if (shuttingDown) return;
+          const cliEntry = process.argv[1];
+          if (!cliEntry || !fs.existsSync(cliEntry)) {
+            logWarn("[publish] Production publication skipped: CLI entry is not available for child handoff.");
+            return;
+          }
+          if (level === "artifacts" && isProductionPublishingCpuPressured()) {
+            scheduleProductionArtifactPublication("cpu-pressure", "artifacts");
+            return;
+          }
+          logInfo(`[publish] Scheduling Production Publishing (${level}, ${reason})`);
+          const child = spawn(
+            process.execPath,
+            [cliEntry, "publish", `--${level}`, "--mode", papBuildMode],
+            {
+              cwd: rootDir,
+              env: {
+                ...process.env,
+                NODE_ENV: "production",
+                MODE: papBuildMode,
+                IONIFY_MODE: papBuildMode,
+              },
+              stdio: ["ignore", "ignore", "pipe"],
+            },
+          );
+          papChild = child;
+          let stderr = "";
+          child.stderr?.on("data", (chunk) => {
+            stderr += String(chunk);
+            if (stderr.length > 4096) stderr = stderr.slice(-4096);
+          });
+          const exitCode = await new Promise<number | null>((resolve) => {
+            child.on("error", () => resolve(-1));
+            child.on("exit", (code) => resolve(code));
+          });
+          if (exitCode === 0) {
+            if (!papDirty) {
+              if (level === "contracts") {
+                papContractsPublished = true;
+                papArtifactsPublished = false;
+                nextLevel = papArtifactsEnabled ? "artifacts" : null;
+              } else {
+                papArtifactsPublished = true;
+              }
+              logInfo(`[publish] Production Publishing complete (${level})`);
+            }
+          } else {
+            const suffix = stderr.trim() ? `: ${stderr.trim().split(/\r?\n/).slice(-2).join(" | ")}` : "";
+            logWarn(`[publish] WARN: Production publication failed (exit=${exitCode})${suffix}`);
+          }
+        } finally {
+          papChild = null;
+          papRunning = false;
+          papRunningLevel = null;
+          if (papDirty && !shuttingDown) {
+            papDirty = false;
+            scheduleProductionArtifactPublication("dirty-after-run", "contracts");
+          } else if (nextLevel && !shuttingDown) {
+            scheduleProductionArtifactPublication(`${level}-complete`, nextLevel);
+          }
+        }
+      })();
+    }, delayMs);
+    if (papTimer.unref) papTimer.unref();
+  };
+
   const formatByteDelta = (bytes: number): string => {
     const value = Math.max(0, Math.floor(bytes));
     if (value < 1024) return `${value}B`;
@@ -4511,7 +4632,6 @@ export async function startDevServer({
   const defineConfig = buildDefineConfig(userConfig?.define, envValues, envPrefix);
   logInfo(`[define] ${Object.keys(defineConfig).length} replacements configured`);
   
-  const envPlaceholderPattern = /%([A-Z0-9_]+)%/g;
   const envEnabledExts = new Set([
     ".html",
     ".js",
@@ -4523,18 +4643,8 @@ export async function startDevServer({
   ]);
   const applyEnvPlaceholders = (input: string, extname: string): string => {
     if (!envEnabledExts.has(extname)) return input;
-    return input.replace(envPlaceholderPattern, (match, key) => {
-      if (
-        key === "NODE_ENV" ||
-        key === "MODE" ||
-        key.startsWith("VITE_") ||
-        key.startsWith("IONIFY_")
-      ) {
-        const replacement = envValues[key];
-        return replacement !== undefined ? replacement : match;
-      }
-      return match;
-    });
+    // Delegate to the shared substitutor so dev + build never drift (Vite-compat).
+    return substituteEnvPlaceholders(input, envValues, envPrefix);
   };
 
   const parseJsonBody = async (req: IncomingMessage) => {
@@ -4582,7 +4692,7 @@ export async function startDevServer({
       watcher.watchFile(mod.absPath);
 
       const ext = path.extname(mod.absPath).toLowerCase();
-      if (ext === ".css") {
+      if (isCssLikeExt(ext)) {
         // CSS is served via the dev server CSS pipeline (query-based modes), not TransformEngine.
         // Keep the HMR payload minimal and avoid overwriting CSS dependency edges with empty JS-import parsing.
         let hash = mod.hash;
@@ -4713,6 +4823,9 @@ export async function startDevServer({
 
   const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     activeRequests += 1;
+    if (papRunningLevel === "artifacts") {
+      cancelProductionArtifactsPublication("active-request");
+    }
     try {
       const parsed = url.parse(req.url || "/", true);
       let reqPath = parsed.pathname || "/";
@@ -4874,6 +4987,7 @@ export async function startDevServer({
           preFcpEvaluatedUrls,
         });
         refreshStartupPolicySnapshot();
+        scheduleProductionArtifactPublication(`startup-report:${routeKey}`);
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -5369,11 +5483,11 @@ export async function startDevServer({
         }
       }
 
-      // CSS loader: ?inline or .module.css => JS module via PostCSS pipeline
-      if (ext === ".css") {
+      // CSS loader: ?inline or .module.css (+ preprocessor .scss/.sass/.less/.styl) => JS module
+      if (isCssLikeExt(ext)) {
         try {
           const cssSource = fs.readFileSync(effectiveFsPath, "utf8");
-          const isModule = "module" in q || /\.module\.css$/i.test(effectiveFsPath);
+          const isModule = "module" in q || isCssModuleLikePath(effectiveFsPath);
 
           // Vite-ish CSS query modes:
           // - raw: serve CSS (for <link> or direct fetch)
@@ -5438,6 +5552,7 @@ export async function startDevServer({
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
+                preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
               });
               const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
               graph.recordStructuralFiles(depsAbs);
@@ -5490,6 +5605,7 @@ export async function startDevServer({
                     filePath: effectiveFsPath,
                     rootDir,
                     modules: isModule,
+                    preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
                   });
                   const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
                   graph.recordStructuralFiles(depsAbs);
@@ -5529,12 +5645,23 @@ export async function startDevServer({
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
+                preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
               });
-              const servedCss = rewriteCssImportSpecifiers(
-                compiledCss,
+              const servedCss = rewriteCssUrls(
+                rewriteCssImportSpecifiers(
+                  compiledCss,
+                  effectiveFsPath,
+                  rootDir,
+                  moduleResolver,
+                ),
                 effectiveFsPath,
                 rootDir,
-                moduleResolver,
+                // Dev serve-time url() rebasing (CSS Option 2) — map each local url() asset to its
+                // dev-served public path so `@/`-alias + bare-package url()s resolve (relative ones
+                // already would). Mirrors the build emit-time rebasing via the shared resolver, so
+                // the phase-neutral CAS `transformed.css` stays untouched.
+                (abs) =>
+                  isForbiddenFsPath(abs) || !fs.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs),
               );
 
               const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
@@ -5710,6 +5837,7 @@ export async function startDevServer({
           clientKey: routeHintClientKey,
           observedAtMs: routeHintObservedAtMs,
         });
+        scheduleProductionArtifactPublication(`document:${documentRouteKey}`);
         const currentStartupPolicySnapshot = startupPolicyEnabled ? refreshStartupPolicySnapshot() : null;
 
         let htmlOut = envApplied;
@@ -5852,10 +5980,15 @@ export async function startDevServer({
   // Broadcast HMR reload on changes
   watcher.on("change", (file, status) => {
     logInfo(`[Watcher] ${status}: ${file}`);
+    papContractsPublished = false;
+    papArtifactsPublished = false;
+    papDirty = true;
+    cancelProductionArtifactsPublication(`watch:${status}`);
+    scheduleProductionArtifactPublication(`watch:${status}`, "contracts");
     const ext = path.extname(file).toLowerCase();
     const isReactFastRefreshBoundary =
       status !== "deleted" && (ext === ".tsx" || ext === ".jsx");
-    const isCssBoundary = status !== "deleted" && ext === ".css";
+    const isCssBoundary = status !== "deleted" && isCssLikeExt(ext);
 
     // Keep HMR boundary updates narrow to avoid full JS re-evaluation, but still
     // include affected CSS nodes so Tailwind/content and CSS @import chains stay fresh.
@@ -5867,7 +6000,7 @@ export async function startDevServer({
             ...collected.filter(
               (absPath) =>
                 absPath !== file &&
-                path.extname(absPath).toLowerCase() === ".css",
+                isCssLikePath(absPath),
             ),
           ]
         : collected;
@@ -5898,7 +6031,7 @@ export async function startDevServer({
       modules.push({
         absPath,
         url:
-          path.extname(absPath).toLowerCase() === ".css"
+          isCssLikePath(absPath)
             ? `${normalizeUrlFromFs(rootDir, absPath)}?inline`
             : isAssetExt(path.extname(absPath).toLowerCase())
               ? `${normalizeUrlFromFs(rootDir, absPath)}?import`
