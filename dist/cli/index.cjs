@@ -1,0 +1,23544 @@
+#!/usr/bin/env node
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+
+// node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js
+var getImportMetaUrl, importMetaUrl;
+var init_cjs_shims = __esm({
+  "node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js"() {
+    "use strict";
+    getImportMetaUrl = () => typeof document === "undefined" ? new URL(`file:${__filename}`).href : document.currentScript && document.currentScript.src || new URL("main.js", document.baseURI).href;
+    importMetaUrl = /* @__PURE__ */ getImportMetaUrl();
+  }
+});
+
+// src/cli/utils/logger.ts
+function logInfo(message) {
+  console.log(import_chalk.default.cyan(`[Ionify] ${message}`));
+}
+function logWarn(message) {
+  console.warn(import_chalk.default.yellow(`[Ionify] ${message}`));
+}
+function logError(message, err) {
+  console.error(import_chalk.default.red(`[Ionify] ${message}`));
+  if (err) console.error(err);
+}
+var import_chalk;
+var init_logger = __esm({
+  "src/cli/utils/logger.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_chalk = __toESM(require("chalk"), 1);
+  }
+});
+
+// src/core/version.ts
+function normalizeTreeshake(treeshake) {
+  if (treeshake === false || treeshake === void 0 || treeshake === null) {
+    return null;
+  }
+  if (treeshake === true) {
+    return {
+      mode: "safe",
+      include: [],
+      exclude: []
+    };
+  }
+  if (typeof treeshake === "string") {
+    return {
+      mode: treeshake === "aggressive" ? "aggressive" : "safe",
+      include: [],
+      exclude: []
+    };
+  }
+  return {
+    mode: treeshake.mode === "aggressive" ? "aggressive" : "safe",
+    include: Array.isArray(treeshake.include) ? [...treeshake.include].sort() : [],
+    exclude: Array.isArray(treeshake.exclude) ? [...treeshake.exclude].sort() : []
+  };
+}
+function normalizeScopeHoist(scopeHoist) {
+  if (scopeHoist === false || scopeHoist === void 0 || scopeHoist === null) {
+    return null;
+  }
+  if (scopeHoist === true) {
+    return {
+      inlineFunctions: true,
+      constantFolding: true,
+      combineVariables: true
+    };
+  }
+  return {
+    inlineFunctions: scopeHoist.inlineFunctions === true,
+    constantFolding: scopeHoist.constantFolding === true,
+    combineVariables: scopeHoist.combineVariables === true
+  };
+}
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return null;
+  const out = value.filter((item) => typeof item === "string" && item.length > 0);
+  return out.length > 0 ? out : null;
+}
+function normalizeResolveAlias(alias) {
+  if (!alias || typeof alias !== "object" || Array.isArray(alias)) return null;
+  const entries = [];
+  for (const [key, value] of Object.entries(alias)) {
+    if (typeof key !== "string" || key.length === 0) continue;
+    const values = Array.isArray(value) ? value : [value];
+    const normalized = values.filter(
+      (item) => typeof item === "string" && item.length > 0
+    );
+    if (normalized.length > 0) entries.push([key, normalized]);
+  }
+  return entries.length > 0 ? entries : null;
+}
+function normalizeResolveOptions(resolveOptions) {
+  if (!resolveOptions || typeof resolveOptions !== "object") return null;
+  const normalized = {};
+  const alias = normalizeResolveAlias(resolveOptions.alias);
+  const extensions = normalizeStringArray(resolveOptions.extensions);
+  const conditions = normalizeStringArray(resolveOptions.conditions);
+  const mainFields = normalizeStringArray(resolveOptions.mainFields);
+  if (alias) normalized.alias = alias;
+  if (extensions) normalized.extensions = extensions;
+  if (conditions) normalized.conditions = conditions;
+  if (mainFields) normalized.mainFields = mainFields;
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+function computeCanonicalVersionInputs(config) {
+  const storageSchema = "phase6.6-ws-module-ids-v2";
+  const parserMode = config.parserMode || "hybrid";
+  const minifier = config.minifier || "auto";
+  const treeshake = normalizeTreeshake(config.treeshake);
+  const scopeHoist = normalizeScopeHoist(config.scopeHoist);
+  const plugins = Array.isArray(config.plugins) ? config.plugins.map((p) => typeof p === "string" ? p : p.name).filter((name) => typeof name === "string").sort() : [];
+  const resolveOptions = normalizeResolveOptions(config.resolveOptions);
+  const cssOptions = config.cssOptions && Object.keys(config.cssOptions).length > 0 ? config.cssOptions : null;
+  const assetOptions = config.assetOptions && Object.keys(config.assetOptions).length > 0 ? config.assetOptions : null;
+  const runtimeContracts = config.runtimeContracts && Object.keys(config.runtimeContracts).length > 0 ? config.runtimeContracts : null;
+  return {
+    storageSchema,
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    plugins,
+    resolveOptions,
+    cssOptions,
+    assetOptions,
+    runtimeContracts
+  };
+}
+function stableStringify(value) {
+  return JSON.stringify(value, (_key, val) => {
+    if (!val || typeof val !== "object") return val;
+    if (Array.isArray(val)) return val;
+    const out = {};
+    for (const key of Object.keys(val).sort()) {
+      out[key] = val[key];
+    }
+    return out;
+  });
+}
+function computeVersionHash(inputs) {
+  const json = stableStringify(inputs);
+  const hash = (0, import_node_crypto.createHash)("sha256").update(json).digest("hex");
+  return hash.slice(0, 16);
+}
+var import_node_crypto;
+var init_version = __esm({
+  "src/core/version.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_node_crypto = require("crypto");
+  }
+});
+
+// src/native/index.ts
+function resolveCandidates() {
+  const cwd = process.cwd();
+  const releaseDir = import_path.default.resolve(cwd, "target", "release");
+  const debugDir = import_path.default.resolve(cwd, "target", "debug");
+  const nativeDir = import_path.default.resolve(cwd, "native");
+  const modulePath = (0, import_url.fileURLToPath)(importMetaUrl);
+  const moduleDir = import_path.default.dirname(modulePath);
+  const findPackageRoot2 = (startDir) => {
+    let dir = startDir;
+    for (let i = 0; i < 6; i++) {
+      const pkgPath = import_path.default.join(dir, "package.json");
+      try {
+        if (import_fs.default.existsSync(pkgPath) && import_fs.default.statSync(pkgPath).isFile()) {
+          return dir;
+        }
+      } catch {
+      }
+      const parent = import_path.default.dirname(dir);
+      if (!parent || parent === dir) break;
+      dir = parent;
+    }
+    return null;
+  };
+  const packageRoot = findPackageRoot2(moduleDir);
+  const packageNativeDir = packageRoot ? import_path.default.join(packageRoot, "native") : null;
+  const packageDistDir = packageRoot ? import_path.default.join(packageRoot, "dist") : null;
+  const platformFile = process.platform === "win32" ? "ionify_core.dll" : process.platform === "darwin" ? "libionify_core.dylib" : "libionify_core.so";
+  const candidates = [
+    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
+    import_path.default.join(moduleDir, "ionify_core.node"),
+    // Alternative installed layouts (fallback):
+    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
+    ...packageNativeDir ? [import_path.default.join(packageNativeDir, "ionify_core.node")] : [],
+    ...packageDistDir ? [import_path.default.join(packageDistDir, "ionify_core.node")] : [],
+    ...packageRoot ? [import_path.default.join(packageRoot, "ionify_core.node")] : [],
+    // Development locations
+    import_path.default.join(nativeDir, "ionify_core.node"),
+    import_path.default.join(releaseDir, "ionify_core.node"),
+    import_path.default.join(releaseDir, platformFile),
+    import_path.default.join(debugDir, "ionify_core.node"),
+    import_path.default.join(debugDir, platformFile)
+  ];
+  return candidates.filter((candidate) => {
+    try {
+      return import_fs.default.existsSync(candidate) && import_fs.default.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+function getDepsOptimizerOutputVersion() {
+  return nativeBinding?.depsOptimizerOutputVersion?.() ?? 0;
+}
+function shouldUseSwcOnly() {
+  return (process.env.IONIFY_PARSER ?? "").toLowerCase() === "swc";
+}
+function tryParseImports(source, filename) {
+  if (!nativeBinding?.parseImports) return null;
+  if (shouldUseSwcOnly()) return null;
+  try {
+    const result = nativeBinding.parseImports(source, filename);
+    return Array.isArray(result) ? result : null;
+  } catch {
+    return null;
+  }
+}
+function tryParseModuleMetadata(source, filename) {
+  if (!nativeBinding?.parseModuleMetadata) return null;
+  if (shouldUseSwcOnly()) return null;
+  try {
+    const result = nativeBinding.parseModuleMetadata(source, filename);
+    if (result && Array.isArray(result.imports) && typeof result.hash === "string") {
+      return { imports: result.imports, hash: result.hash };
+    }
+  } catch {
+  }
+  return null;
+}
+function tryNativeTransform(mode, code, options) {
+  if (!nativeBinding) return null;
+  const wantsOxc = mode === "oxc" || mode === "hybrid";
+  const wantsSwc = mode === "swc" || mode === "hybrid";
+  if (wantsOxc && nativeBinding.parseAndTransformOxc) {
+    try {
+      return nativeBinding.parseAndTransformOxc(code, options);
+    } catch (err) {
+      if (mode === "oxc") throw err;
+    }
+  }
+  if (wantsSwc && nativeBinding.parseAndTransformSwc) {
+    try {
+      return nativeBinding.parseAndTransformSwc(code, options);
+    } catch (err) {
+      if (mode === "swc") throw err;
+    }
+  }
+  return null;
+}
+function isGraphLockError(err) {
+  const message = String(err);
+  return /could not acquire lock|Resource temporarily unavailable|WouldBlock|database is locked|lock/i.test(message);
+}
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, ms);
+}
+function ensureNativeGraph(graphPath, version, options = {}) {
+  if (!nativeBinding?.graphInit) return false;
+  const retryMs = Math.max(0, Math.floor(options.retryMs ?? 0));
+  const retryIntervalMs = Math.max(10, Math.floor(options.retryIntervalMs ?? 50));
+  const deadline = retryMs > 0 ? Date.now() + retryMs : 0;
+  let attempts = 0;
+  let lastErr = null;
+  try {
+    while (true) {
+      attempts += 1;
+      try {
+        nativeBinding.graphInit(graphPath, version);
+        return true;
+      } catch (err) {
+        lastErr = err;
+        if (retryMs <= 0 || !isGraphLockError(err) || Date.now() >= deadline) {
+          break;
+        }
+        sleepSync(Math.min(retryIntervalMs, Math.max(0, deadline - Date.now())));
+      }
+    }
+  } catch (err) {
+    lastErr = err;
+  }
+  const attemptNote = attempts > 1 ? ` after ${attempts} attempts` : "";
+  console.error(`[Native] Failed to initialize graph${attemptNote}: ${lastErr}`);
+  return false;
+}
+function computeGraphVersion(inputs) {
+  const canonical = computeCanonicalVersionInputs(inputs);
+  return computeVersionHash(canonical);
+}
+function tryBundleNodeModule(filePath, code) {
+  if (!nativeBinding?.plannerPlanBuild || !nativeBinding?.buildChunks) {
+    return null;
+  }
+  try {
+    const plan = nativeBinding.plannerPlanBuild([filePath]);
+    if (!plan || !plan.chunks || plan.chunks.length === 0) {
+      return null;
+    }
+    const artifacts = nativeBinding.buildChunks(plan);
+    if (artifacts && artifacts.length > 0 && artifacts[0].code) {
+      return artifacts[0].code;
+    }
+  } catch (error) {
+    console.warn(`[Ionify] Native bundler failed for ${filePath}:`, error);
+  }
+  return null;
+}
+var import_fs, import_path, import_module, import_url, nativeBinding, native;
+var init_native = __esm({
+  "src/native/index.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs = __toESM(require("fs"), 1);
+    import_path = __toESM(require("path"), 1);
+    import_module = require("module");
+    import_url = require("url");
+    init_version();
+    nativeBinding = null;
+    (() => {
+      const require2 = (0, import_module.createRequire)(importMetaUrl);
+      for (const candidate of resolveCandidates()) {
+        try {
+          const mod = require2(candidate);
+          if (mod) {
+            nativeBinding = mod;
+            break;
+          }
+        } catch {
+        }
+      }
+    })();
+    native = nativeBinding;
+  }
+});
+
+// src/core/cache.ts
+var cache_exports = {};
+__export(cache_exports, {
+  clearCache: () => clearCache,
+  getCacheKey: () => getCacheKey,
+  readCache: () => readCache,
+  writeCache: () => writeCache
+});
+function resolveIonifyDir() {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && import_path2.default.isAbsolute(fromEnv)) return fromEnv;
+  const projectRoot = process.env.IONIFY_PROJECT_ROOT;
+  if (projectRoot && import_path2.default.isAbsolute(projectRoot)) return import_path2.default.join(projectRoot, ".ionify");
+  return import_path2.default.join(process.cwd(), ".ionify");
+}
+function cacheDir() {
+  return import_path2.default.join(resolveIonifyDir(), "cache");
+}
+function ensureCacheDir() {
+  const dir = cacheDir();
+  if (!import_fs2.default.existsSync(dir)) {
+    import_fs2.default.mkdirSync(dir, { recursive: true });
+  }
+}
+function getCacheKey(content) {
+  if (native?.cacheHash) {
+    try {
+      const data = typeof content === "string" ? Buffer.from(content) : content;
+      return native.cacheHash(data);
+    } catch {
+    }
+  }
+  return import_crypto.default.createHash("sha256").update(content).digest("hex");
+}
+function writeCache(hash, data) {
+  ensureCacheDir();
+  const target = import_path2.default.join(cacheDir(), hash);
+  import_fs2.default.writeFileSync(target, data);
+}
+function readCache(hash) {
+  const target = import_path2.default.join(cacheDir(), hash);
+  return import_fs2.default.existsSync(target) ? import_fs2.default.readFileSync(target) : null;
+}
+function clearCache() {
+  const dir = cacheDir();
+  if (import_fs2.default.existsSync(dir)) {
+    import_fs2.default.rmSync(dir, { recursive: true, force: true });
+  }
+}
+var import_fs2, import_path2, import_crypto;
+var init_cache = __esm({
+  "src/core/cache.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs2 = __toESM(require("fs"), 1);
+    import_path2 = __toESM(require("path"), 1);
+    import_crypto = __toESM(require("crypto"), 1);
+    init_native();
+  }
+});
+
+// src/core/deps/feature-pack-planner.ts
+function realpathOrSelf(filePath) {
+  try {
+    return import_fs3.default.realpathSync(filePath);
+  } catch {
+    return filePath;
+  }
+}
+function sortPackEntries(entries) {
+  return entries.slice().sort((a, b) => {
+    const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
+    if (labelDelta !== 0) return labelDelta;
+    return a.fileName.localeCompare(b.fileName);
+  });
+}
+function dedupeSortedStrings(values) {
+  const unique = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    if (typeof value !== "string" || value.length === 0) continue;
+    unique.add(value);
+  }
+  return Array.from(unique).sort();
+}
+function deriveFamilyKey(packageName, packageLabel) {
+  const pkg = String(packageName ?? "").trim();
+  if (pkg.startsWith("@")) {
+    const scope = pkg.split("/", 1)[0];
+    if (scope) return scope;
+  }
+  if (pkg) {
+    const base = pkg.split("/", 1)[0];
+    if (base) return base;
+  }
+  const label = String(packageLabel ?? "").trim();
+  if (label.startsWith("@")) {
+    const parts = label.split("/");
+    if (parts[0]) return parts[0];
+  }
+  if (label) {
+    const base = label.split("/", 1)[0];
+    if (base) return base;
+  }
+  return "";
+}
+function countIntersection(a, b) {
+  if (!a?.length || !b?.length) return 0;
+  const set = new Set(a);
+  let count = 0;
+  for (const value of b) {
+    if (set.has(value)) count += 1;
+  }
+  return count;
+}
+function dominantRouteKeys(candidatesByFileName, entries) {
+  const totals = /* @__PURE__ */ new Map();
+  const support = /* @__PURE__ */ new Map();
+  for (const entry of entries) {
+    const candidate = candidatesByFileName.get(entry.fileName);
+    const routeRequestCounts = candidate?.routeRequestCounts ?? null;
+    if (routeRequestCounts) {
+      const seenForEntry = /* @__PURE__ */ new Set();
+      for (const [routeKey, count] of Object.entries(routeRequestCounts)) {
+        if (!routeKey || !Number.isFinite(count) || count <= 0) continue;
+        totals.set(routeKey, (totals.get(routeKey) ?? 0) + count);
+        if (!seenForEntry.has(routeKey)) {
+          seenForEntry.add(routeKey);
+          support.set(routeKey, (support.get(routeKey) ?? 0) + 1);
+        }
+      }
+    }
+  }
+  const minSupport = entries.length <= 1 ? 1 : 2;
+  return Array.from(totals.entries()).filter(([routeKey]) => (support.get(routeKey) ?? 0) >= minSupport).sort((a, b) => {
+    const countDelta = b[1] - a[1];
+    if (countDelta !== 0) return countDelta;
+    return a[0].localeCompare(b[0]);
+  }).slice(0, 3).map(([routeKey]) => routeKey);
+}
+function routeAffinityScore(candidate, anchorRouteKeys) {
+  if (!anchorRouteKeys?.length || !candidate.routeKeys?.length) return 0;
+  return countIntersection(candidate.routeKeys, anchorRouteKeys);
+}
+function routeBreadthPenalty(candidate) {
+  const routeCount = Array.isArray(candidate.routeKeys) ? candidate.routeKeys.length : 0;
+  const rootCount = Array.isArray(candidate.entryRootKeys) ? candidate.entryRootKeys.length : 0;
+  const importerCount = Array.isArray(candidate.importerKeys) ? candidate.importerKeys.length : 0;
+  return Math.max(0, routeCount - 1) * 90 + Math.max(0, rootCount - 2) * 30 + Math.max(0, importerCount - 3) * 12;
+}
+function collectAnchorSignals(candidatesByFileName, entries) {
+  const families = /* @__PURE__ */ new Set();
+  const importerKeys = /* @__PURE__ */ new Set();
+  const entryRootKeys = /* @__PURE__ */ new Set();
+  for (const entry of entries) {
+    const candidate = candidatesByFileName.get(entry.fileName);
+    const familyKey = deriveFamilyKey(candidate?.packageName, candidate?.packageLabel ?? entry.packageLabel);
+    if (familyKey) families.add(familyKey);
+    for (const importer of candidate?.importerKeys ?? []) {
+      if (importer) importerKeys.add(importer);
+    }
+    for (const entryRoot of candidate?.entryRootKeys ?? []) {
+      if (entryRoot) entryRootKeys.add(entryRoot);
+    }
+  }
+  return {
+    families: dedupeSortedStrings(families),
+    importerKeys: dedupeSortedStrings(importerKeys),
+    entryRootKeys: dedupeSortedStrings(entryRootKeys)
+  };
+}
+function boostedCandidateOrder(candidates, getBoost) {
+  return candidates.slice().sort((a, b) => {
+    const scoreDelta = b.score + getBoost(b) - (a.score + getBoost(a));
+    if (scoreDelta !== 0) return scoreDelta;
+    const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
+    if (labelDelta !== 0) return labelDelta;
+    return a.fileName.localeCompare(b.fileName);
+  });
+}
+function reconcilePackEntries(entries, canonicalizeFileName) {
+  const byEntryPath = /* @__PURE__ */ new Map();
+  for (const entry of entries ?? []) {
+    if (!entry?.entryPath || !entry?.fileName) continue;
+    const next = {
+      ...entry,
+      fileName: canonicalizeFileName(entry.fileName, entry.entryPath) || entry.fileName
+    };
+    byEntryPath.set(realpathOrSelf(next.entryPath), next);
+  }
+  const deduped = [];
+  const seenFileNames = /* @__PURE__ */ new Set();
+  for (const entry of sortPackEntries(Array.from(byEntryPath.values()))) {
+    if (seenFileNames.has(entry.fileName)) continue;
+    seenFileNames.add(entry.fileName);
+    deduped.push(entry);
+  }
+  return deduped;
+}
+function resolveChunkedPackEntries(entries, chunkedEntries) {
+  const outByEntryPath = /* @__PURE__ */ new Map();
+  for (const item of chunkedEntries ?? []) {
+    const entryPath = typeof item?.entryPath === "string" ? item.entryPath : "";
+    const outPath = typeof item?.outPath === "string" ? item.outPath : "";
+    if (!entryPath || !outPath) continue;
+    outByEntryPath.set(realpathOrSelf(entryPath), import_path3.default.basename(outPath));
+  }
+  const resolved = (entries ?? []).map((entry) => {
+    const nextFileName = outByEntryPath.get(realpathOrSelf(entry.entryPath)) ?? entry.fileName;
+    return { ...entry, fileName: nextFileName };
+  });
+  return reconcilePackEntries(resolved, (fileName) => fileName);
+}
+function deriveFeaturePackRoutingMap(states) {
+  const routing = /* @__PURE__ */ new Map();
+  for (const state of states) {
+    if (!state || state.status !== "ready" || !state.chunkGroupId) continue;
+    for (const entry of Array.isArray(state.entries) ? state.entries : []) {
+      if (!entry?.fileName) continue;
+      routing.set(entry.fileName, state.chunkGroupId);
+    }
+  }
+  return routing;
+}
+function isFeaturePackSlimAligned(baseEntries, slimEntries) {
+  const base = Array.isArray(baseEntries) ? baseEntries : [];
+  const slim = Array.isArray(slimEntries) ? slimEntries : [];
+  if (base.length === 0 || slim.length === 0) return false;
+  const baseFileNames = base.map((entry) => entry?.fileName ?? "").filter(Boolean).slice().sort();
+  const slimBaseFileNames = slim.map((entry) => entry?.baseFileName ?? "").filter(Boolean).slice().sort();
+  if (baseFileNames.length !== slimBaseFileNames.length) return false;
+  for (let i = 0; i < baseFileNames.length; i += 1) {
+    if (baseFileNames[i] !== slimBaseFileNames[i]) return false;
+  }
+  return true;
+}
+function selectStableFeaturePackEntries(options) {
+  const selected = [];
+  const seen = /* @__PURE__ */ new Set();
+  let totalBytes = 0;
+  const forced = options.forcedFileNames ?? null;
+  const candidateByFileName = /* @__PURE__ */ new Map();
+  for (const candidate of options.candidates) {
+    if (!candidate?.fileName || candidateByFileName.has(candidate.fileName)) continue;
+    candidateByFileName.set(candidate.fileName, candidate);
+  }
+  const pushCandidate = (candidate) => {
+    seen.add(candidate.fileName);
+    totalBytes += Math.max(0, candidate.sizeBytes);
+    selected.push({
+      entryPath: candidate.entryPath,
+      fileName: candidate.fileName,
+      packageLabel: candidate.packageLabel
+    });
+  };
+  if (forced && forced.size > 0) {
+    for (const fileName of forced) {
+      const candidate = candidateByFileName.get(fileName);
+      if (!candidate || seen.has(candidate.fileName)) continue;
+      pushCandidate(candidate);
+    }
+  }
+  for (const entry of options.currentReadyEntries ?? []) {
+    if (options.preserveReadyFileNames && !options.preserveReadyFileNames.has(entry.fileName)) continue;
+    const candidate = candidateByFileName.get(entry.fileName);
+    if (!candidate || seen.has(candidate.fileName)) continue;
+    pushCandidate(candidate);
+  }
+  for (const candidate of options.candidates) {
+    if (selected.length >= options.maxMembers) break;
+    if (seen.has(candidate.fileName)) continue;
+    const nextTotal = totalBytes + Math.max(0, candidate.sizeBytes);
+    if (nextTotal > options.maxBytes) continue;
+    pushCandidate(candidate);
+  }
+  return selected;
+}
+function expandSelectionByCoupling(selected, ctx) {
+  if (ctx.couplingClusters.length === 0) return;
+  const inSelection = new Set(selected.map((e) => e.fileName));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const fileName of Array.from(inSelection)) {
+      const idx = ctx.fileToClusterIdx.get(fileName);
+      if (idx === void 0 || ctx.claimedClusters.has(idx)) continue;
+      ctx.claimedClusters.add(idx);
+      for (const peerFile of ctx.couplingClusters[idx]) {
+        if (inSelection.has(peerFile) || ctx.assigned.has(peerFile)) continue;
+        const candidate = ctx.candidatesByFileName.get(peerFile);
+        if (!candidate) continue;
+        selected.push({
+          entryPath: candidate.entryPath,
+          fileName: candidate.fileName,
+          packageLabel: candidate.packageLabel
+        });
+        inSelection.add(peerFile);
+        changed = true;
+      }
+    }
+  }
+}
+function planAutoFeaturePackGroups(options) {
+  const candidatesByFileName = /* @__PURE__ */ new Map();
+  for (const candidate of options.candidates) {
+    if (!candidate?.fileName || candidatesByFileName.has(candidate.fileName)) continue;
+    candidatesByFileName.set(candidate.fileName, candidate);
+  }
+  const candidates = Array.from(candidatesByFileName.values()).sort((a, b) => {
+    const scoreDelta = b.score - a.score;
+    if (scoreDelta !== 0) return scoreDelta;
+    const labelDelta = a.packageLabel.localeCompare(b.packageLabel);
+    if (labelDelta !== 0) return labelDelta;
+    return a.fileName.localeCompare(b.fileName);
+  });
+  if (candidates.length === 0) return [];
+  const minMembers = Math.max(1, Math.floor(options.minMembers));
+  const maxGroups = Math.max(1, Math.floor(options.maxGroups ?? 4));
+  const readyGroups = (options.currentReadyGroups ?? []).filter((group) => group?.group && Array.isArray(group.entries) && group.entries.length > 0).slice().sort((a, b) => a.group.localeCompare(b.group));
+  const couplingClusters = [];
+  const fileToClusterIdx = /* @__PURE__ */ new Map();
+  for (const rawCluster of options.coupledGroups ?? []) {
+    if (!rawCluster) continue;
+    const filtered = /* @__PURE__ */ new Set();
+    for (const fileName of rawCluster) {
+      if (typeof fileName !== "string") continue;
+      if (!candidatesByFileName.has(fileName)) continue;
+      filtered.add(fileName);
+    }
+    if (filtered.size < 2) continue;
+    const idx = couplingClusters.length;
+    couplingClusters.push(filtered);
+    for (const fileName of filtered) {
+      if (!fileToClusterIdx.has(fileName)) fileToClusterIdx.set(fileName, idx);
+    }
+  }
+  const claimedClusters = /* @__PURE__ */ new Set();
+  const familyToReadyGroup = /* @__PURE__ */ new Map();
+  const fileToReadyGroup = /* @__PURE__ */ new Map();
+  for (const ready of readyGroups) {
+    for (const entry of ready.entries) {
+      if (!entry?.fileName) continue;
+      fileToReadyGroup.set(entry.fileName, ready.group);
+      const candidate = candidatesByFileName.get(entry.fileName);
+      const familyKey = deriveFamilyKey(candidate?.packageName, candidate?.packageLabel ?? entry.packageLabel);
+      if (familyKey && !familyToReadyGroup.has(familyKey)) {
+        familyToReadyGroup.set(familyKey, ready.group);
+      }
+    }
+  }
+  const assigned = /* @__PURE__ */ new Set();
+  const plans = [];
+  for (const ready of readyGroups) {
+    const anchors = collectAnchorSignals(candidatesByFileName, ready.entries);
+    const anchorRouteKeys = dominantRouteKeys(candidatesByFileName, ready.entries);
+    const forcedFiles = /* @__PURE__ */ new Set();
+    for (const entry of ready.entries) {
+      const idx = fileToClusterIdx.get(entry.fileName);
+      if (idx === void 0 || claimedClusters.has(idx)) continue;
+      claimedClusters.add(idx);
+      for (const f of couplingClusters[idx]) {
+        if (!assigned.has(f) && candidatesByFileName.has(f)) forcedFiles.add(f);
+      }
+    }
+    const preserveReadyFileNames = /* @__PURE__ */ new Set();
+    const strongestReadyFileName = ready.entries.map((entry) => candidatesByFileName.get(entry.fileName)).filter((candidate) => !!candidate).sort((a, b) => b.score - a.score || a.fileName.localeCompare(b.fileName))[0]?.fileName ?? null;
+    for (const entry of ready.entries) {
+      const candidate = candidatesByFileName.get(entry.fileName);
+      if (!candidate) continue;
+      const sharedRoutes = routeAffinityScore(candidate, anchorRouteKeys) > 0;
+      const hasPeerAffinity = ready.entries.some((peer) => {
+        if (peer.fileName === candidate.fileName) return false;
+        const peerCandidate = candidatesByFileName.get(peer.fileName);
+        if (!peerCandidate) return false;
+        const candidateFamily = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        const peerFamily = deriveFamilyKey(peerCandidate.packageName, peerCandidate.packageLabel);
+        return !!candidateFamily && candidateFamily === peerFamily || countIntersection(candidate.entryRootKeys, peerCandidate.entryRootKeys) > 0 || countIntersection(candidate.importerKeys, peerCandidate.importerKeys) > 0;
+      });
+      if (forcedFiles.has(candidate.fileName) || candidate.fileName === strongestReadyFileName || hasPeerAffinity || anchorRouteKeys.length === 0 && ready.entries.length <= 1 || sharedRoutes) {
+        preserveReadyFileNames.add(candidate.fileName);
+      }
+    }
+    const ordered = boostedCandidateOrder(
+      candidates.filter((candidate) => {
+        if (assigned.has(candidate.fileName)) return false;
+        if (forcedFiles.has(candidate.fileName)) return true;
+        const reservedGroup = fileToReadyGroup.get(candidate.fileName);
+        if (reservedGroup && reservedGroup !== ready.group) return false;
+        const familyKey2 = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        const reservedFamilyGroup = familyKey2 ? familyToReadyGroup.get(familyKey2) : null;
+        if (reservedFamilyGroup && reservedFamilyGroup !== ready.group) return false;
+        const candidateClusterIdx = fileToClusterIdx.get(candidate.fileName);
+        if (candidateClusterIdx !== void 0 && claimedClusters.has(candidateClusterIdx) && !forcedFiles.has(candidate.fileName)) {
+          return false;
+        }
+        const sameReadyMember = ready.entries.some((entry) => entry.fileName === candidate.fileName);
+        if (sameReadyMember && !forcedFiles.has(candidate.fileName) && !preserveReadyFileNames.has(candidate.fileName)) {
+          return false;
+        }
+        const sameFamily = !!familyKey2 && anchors.families.includes(familyKey2);
+        const sharedRoots = countIntersection(candidate.entryRootKeys, anchors.entryRootKeys) > 0;
+        const sharedImporters = countIntersection(candidate.importerKeys, anchors.importerKeys) > 0;
+        const sharedRoutes = routeAffinityScore(candidate, anchorRouteKeys) > 0;
+        if (sameReadyMember && !forcedFiles.has(candidate.fileName) && anchorRouteKeys.length > 0 && !sharedRoutes && !sameFamily && !sharedRoots && !sharedImporters) {
+          return false;
+        }
+        if (!sameReadyMember && !sameFamily && !sharedRoots && !sharedImporters && !sharedRoutes) return false;
+        return true;
+      }),
+      (candidate) => {
+        let boost = 0;
+        if (forcedFiles.has(candidate.fileName)) boost += 5e3;
+        if (ready.entries.some((entry) => entry.fileName === candidate.fileName)) boost += 2e3;
+        const familyKey2 = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (familyKey2 && anchors.families.includes(familyKey2)) boost += 800;
+        boost += Math.min(3, routeAffinityScore(candidate, anchorRouteKeys)) * 260;
+        boost += Math.min(3, countIntersection(candidate.entryRootKeys, anchors.entryRootKeys)) * 140;
+        boost += Math.min(4, countIntersection(candidate.importerKeys, anchors.importerKeys)) * 50;
+        boost -= routeBreadthPenalty(candidate);
+        return boost;
+      }
+    );
+    const selected = selectStableFeaturePackEntries({
+      currentReadyEntries: ready.entries,
+      candidates: ordered,
+      maxMembers: options.maxMembers,
+      maxBytes: options.maxBytes,
+      forcedFileNames: forcedFiles,
+      preserveReadyFileNames
+    });
+    expandSelectionByCoupling(selected, {
+      candidatesByFileName,
+      couplingClusters,
+      fileToClusterIdx,
+      claimedClusters,
+      assigned
+    });
+    if (selected.length < minMembers) continue;
+    for (const entry of selected) assigned.add(entry.fileName);
+    const familyKey = anchors.families[0] || deriveFamilyKey(candidatesByFileName.get(selected[0]?.fileName ?? "")?.packageName, selected[0]?.packageLabel);
+    plans.push({
+      group: ready.group,
+      seedFileName: selected[0]?.fileName ?? "",
+      familyKey,
+      entries: selected
+    });
+  }
+  for (const seed of candidates) {
+    if (plans.length >= maxGroups) break;
+    if (assigned.has(seed.fileName)) continue;
+    const reservedGroup = fileToReadyGroup.get(seed.fileName);
+    if (reservedGroup) continue;
+    const seedFamily = deriveFamilyKey(seed.packageName, seed.packageLabel);
+    const reservedFamilyGroup = seedFamily ? familyToReadyGroup.get(seedFamily) : null;
+    if (reservedFamilyGroup) continue;
+    const seedClusterIdx = fileToClusterIdx.get(seed.fileName);
+    const forcedFiles = /* @__PURE__ */ new Set();
+    if (seedClusterIdx !== void 0 && !claimedClusters.has(seedClusterIdx)) {
+      claimedClusters.add(seedClusterIdx);
+      for (const f of couplingClusters[seedClusterIdx]) {
+        if (!assigned.has(f) && candidatesByFileName.has(f)) forcedFiles.add(f);
+      }
+    } else if (seedClusterIdx !== void 0 && claimedClusters.has(seedClusterIdx)) {
+      continue;
+    }
+    const ordered = boostedCandidateOrder(
+      candidates.filter((candidate) => {
+        if (assigned.has(candidate.fileName)) return false;
+        if (forcedFiles.has(candidate.fileName)) return true;
+        if (fileToReadyGroup.has(candidate.fileName)) return false;
+        const candidateFamily = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (candidateFamily && familyToReadyGroup.has(candidateFamily)) return false;
+        const candidateClusterIdx = fileToClusterIdx.get(candidate.fileName);
+        if (candidateClusterIdx !== void 0 && claimedClusters.has(candidateClusterIdx) && candidateClusterIdx !== seedClusterIdx) {
+          return false;
+        }
+        const sharedRoots = countIntersection(candidate.entryRootKeys, seed.entryRootKeys) > 0;
+        const sharedImporters = countIntersection(candidate.importerKeys, seed.importerKeys) > 0;
+        const sharedRoutes = routeAffinityScore(candidate, seed.routeKeys) > 0;
+        const sameFamily = !!seedFamily && candidateFamily === seedFamily;
+        if (candidate.fileName !== seed.fileName && !sameFamily && !sharedRoots && !sharedImporters && !sharedRoutes) {
+          return false;
+        }
+        return true;
+      }),
+      (candidate) => {
+        let boost = 0;
+        const candidateFamily = deriveFamilyKey(candidate.packageName, candidate.packageLabel);
+        if (forcedFiles.has(candidate.fileName)) boost += 5e3;
+        if (candidate.fileName === seed.fileName) boost += 2e3;
+        if (seedFamily && candidateFamily === seedFamily) boost += 900;
+        boost += Math.min(3, routeAffinityScore(candidate, seed.routeKeys)) * 260;
+        boost += Math.min(3, countIntersection(candidate.entryRootKeys, seed.entryRootKeys)) * 180;
+        boost += Math.min(4, countIntersection(candidate.importerKeys, seed.importerKeys)) * 60;
+        boost -= routeBreadthPenalty(candidate);
+        return boost;
+      }
+    );
+    const selected = selectStableFeaturePackEntries({
+      candidates: ordered,
+      maxMembers: options.maxMembers,
+      maxBytes: options.maxBytes,
+      forcedFileNames: forcedFiles
+    });
+    expandSelectionByCoupling(selected, {
+      candidatesByFileName,
+      couplingClusters,
+      fileToClusterIdx,
+      claimedClusters,
+      assigned
+    });
+    if (selected.length < minMembers) continue;
+    for (const entry of selected) assigned.add(entry.fileName);
+    plans.push({
+      group: null,
+      seedFileName: selected[0]?.fileName ?? seed.fileName,
+      familyKey: seedFamily,
+      entries: selected
+    });
+  }
+  return plans;
+}
+function analyzeFeaturePackSharedClosurePressure(options) {
+  const entries = Array.isArray(options.entries) ? options.entries : [];
+  const deliveredMembers = entries.map((entry) => ({
+    entry,
+    candidate: options.candidatesByFileName.get(entry.fileName) ?? null
+  })).filter(
+    (item) => !!item.entry?.fileName
+  );
+  const logicalDeliveredBytes = deliveredMembers.reduce(
+    (sum, item) => sum + Math.max(0, item.candidate?.sizeBytes ?? 0),
+    0
+  );
+  if (deliveredMembers.length === 0 || logicalDeliveredBytes <= 0) {
+    return {
+      routeCount: 0,
+      logicalDeliveredBytes,
+      peakLogicalUnusedBytes: 0,
+      peakLogicalUnusedRouteKey: null,
+      peakLogicalUnusedRatio: 0,
+      estimatedPeakSharedPressureBytes: null,
+      routes: []
+    };
+  }
+  const routeScores = /* @__PURE__ */ new Map();
+  for (const item of deliveredMembers) {
+    const routeRequestCounts = item.candidate?.routeRequestCounts ?? null;
+    if (!routeRequestCounts) continue;
+    for (const [routeKey, requestCount] of Object.entries(routeRequestCounts)) {
+      if (!routeKey || !Number.isFinite(requestCount) || requestCount <= 0) continue;
+      routeScores.set(routeKey, (routeScores.get(routeKey) ?? 0) + requestCount);
+    }
+  }
+  const maxUnusedMembersPerRoute = Math.max(1, Math.floor(options.maxUnusedMembersPerRoute ?? 5));
+  const activeSharedBytes = typeof options.activeSharedBytes === "number" && Number.isFinite(options.activeSharedBytes) && options.activeSharedBytes > 0 ? Math.floor(options.activeSharedBytes) : null;
+  const routes = Array.from(routeScores.entries()).map(([routeKey, routeRequestCount]) => {
+    const usedMembers = deliveredMembers.filter((item) => {
+      const count = item.candidate?.routeRequestCounts?.[routeKey] ?? 0;
+      return Number.isFinite(count) && count > 0;
+    });
+    const logicalUsedBytes = usedMembers.reduce(
+      (sum, item) => sum + Math.max(0, item.candidate?.sizeBytes ?? 0),
+      0
+    );
+    const logicalUnusedBytes = Math.max(0, logicalDeliveredBytes - logicalUsedBytes);
+    const logicalUnusedRatio = logicalDeliveredBytes > 0 ? logicalUnusedBytes / logicalDeliveredBytes : 0;
+    const unusedMembers = deliveredMembers.filter((item) => !usedMembers.includes(item)).map((item) => ({
+      fileName: item.entry.fileName,
+      packageLabel: item.entry.packageLabel,
+      sizeBytes: Math.max(0, item.candidate?.sizeBytes ?? 0)
+    })).sort((a, b) => b.sizeBytes - a.sizeBytes || a.fileName.localeCompare(b.fileName));
+    const estimatedSharedPressureBytes = activeSharedBytes && logicalDeliveredBytes > 0 ? Math.round(activeSharedBytes * logicalUnusedRatio) : null;
+    return {
+      routeKey,
+      routeRequestCount,
+      logicalDeliveredBytes,
+      logicalUsedBytes,
+      logicalUnusedBytes,
+      logicalUnusedRatio,
+      deliveredMemberCount: deliveredMembers.length,
+      usedMemberCount: usedMembers.length,
+      unusedMemberCount: Math.max(0, deliveredMembers.length - usedMembers.length),
+      estimatedSharedPressureBytes,
+      topUnusedMembers: unusedMembers.slice(0, maxUnusedMembersPerRoute)
+    };
+  }).sort((a, b) => {
+    const unusedDelta = b.logicalUnusedBytes - a.logicalUnusedBytes;
+    if (unusedDelta !== 0) return unusedDelta;
+    const requestDelta = b.routeRequestCount - a.routeRequestCount;
+    if (requestDelta !== 0) return requestDelta;
+    return a.routeKey.localeCompare(b.routeKey);
+  });
+  const limitedRoutes = routes.slice(0, Math.max(1, Math.floor(options.maxRoutes ?? 8)));
+  const peak = limitedRoutes[0] ?? null;
+  return {
+    routeCount: routes.length,
+    logicalDeliveredBytes,
+    peakLogicalUnusedBytes: peak?.logicalUnusedBytes ?? 0,
+    peakLogicalUnusedRouteKey: peak?.routeKey ?? null,
+    peakLogicalUnusedRatio: peak?.logicalUnusedRatio ?? 0,
+    estimatedPeakSharedPressureBytes: peak?.estimatedSharedPressureBytes ?? null,
+    routes: limitedRoutes
+  };
+}
+var import_fs3, import_path3;
+var init_feature_pack_planner = __esm({
+  "src/core/deps/feature-pack-planner.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs3 = __toESM(require("fs"), 1);
+    import_path3 = __toESM(require("path"), 1);
+  }
+});
+
+// src/core/deps/vendor-pack-utils.ts
+function computeChunkGroupIdFromStableIds(stableIds) {
+  const ids = stableIds.map((v) => String(v)).filter(Boolean).slice().sort();
+  const unique = [];
+  for (const id of ids) {
+    if (unique.length === 0 || unique[unique.length - 1] !== id) unique.push(id);
+  }
+  const hash = import_crypto2.default.createHash("sha256");
+  for (const id of unique) {
+    hash.update(id);
+    hash.update("|");
+  }
+  const digest = hash.digest("hex");
+  return `sc${digest.slice(0, 8)}`;
+}
+var import_crypto2;
+var init_vendor_pack_utils = __esm({
+  "src/core/deps/vendor-pack-utils.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_crypto2 = __toESM(require("crypto"), 1);
+  }
+});
+
+// src/core/deps/vendor-pack-v2.ts
+function readJsonFile(filePath) {
+  if (!import_fs5.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs5.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile(filePath, data) {
+  try {
+    import_fs5.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  } catch {
+  }
+}
+function vendorPackV2MemberKey(fileName) {
+  return getCacheKey(`vp2:${fileName}`).slice(0, 12);
+}
+function readVendorPackV2KeyFromDisk(depsRoot, packFileName) {
+  const packPath = import_path5.default.join(depsRoot, packFileName);
+  if (!import_fs5.default.existsSync(packPath)) return null;
+  try {
+    const head = import_fs5.default.readFileSync(packPath, "utf8").slice(0, 256);
+    const match = head.match(/\/\/\s*ionify:vendor-pack-v2\s+([0-9a-fA-F]{32,})/);
+    const key = match?.[1] ? String(match[1]).toLowerCase() : null;
+    return key && /^[0-9a-f]{32,}$/.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+function uniqueSorted(values) {
+  const normalized = values.map((v) => String(v)).filter(Boolean).slice().sort();
+  const unique = [];
+  for (const v of normalized) {
+    if (unique.length === 0 || unique[unique.length - 1] !== v) unique.push(v);
+  }
+  return unique;
+}
+function readWrapperExportAbiNames(depsRoot, fileName) {
+  const manifestPath = import_path5.default.join(depsRoot, "manifest.json");
+  if (!import_fs5.default.existsSync(manifestPath)) return null;
+  try {
+    const raw = JSON.parse(import_fs5.default.readFileSync(manifestPath, "utf8"));
+    const entries = raw?.entries && typeof raw.entries === "object" ? raw.entries : {};
+    for (const entry of Object.values(entries)) {
+      const outFile = entry?.outFile ?? entry?.out_file;
+      if (outFile !== fileName) continue;
+      const abi = entry?.exportAbi ?? entry?.export_abi;
+      if (!abi || abi.version !== 1 || abi.uncertain === true) return null;
+      const names = Array.isArray(abi.names) ? abi.names.filter((name) => typeof name === "string" && name.length > 0) : [];
+      return uniqueSorted(names);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+function parseWrapperForVendorPackV2(depsRoot, fileName) {
+  const wrapperPath = import_path5.default.join(depsRoot, fileName);
+  if (!import_fs5.default.existsSync(wrapperPath)) return null;
+  let code = "";
+  try {
+    code = import_fs5.default.readFileSync(wrapperPath, "utf8");
+  } catch {
+    return null;
+  }
+  const abiExportNames = readWrapperExportAbiNames(depsRoot, fileName);
+  if (code.includes("export * from") && !abiExportNames) return null;
+  const entryIdMatch = code.match(/const __exports = __ionifyRequire\(["']([^"']+)["']\);/);
+  const entryId = entryIdMatch?.[1] ?? null;
+  if (!entryId) return null;
+  const cssImports = [];
+  for (const match of code.matchAll(/import\s+["']([^"']+\?inline)["'];\s*/g)) {
+    const url2 = match[1];
+    if (typeof url2 === "string" && url2.length > 0) cssImports.push(url2);
+  }
+  const exportNames = abiExportNames ?? [];
+  if (!abiExportNames) {
+    for (const match of code.matchAll(
+      /export\s+\{\s*__ionify_export_[A-Za-z0-9_$]+\s+as\s+([A-Za-z0-9_$]+)\s*\}\s*;\s*/g
+    )) {
+      const name = match[1];
+      if (typeof name === "string" && name.length > 0) exportNames.push(name);
+    }
+  }
+  return {
+    entryId,
+    cssImports: uniqueSorted(cssImports),
+    exportNames: uniqueSorted(exportNames)
+  };
+}
+var import_fs5, import_path5, DEPS_PREFIX, IONIFY_VENDOR_PACK_V2_MARKER, VendorPackV2IndexManager;
+var init_vendor_pack_v2 = __esm({
+  "src/core/deps/vendor-pack-v2.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs5 = __toESM(require("fs"), 1);
+    import_path5 = __toESM(require("path"), 1);
+    init_cache();
+    DEPS_PREFIX = "/@deps/";
+    IONIFY_VENDOR_PACK_V2_MARKER = "// ionify:vendor-pack-v2";
+    VendorPackV2IndexManager = class {
+      depsRoot;
+      depsHash;
+      outputVersion;
+      indexPath;
+      allowPackFilePrefix;
+      log;
+      packFileToSharedFile = /* @__PURE__ */ new Map();
+      packFileToKey = /* @__PURE__ */ new Map();
+      packFileToChunkFiles = /* @__PURE__ */ new Map();
+      fileNameToPackFile = /* @__PURE__ */ new Map();
+      usageIndexHash = null;
+      constructor(options) {
+        this.depsRoot = options.depsRoot;
+        this.depsHash = options.depsHash;
+        this.outputVersion = options.outputVersion;
+        this.indexPath = import_path5.default.join(this.depsRoot, "vendor-pack.v2.index.json");
+        this.allowPackFilePrefix = options.allowPackFilePrefix ?? null;
+        this.log = options.log ?? {};
+      }
+      setUsageIndexHash(hash) {
+        const cleaned = hash && typeof hash === "string" ? hash.trim().toLowerCase() : "";
+        const next = cleaned && /^[0-9a-f]{32,}$/.test(cleaned) ? cleaned : null;
+        if (this.usageIndexHash === next) return;
+        this.usageIndexHash = next;
+        this.writeIndex();
+      }
+      writeIndex() {
+        const packKeys = Array.from(this.packFileToSharedFile.keys()).sort();
+        const packObj = {};
+        const keyObj = {};
+        const chunkObj = {};
+        for (const packFile of packKeys) {
+          const shared = this.packFileToSharedFile.get(packFile);
+          if (shared) packObj[packFile] = shared;
+          const key = this.packFileToKey.get(packFile);
+          if (key) {
+            const cleaned = key.trim().toLowerCase();
+            keyObj[packFile] = cleaned;
+          }
+          const chunkFiles = this.packFileToChunkFiles.get(packFile);
+          if (chunkFiles && chunkFiles.length > 0) {
+            const unique = uniqueSorted(chunkFiles);
+            chunkObj[packFile] = unique;
+          }
+        }
+        const fileObj = {};
+        const fileKeys = Array.from(this.fileNameToPackFile.keys()).sort();
+        for (const fileName of fileKeys) {
+          const packFile = this.fileNameToPackFile.get(fileName);
+          if (packFile) fileObj[fileName] = packFile;
+        }
+        let routingBody = `vendor-pack-v2-index:v1:${this.depsHash}
+`;
+        for (const packFile of packKeys) {
+          const shared = packObj[packFile];
+          if (shared) routingBody += `shared:${packFile}=${shared}
+`;
+        }
+        for (const packFile of packKeys) {
+          const key = keyObj[packFile];
+          if (key) routingBody += `key:${packFile}=${key}
+`;
+        }
+        for (const packFile of packKeys) {
+          const files = chunkObj[packFile];
+          if (files && files.length > 0) routingBody += `chunks:${packFile}=${files.join(",")}
+`;
+        }
+        for (const fileName of fileKeys) {
+          const packFile = fileObj[fileName];
+          if (packFile) routingBody += `route:${fileName}=${packFile}
+`;
+        }
+        const payload = {
+          version: 1,
+          depsHash: this.depsHash,
+          outputVersion: this.outputVersion,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          usageIndexHash: this.usageIndexHash,
+          packFileToSharedFile: packObj,
+          packFileToKey: keyObj,
+          packFileToChunkFiles: chunkObj,
+          fileNameToPackFile: fileObj
+        };
+        payload.packIndexHash = getCacheKey(routingBody);
+        writeJsonFile(this.indexPath, payload);
+      }
+      loadFromDisk() {
+        this.packFileToSharedFile.clear();
+        this.packFileToKey.clear();
+        this.packFileToChunkFiles.clear();
+        this.fileNameToPackFile.clear();
+        const raw = readJsonFile(this.indexPath);
+        if (!raw || raw.version !== 1 || raw.depsHash !== this.depsHash || raw.outputVersion !== this.outputVersion) {
+          return;
+        }
+        this.usageIndexHash = typeof raw.usageIndexHash === "string" ? raw.usageIndexHash.trim().toLowerCase() : null;
+        const rawPackMap = raw.packFileToSharedFile;
+        const rawKeyMap = raw.packFileToKey;
+        const rawChunkMap = raw.packFileToChunkFiles;
+        const rawFileMap = raw.fileNameToPackFile;
+        const packFileToShared = /* @__PURE__ */ new Map();
+        const packFileToKey = /* @__PURE__ */ new Map();
+        const packFileToChunkFiles = /* @__PURE__ */ new Map();
+        const fileNameToPackFile = /* @__PURE__ */ new Map();
+        const validPackFiles = /* @__PURE__ */ new Set();
+        let rawPackCount = 0;
+        if (rawPackMap && typeof rawPackMap === "object") {
+          for (const [packFileName, sharedFileName] of Object.entries(rawPackMap)) {
+            if (typeof packFileName !== "string" || typeof sharedFileName !== "string") continue;
+            if (!packFileName.endsWith(".js") || !sharedFileName.endsWith(".js")) continue;
+            rawPackCount += 1;
+            const packPath = import_path5.default.join(this.depsRoot, packFileName);
+            const sharedPath = import_path5.default.join(this.depsRoot, sharedFileName);
+            if (!import_fs5.default.existsSync(packPath) || !import_fs5.default.existsSync(sharedPath)) continue;
+            packFileToShared.set(packFileName, sharedFileName);
+            validPackFiles.add(packFileName);
+          }
+        }
+        let rawKeyCount = 0;
+        if (rawKeyMap && typeof rawKeyMap === "object") {
+          for (const [packFileName, key] of Object.entries(rawKeyMap)) {
+            if (typeof packFileName !== "string" || typeof key !== "string") continue;
+            if (!validPackFiles.has(packFileName)) continue;
+            rawKeyCount += 1;
+            const cleaned = key.trim().toLowerCase();
+            if (!/^[0-9a-f]{32,}$/.test(cleaned)) continue;
+            packFileToKey.set(packFileName, cleaned);
+          }
+        }
+        let rawChunkCount = 0;
+        if (rawChunkMap && typeof rawChunkMap === "object") {
+          for (const [packFileName, chunkFiles] of Object.entries(rawChunkMap)) {
+            if (typeof packFileName !== "string" || !Array.isArray(chunkFiles)) continue;
+            if (!validPackFiles.has(packFileName)) continue;
+            rawChunkCount += 1;
+            const normalized = chunkFiles.map((v) => typeof v === "string" ? v : "").filter(Boolean);
+            if (normalized.length > 0) packFileToChunkFiles.set(packFileName, uniqueSorted(normalized));
+          }
+        }
+        let needsRewrite = false;
+        for (const packFileName of Array.from(validPackFiles.values())) {
+          const sharedFileName = packFileToShared.get(packFileName);
+          if (!sharedFileName) continue;
+          const expectedKey = packFileToKey.get(packFileName) ?? readVendorPackV2KeyFromDisk(this.depsRoot, packFileName);
+          if (expectedKey && !packFileToKey.has(packFileName)) {
+            packFileToKey.set(packFileName, expectedKey);
+            needsRewrite = true;
+          }
+          const chunkFiles = packFileToChunkFiles.get(packFileName) ?? [sharedFileName];
+          if (!packFileToChunkFiles.has(packFileName)) {
+            packFileToChunkFiles.set(packFileName, chunkFiles);
+            needsRewrite = true;
+          }
+          const packPath = import_path5.default.join(this.depsRoot, packFileName);
+          const sharedPath = import_path5.default.join(this.depsRoot, sharedFileName);
+          const chunksOk = import_fs5.default.existsSync(packPath) && import_fs5.default.existsSync(sharedPath) && chunkFiles.every((f) => typeof f === "string" && f.endsWith(".js") && import_fs5.default.existsSync(import_path5.default.join(this.depsRoot, f)));
+          if (!chunksOk) {
+            validPackFiles.delete(packFileName);
+            packFileToShared.delete(packFileName);
+            packFileToKey.delete(packFileName);
+            packFileToChunkFiles.delete(packFileName);
+            needsRewrite = true;
+            continue;
+          }
+          if (expectedKey) {
+            try {
+              const head = import_fs5.default.readFileSync(packPath, "utf8").slice(0, 256);
+              if (!head.includes(`${IONIFY_VENDOR_PACK_V2_MARKER} ${expectedKey}`)) {
+                validPackFiles.delete(packFileName);
+                packFileToShared.delete(packFileName);
+                packFileToKey.delete(packFileName);
+                packFileToChunkFiles.delete(packFileName);
+                needsRewrite = true;
+              }
+            } catch {
+              validPackFiles.delete(packFileName);
+              packFileToShared.delete(packFileName);
+              packFileToKey.delete(packFileName);
+              packFileToChunkFiles.delete(packFileName);
+              needsRewrite = true;
+            }
+          }
+        }
+        let rawFileCount = 0;
+        if (rawFileMap && typeof rawFileMap === "object") {
+          for (const [fileName, packFileName] of Object.entries(rawFileMap)) {
+            if (typeof fileName !== "string" || typeof packFileName !== "string") continue;
+            if (!fileName.endsWith(".js") || !packFileName.endsWith(".js")) continue;
+            rawFileCount += 1;
+            if (!validPackFiles.has(packFileName)) continue;
+            const wrapperPath = import_path5.default.join(this.depsRoot, fileName);
+            if (!import_fs5.default.existsSync(wrapperPath)) continue;
+            fileNameToPackFile.set(fileName, packFileName);
+          }
+        }
+        if (this.allowPackFilePrefix) {
+          for (const packFileName of Array.from(validPackFiles.values())) {
+            if (packFileName.startsWith(this.allowPackFilePrefix)) continue;
+            validPackFiles.delete(packFileName);
+            packFileToShared.delete(packFileName);
+            packFileToKey.delete(packFileName);
+            packFileToChunkFiles.delete(packFileName);
+            needsRewrite = true;
+          }
+          for (const [fileName, packFileName] of Array.from(fileNameToPackFile.entries())) {
+            if (packFileName.startsWith(this.allowPackFilePrefix)) continue;
+            fileNameToPackFile.delete(fileName);
+            needsRewrite = true;
+          }
+        }
+        for (const [packFileName, sharedFileName] of packFileToShared.entries()) {
+          this.packFileToSharedFile.set(packFileName, sharedFileName);
+        }
+        for (const [packFileName, key] of packFileToKey.entries()) {
+          this.packFileToKey.set(packFileName, key);
+        }
+        for (const [packFileName, chunkFiles] of packFileToChunkFiles.entries()) {
+          this.packFileToChunkFiles.set(packFileName, chunkFiles);
+        }
+        for (const [fileName, packFileName] of fileNameToPackFile.entries()) {
+          this.fileNameToPackFile.set(fileName, packFileName);
+        }
+        if (needsRewrite || rawPackCount > 0 && this.packFileToSharedFile.size !== rawPackCount || rawKeyCount > 0 && this.packFileToKey.size !== rawKeyCount || rawChunkCount > 0 && this.packFileToChunkFiles.size !== rawChunkCount || rawFileCount > 0 && this.fileNameToPackFile.size !== rawFileCount) {
+          this.writeIndex();
+        }
+      }
+      prunePackPrefix(prefix) {
+        const cleanedPrefix = typeof prefix === "string" ? prefix.trim() : "";
+        if (!cleanedPrefix) return;
+        let indexChanged = false;
+        for (const [fileName, packFileName] of Array.from(this.fileNameToPackFile.entries())) {
+          if (!packFileName.startsWith(cleanedPrefix)) continue;
+          this.fileNameToPackFile.delete(fileName);
+          indexChanged = true;
+        }
+        for (const packFileName of Array.from(this.packFileToSharedFile.keys())) {
+          if (!packFileName.startsWith(cleanedPrefix)) continue;
+          this.packFileToSharedFile.delete(packFileName);
+          this.packFileToKey.delete(packFileName);
+          this.packFileToChunkFiles.delete(packFileName);
+          indexChanged = true;
+        }
+        if (indexChanged || !import_fs5.default.existsSync(this.indexPath)) {
+          this.writeIndex();
+        }
+      }
+      ensurePackModuleFromEntries(options) {
+        const { label, packFileName, sharedFileName, entries, prunePackPrefix } = options;
+        if (!packFileName.endsWith(".js") || !sharedFileName.endsWith(".js")) return null;
+        const sharedPath = import_path5.default.join(this.depsRoot, sharedFileName);
+        if (!import_fs5.default.existsSync(sharedPath)) return null;
+        const parsedByFile = /* @__PURE__ */ new Map();
+        const safeMembers = [];
+        const memberSet = /* @__PURE__ */ new Set();
+        for (const entry of entries) {
+          const fileName = entry.fileName;
+          if (!fileName || !fileName.endsWith(".js")) continue;
+          memberSet.add(fileName);
+          const parsed = parseWrapperForVendorPackV2(this.depsRoot, fileName);
+          if (!parsed) continue;
+          const memberKey = vendorPackV2MemberKey(fileName);
+          parsedByFile.set(fileName, { ...parsed, memberKey });
+          safeMembers.push(fileName);
+        }
+        safeMembers.sort();
+        if (safeMembers.length === 0) return null;
+        const cssSet = /* @__PURE__ */ new Set();
+        for (const fileName of safeMembers) {
+          const parsed = parsedByFile.get(fileName);
+          if (!parsed) continue;
+          for (const url2 of parsed.cssImports) cssSet.add(url2);
+        }
+        const cssImports = Array.from(cssSet).sort();
+        const vendorKey = getCacheKey(
+          `vendor-pack-v2:v1:${this.depsHash}:${packFileName}:${sharedFileName}:${safeMembers.join("|")}`
+        );
+        const outPath = import_path5.default.join(this.depsRoot, packFileName);
+        let wroteModule = false;
+        const moduleIsValidOnDisk = () => {
+          if (!import_fs5.default.existsSync(outPath)) return false;
+          try {
+            const head = import_fs5.default.readFileSync(outPath, "utf8").slice(0, 256);
+            return head.includes(`${IONIFY_VENDOR_PACK_V2_MARKER} ${vendorKey}`);
+          } catch {
+            return false;
+          }
+        };
+        if (!moduleIsValidOnDisk()) {
+          const lines = [];
+          lines.push(`${IONIFY_VENDOR_PACK_V2_MARKER} ${vendorKey}`);
+          lines.push(`// depsHash: ${this.depsHash}`);
+          lines.push(`// pack: ${label}`);
+          lines.push(`// shared: ${sharedFileName}`);
+          lines.push(`// members: ${safeMembers.length}`);
+          lines.push(`import { __ionifyRequire } from "${DEPS_PREFIX}${sharedFileName}";`);
+          for (const url2 of cssImports) {
+            lines.push(`import "${url2}";`);
+          }
+          lines.push("");
+          for (const fileName of safeMembers) {
+            const parsed = parsedByFile.get(fileName);
+            if (!parsed) continue;
+            const { entryId, exportNames, memberKey } = parsed;
+            const prefix = `__ionify_vp_${memberKey}`;
+            lines.push(`// member: ${fileName}`);
+            lines.push(`const ${prefix}__ns = __ionifyRequire("${entryId}");`);
+            lines.push(
+              `const ${prefix}__default = ${prefix}__ns && ${prefix}__ns.__esModule && Object.prototype.hasOwnProperty.call(${prefix}__ns, "default") ? ${prefix}__ns.default : ${prefix}__ns;`
+            );
+            lines.push(`export { ${prefix}__default, ${prefix}__ns };`);
+            for (const name of exportNames) {
+              lines.push(`export const ${prefix}__${name} = ${prefix}__ns.${name};`);
+            }
+            lines.push("");
+          }
+          const body = lines.join("\n") + "\n";
+          try {
+            import_fs5.default.writeFileSync(outPath, body, "utf8");
+          } catch (err) {
+            this.log.warn?.(
+              `[deps] WARN: Failed to write vendor pack v2 module (${label}): ${String(err)}`
+            );
+            return null;
+          }
+          wroteModule = true;
+        }
+        if (!moduleIsValidOnDisk()) return null;
+        let indexChanged = false;
+        if (prunePackPrefix) {
+          for (const [fileName, existingPackFile] of Array.from(this.fileNameToPackFile.entries())) {
+            if (existingPackFile === packFileName) continue;
+            if (!existingPackFile.startsWith(prunePackPrefix)) continue;
+            this.fileNameToPackFile.delete(fileName);
+            indexChanged = true;
+          }
+        }
+        const previousShared = this.packFileToSharedFile.get(packFileName);
+        if (previousShared !== sharedFileName) {
+          this.packFileToSharedFile.set(packFileName, sharedFileName);
+          indexChanged = true;
+        }
+        const previousKey = this.packFileToKey.get(packFileName);
+        if (previousKey !== vendorKey) {
+          this.packFileToKey.set(packFileName, vendorKey);
+          indexChanged = true;
+        }
+        const previousChunks = this.packFileToChunkFiles.get(packFileName);
+        const nextChunks = [sharedFileName];
+        if (!previousChunks || previousChunks.length !== nextChunks.length || previousChunks.some((v, i) => v !== nextChunks[i])) {
+          this.packFileToChunkFiles.set(packFileName, nextChunks);
+          indexChanged = true;
+        }
+        for (const fileName of safeMembers) {
+          const prev = this.fileNameToPackFile.get(fileName);
+          if (prev !== packFileName) {
+            this.fileNameToPackFile.set(fileName, packFileName);
+            indexChanged = true;
+          }
+        }
+        if (prunePackPrefix) {
+          for (const fileName of memberSet) {
+            if (safeMembers.includes(fileName)) continue;
+            const prev = this.fileNameToPackFile.get(fileName);
+            if (prev && prev.startsWith(prunePackPrefix)) {
+              this.fileNameToPackFile.delete(fileName);
+              indexChanged = true;
+            }
+          }
+        }
+        if (prunePackPrefix) {
+          const referenced = new Set(this.fileNameToPackFile.values());
+          for (const packFile of Array.from(this.packFileToSharedFile.keys())) {
+            if (!packFile.startsWith(prunePackPrefix)) continue;
+            if (referenced.has(packFile)) continue;
+            this.packFileToSharedFile.delete(packFile);
+            this.packFileToKey.delete(packFile);
+            this.packFileToChunkFiles.delete(packFile);
+            indexChanged = true;
+          }
+        }
+        if (indexChanged || !import_fs5.default.existsSync(this.indexPath)) {
+          this.writeIndex();
+        }
+        if (wroteModule) {
+          this.log.info?.(
+            `[deps] \u2713 Vendor pack v2 module ready (${label}): ${DEPS_PREFIX}${packFileName} members=${safeMembers.length}`
+          );
+        }
+        return { packFileName, safeMembers };
+      }
+      ensurePackModuleFromWrappers(options) {
+        const { label, packFileName, sharedFileName, members, prunePackPrefix } = options;
+        if (!packFileName.endsWith(".js") || !sharedFileName.endsWith(".js")) return null;
+        const sharedPath = import_path5.default.join(this.depsRoot, sharedFileName);
+        if (!import_fs5.default.existsSync(sharedPath)) return null;
+        const parsedByBase = /* @__PURE__ */ new Map();
+        const safeMembers = [];
+        const memberSet = /* @__PURE__ */ new Set();
+        const wrapperByBase = /* @__PURE__ */ new Map();
+        for (const member of members) {
+          const baseFileName = member.baseFileName;
+          const wrapperFileName = member.wrapperFileName;
+          if (!baseFileName || !baseFileName.endsWith(".js")) continue;
+          if (!wrapperFileName || !wrapperFileName.endsWith(".js")) continue;
+          memberSet.add(baseFileName);
+          wrapperByBase.set(baseFileName, wrapperFileName);
+          const parsed = parseWrapperForVendorPackV2(this.depsRoot, wrapperFileName);
+          if (!parsed) continue;
+          const memberKey = vendorPackV2MemberKey(baseFileName);
+          parsedByBase.set(baseFileName, { ...parsed, memberKey, wrapperFileName });
+          safeMembers.push(baseFileName);
+        }
+        safeMembers.sort();
+        if (safeMembers.length === 0) return null;
+        const cssSet = /* @__PURE__ */ new Set();
+        for (const baseFileName of safeMembers) {
+          const parsed = parsedByBase.get(baseFileName);
+          if (!parsed) continue;
+          for (const url2 of parsed.cssImports) cssSet.add(url2);
+        }
+        const cssImports = Array.from(cssSet).sort();
+        const mappingKey = safeMembers.map((base) => `${base}=>${wrapperByBase.get(base) ?? ""}`).sort().join("|");
+        const vendorKey = getCacheKey(
+          `vendor-pack-v2:usage:v1:${this.depsHash}:${packFileName}:${sharedFileName}:${mappingKey}`
+        );
+        const outPath = import_path5.default.join(this.depsRoot, packFileName);
+        let wroteModule = false;
+        const moduleIsValidOnDisk = () => {
+          if (!import_fs5.default.existsSync(outPath)) return false;
+          try {
+            const head = import_fs5.default.readFileSync(outPath, "utf8").slice(0, 256);
+            return head.includes(`${IONIFY_VENDOR_PACK_V2_MARKER} ${vendorKey}`);
+          } catch {
+            return false;
+          }
+        };
+        if (!moduleIsValidOnDisk()) {
+          const lines = [];
+          lines.push(`${IONIFY_VENDOR_PACK_V2_MARKER} ${vendorKey}`);
+          lines.push(`// depsHash: ${this.depsHash}`);
+          lines.push(`// pack: ${label}`);
+          lines.push(`// shared: ${sharedFileName}`);
+          lines.push(`// members: ${safeMembers.length}`);
+          lines.push(`import { __ionifyRequire } from "${DEPS_PREFIX}${sharedFileName}";`);
+          for (const url2 of cssImports) {
+            lines.push(`import "${url2}";`);
+          }
+          lines.push("");
+          for (const baseFileName of safeMembers) {
+            const parsed = parsedByBase.get(baseFileName);
+            if (!parsed) continue;
+            const { entryId, exportNames, memberKey, wrapperFileName } = parsed;
+            const prefix = `__ionify_vp_${memberKey}`;
+            lines.push(`// member: ${baseFileName} (wrapper: ${wrapperFileName})`);
+            lines.push(`const ${prefix}__ns = __ionifyRequire("${entryId}");`);
+            lines.push(
+              `const ${prefix}__default = ${prefix}__ns && ${prefix}__ns.__esModule && Object.prototype.hasOwnProperty.call(${prefix}__ns, "default") ? ${prefix}__ns.default : ${prefix}__ns;`
+            );
+            lines.push(`export { ${prefix}__default, ${prefix}__ns };`);
+            for (const name of exportNames) {
+              lines.push(`export const ${prefix}__${name} = ${prefix}__ns.${name};`);
+            }
+            lines.push("");
+          }
+          const body = lines.join("\n") + "\n";
+          try {
+            import_fs5.default.writeFileSync(outPath, body, "utf8");
+          } catch (err) {
+            this.log.warn?.(
+              `[deps] WARN: Failed to write vendor pack v2 module (${label}): ${String(err)}`
+            );
+            return null;
+          }
+          wroteModule = true;
+        }
+        if (!moduleIsValidOnDisk()) return null;
+        let indexChanged = false;
+        if (prunePackPrefix) {
+          for (const [fileName, existingPackFile] of Array.from(this.fileNameToPackFile.entries())) {
+            if (existingPackFile === packFileName) continue;
+            if (!existingPackFile.startsWith(prunePackPrefix)) continue;
+            this.fileNameToPackFile.delete(fileName);
+            indexChanged = true;
+          }
+        }
+        const previousShared = this.packFileToSharedFile.get(packFileName);
+        if (previousShared !== sharedFileName) {
+          this.packFileToSharedFile.set(packFileName, sharedFileName);
+          indexChanged = true;
+        }
+        const previousKey = this.packFileToKey.get(packFileName);
+        if (previousKey !== vendorKey) {
+          this.packFileToKey.set(packFileName, vendorKey);
+          indexChanged = true;
+        }
+        const previousChunks = this.packFileToChunkFiles.get(packFileName);
+        const nextChunks = [sharedFileName];
+        if (!previousChunks || previousChunks.length !== nextChunks.length || previousChunks.some((v, i) => v !== nextChunks[i])) {
+          this.packFileToChunkFiles.set(packFileName, nextChunks);
+          indexChanged = true;
+        }
+        for (const baseFileName of safeMembers) {
+          const prev = this.fileNameToPackFile.get(baseFileName);
+          if (prev !== packFileName) {
+            this.fileNameToPackFile.set(baseFileName, packFileName);
+            indexChanged = true;
+          }
+        }
+        if (prunePackPrefix) {
+          for (const fileName of memberSet) {
+            if (safeMembers.includes(fileName)) continue;
+            const prev = this.fileNameToPackFile.get(fileName);
+            if (prev && prev.startsWith(prunePackPrefix)) {
+              this.fileNameToPackFile.delete(fileName);
+              indexChanged = true;
+            }
+          }
+        }
+        if (prunePackPrefix) {
+          const referenced = new Set(this.fileNameToPackFile.values());
+          for (const packFile of Array.from(this.packFileToSharedFile.keys())) {
+            if (!packFile.startsWith(prunePackPrefix)) continue;
+            if (referenced.has(packFile)) continue;
+            this.packFileToSharedFile.delete(packFile);
+            this.packFileToKey.delete(packFile);
+            this.packFileToChunkFiles.delete(packFile);
+            indexChanged = true;
+          }
+        }
+        if (indexChanged || !import_fs5.default.existsSync(this.indexPath)) {
+          this.writeIndex();
+        }
+        if (wroteModule) {
+          this.log.info?.(
+            `[deps] \u2713 Vendor pack v2 module ready (${label}): ${DEPS_PREFIX}${packFileName} members=${safeMembers.length}`
+          );
+        }
+        return { packFileName, safeMembers };
+      }
+    };
+  }
+});
+
+// src/core/module-id.ts
+function realpathOrResolve(absPath) {
+  try {
+    const fn = import_fs6.default.realpathSync.native;
+    if (fn) return fn(absPath);
+    return import_fs6.default.realpathSync(absPath);
+  } catch {
+    return import_path6.default.resolve(absPath);
+  }
+}
+function toPosixPath(p) {
+  return p.split(import_path6.default.sep).join("/");
+}
+function isSafeRelPath(relPosix) {
+  if (!relPosix) return false;
+  if (relPosix === "." || relPosix.startsWith("./")) return false;
+  if (relPosix.includes("\0")) return false;
+  if (relPosix.startsWith("../") || relPosix === "..") return false;
+  if (/^[A-Za-z]:\//.test(relPosix) || relPosix.startsWith("//")) return false;
+  const parts = relPosix.split("/");
+  if (parts.some((part) => part === ".." || part === "")) return false;
+  return true;
+}
+function resolveWorkspaceRoot(defaultRoot) {
+  const fromEnv = process.env.IONIFY_WORKSPACE_ROOT;
+  if (fromEnv && import_path6.default.isAbsolute(fromEnv)) return realpathOrResolve(fromEnv);
+  if (defaultRoot && import_path6.default.isAbsolute(defaultRoot)) return realpathOrResolve(defaultRoot);
+  return realpathOrResolve(process.cwd());
+}
+function isWsModuleId(value) {
+  return typeof value === "string" && value.startsWith(WS_MODULE_PREFIX);
+}
+function toWsModuleId(absPath, workspaceRoot) {
+  if (!absPath || typeof absPath !== "string") return null;
+  if (!import_path6.default.isAbsolute(absPath)) return null;
+  const wsRoot = resolveWorkspaceRoot(workspaceRoot ?? null);
+  const normalizedWs = realpathOrResolve(wsRoot);
+  const exists = import_fs6.default.existsSync(absPath);
+  const normalizedFile = exists ? realpathOrResolve(absPath) : import_path6.default.resolve(absPath);
+  if (normalizedFile !== normalizedWs && !normalizedFile.startsWith(normalizedWs + import_path6.default.sep)) {
+    return null;
+  }
+  const rel = import_path6.default.relative(normalizedWs, normalizedFile);
+  const relPosix = toPosixPath(rel);
+  if (!isSafeRelPath(relPosix)) return null;
+  return WS_MODULE_PREFIX + relPosix;
+}
+function fromWsModuleId(id, workspaceRoot) {
+  if (!isWsModuleId(id)) return null;
+  const relPosix = id.slice(WS_MODULE_PREFIX.length);
+  if (!isSafeRelPath(relPosix)) return null;
+  const wsRoot = resolveWorkspaceRoot(workspaceRoot ?? null);
+  const normalizedWs = realpathOrResolve(wsRoot);
+  const relNative = relPosix.split("/").join(import_path6.default.sep);
+  const joined = import_path6.default.resolve(normalizedWs, relNative);
+  if (joined !== normalizedWs && !joined.startsWith(normalizedWs + import_path6.default.sep)) {
+    return null;
+  }
+  return joined;
+}
+var import_fs6, import_path6, WS_MODULE_PREFIX;
+var init_module_id = __esm({
+  "src/core/module-id.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs6 = __toESM(require("fs"), 1);
+    import_path6 = __toESM(require("path"), 1);
+    WS_MODULE_PREFIX = "ws://";
+  }
+});
+
+// src/core/resolver.ts
+function extractImports(source, filename = "inline.ts") {
+  if (native?.parseModuleIr) {
+    try {
+      const result = native.parseModuleIr(filename, source);
+      return result.dependencies.map((dep) => dep.specifier);
+    } catch {
+    }
+  }
+  const meta = tryParseModuleMetadata(source, filename);
+  if (meta && Array.isArray(meta.imports)) {
+    return meta.imports;
+  }
+  const nativeImports = tryParseImports(source, filename);
+  if (nativeImports && Array.isArray(nativeImports)) {
+    return nativeImports;
+  }
+  const deps = /* @__PURE__ */ new Set();
+  const fallbackRegex = () => {
+    const re = /(?:import\s+(?:[^'"]+\s+from\s+)??['"]([^'"]+)['"])|(?:export\s+[^'"]+\s+from\s+['"]([^'"]+)['"])|(?:import\s*?\(\s*?['"]([^'"]+)['"]\s*?\))/g;
+    let m;
+    while (m = re.exec(source)) {
+      const statement = m[0] ?? "";
+      if (/^\s*(?:import|export)\s+type\b/.test(statement)) continue;
+      const spec = m[1] || m[2] || m[3];
+      if (spec) deps.add(spec);
+    }
+  };
+  try {
+    const parseSync3 = swc?.parseSync;
+    if (parseSync3) {
+      const ast = parseSync3(source, {
+        filename,
+        isModule: true,
+        target: "es2022",
+        syntax: "typescript",
+        tsx: true,
+        decorators: true,
+        dynamicImport: true
+      });
+      const visit = (node) => {
+        if (!node || typeof node !== "object") return;
+        const anyNode = node;
+        const type = anyNode.type;
+        const specifiers = Array.isArray(anyNode.specifiers) ? anyNode.specifiers : [];
+        const isTypeOnlyDecl = anyNode.typeOnly === true;
+        const hasOnlyTypeSpecifiers = specifiers.length > 0 && specifiers.every((specifier) => {
+          if (!specifier || typeof specifier !== "object") return false;
+          return specifier.typeOnly === true;
+        });
+        if (type === "ImportDeclaration" && !isTypeOnlyDecl && !hasOnlyTypeSpecifiers && anyNode.source && typeof anyNode.source.value === "string") {
+          deps.add(anyNode.source.value);
+        } else if (type === "ExportAllDeclaration" && !isTypeOnlyDecl && anyNode.source && typeof anyNode.source.value === "string") {
+          deps.add(anyNode.source.value);
+        } else if (type === "ExportNamedDeclaration" && !isTypeOnlyDecl && !hasOnlyTypeSpecifiers && anyNode.source && typeof anyNode.source.value === "string") {
+          deps.add(anyNode.source.value);
+        } else if (type === "CallExpression") {
+          const callee = anyNode.callee ?? {};
+          if (callee.type === "Import") {
+            const args = anyNode.arguments ?? [];
+            const first = args[0];
+            if (first && typeof first === "object") {
+              const expr = first.expression;
+              if (expr && expr.type === "StringLiteral" && typeof expr.value === "string") {
+                deps.add(expr.value);
+              }
+            }
+          }
+        }
+        for (const value of Object.values(anyNode)) {
+          if (!value) continue;
+          if (Array.isArray(value)) {
+            for (const item of value) visit(item);
+          } else if (typeof value === "object") {
+            visit(value);
+          }
+        }
+      };
+      visit(ast);
+    } else {
+      fallbackRegex();
+    }
+  } catch {
+    fallbackRegex();
+  }
+  if (!deps.size) {
+    fallbackRegex();
+  }
+  return Array.from(deps);
+}
+function tryFile(p) {
+  if (import_fs7.default.existsSync(p) && import_fs7.default.statSync(p).isFile()) return p;
+  return null;
+}
+function tryWithExt(p) {
+  if (tryFile(p)) return p;
+  for (const ext of SUPPORTED_EXTS) {
+    const cand = p.endsWith(ext) ? p : p + ext;
+    const found = tryFile(cand);
+    if (found) return found;
+  }
+  if (import_fs7.default.existsSync(p) && import_fs7.default.statSync(p).isDirectory()) {
+    const pkgPath = import_path7.default.join(p, "package.json");
+    if (import_fs7.default.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(import_fs7.default.readFileSync(pkgPath, "utf8"));
+        if (pkg.main) {
+          const mainPath = import_path7.default.join(p, pkg.main);
+          const mainResolved = tryFile(mainPath) || tryWithExt(mainPath);
+          if (mainResolved) return mainResolved;
+        }
+        if (pkg.module) {
+          const modulePath = import_path7.default.join(p, pkg.module);
+          const moduleResolved = tryFile(modulePath) || tryWithExt(modulePath);
+          if (moduleResolved) return moduleResolved;
+        }
+      } catch {
+      }
+    }
+    for (const ext of SUPPORTED_EXTS) {
+      const idx = import_path7.default.join(p, "index" + ext);
+      const found = tryFile(idx);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+function resolverRootDir() {
+  const fromEnv = process.env.IONIFY_PROJECT_ROOT;
+  if (fromEnv && import_path7.default.isAbsolute(fromEnv)) return fromEnv;
+  return process.cwd();
+}
+function createAliasEntry(pattern, targets) {
+  const hasWildcard = pattern.includes("*");
+  if (hasWildcard) {
+    const escaped = pattern.replace(/[-/\\^$+?.()|[\]{}]/g, "\\$&");
+    const matcher = new RegExp(`^${escaped.replace(/\*/g, "(.*)")}$`);
+    return {
+      resolveCandidates(specifier) {
+        const match = matcher.exec(specifier);
+        if (!match) return [];
+        const wildcards = match.slice(1);
+        return targets.map((target) => {
+          if (!target.includes("*")) return target;
+          const segments = target.split("*");
+          let rebuilt = segments[0] ?? "";
+          for (let i = 1; i < segments.length; i++) {
+            const replacement = wildcards[i - 1] ?? wildcards[wildcards.length - 1] ?? "";
+            rebuilt += replacement + segments[i];
+          }
+          return rebuilt;
+        });
+      }
+    };
+  }
+  const normalizedPattern = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
+  return {
+    resolveCandidates(specifier) {
+      if (specifier === normalizedPattern) {
+        return targets;
+      }
+      if (normalizedPattern && specifier.startsWith(normalizedPattern + "/")) {
+        const remainder = specifier.slice(normalizedPattern.length + 1);
+        return targets.map((target) => import_path7.default.join(target, remainder));
+      }
+      return [];
+    }
+  };
+}
+function buildAliasEntries(aliases, baseDir) {
+  const entries = [];
+  for (const [pattern, value] of Object.entries(aliases)) {
+    const replacements = Array.isArray(value) ? value : [value];
+    const targets = replacements.filter((rep) => typeof rep === "string" && rep.trim().length > 0).map((rep) => {
+      if (rep.startsWith("/")) {
+        return import_path7.default.resolve(baseDir, rep.slice(1));
+      }
+      return import_path7.default.isAbsolute(rep) ? rep : import_path7.default.resolve(baseDir, rep);
+    });
+    if (!targets.length) continue;
+    entries.push(createAliasEntry(pattern, targets));
+  }
+  return entries;
+}
+function loadTsconfigAliases() {
+  if (cachedTsconfigAliases !== void 0) {
+    return cachedTsconfigAliases ?? [];
+  }
+  const rootDir = resolverRootDir();
+  for (const configName of CONFIG_FILES) {
+    const candidate = import_path7.default.resolve(rootDir, configName);
+    if (!import_fs7.default.existsSync(candidate) || !import_fs7.default.statSync(candidate).isFile()) {
+      continue;
+    }
+    try {
+      const raw = import_fs7.default.readFileSync(candidate, "utf8");
+      const parsed = JSON.parse(raw);
+      const compilerOptions = parsed?.compilerOptions ?? {};
+      const baseUrl = compilerOptions.baseUrl ? import_path7.default.resolve(import_path7.default.dirname(candidate), compilerOptions.baseUrl) : import_path7.default.dirname(candidate);
+      const paths = compilerOptions.paths ?? {};
+      cachedTsconfigAliases = buildAliasEntries(paths, baseUrl);
+      return cachedTsconfigAliases;
+    } catch {
+    }
+  }
+  cachedTsconfigAliases = [];
+  return cachedTsconfigAliases;
+}
+function resolveFromEntries(entries, specifier) {
+  const debug = process.env.IONIFY_RESOLVE_DEBUG === "1";
+  for (const entry of entries) {
+    const candidates = entry.resolveCandidates(specifier);
+    if (debug && candidates.length > 0) {
+      console.log(`[RESOLVE] Candidates for ${specifier}:`, candidates);
+    }
+    for (const candidate of candidates) {
+      const resolved = tryWithExt(candidate);
+      if (resolved) {
+        if (debug) console.log(`[RESOLVE] Found: ${resolved}`);
+        return resolved;
+      }
+    }
+  }
+  return null;
+}
+function resolveWithAliases(specifier) {
+  const debug = process.env.IONIFY_RESOLVE_DEBUG === "1";
+  if (debug) {
+    console.log(`[RESOLVE] Trying to resolve: ${specifier}`);
+    console.log(`[RESOLVE] Custom aliases count: ${customAliasEntries.length}`);
+  }
+  const custom = resolveFromEntries(customAliasEntries, specifier);
+  if (custom) {
+    if (debug) console.log(`[RESOLVE] \u2705 Resolved via custom alias: ${custom}`);
+    return custom;
+  }
+  const tsconfigEntries = loadTsconfigAliases();
+  if (debug) console.log(`[RESOLVE] Tsconfig aliases count: ${tsconfigEntries.length}`);
+  const result = resolveFromEntries(tsconfigEntries, specifier);
+  if (debug) {
+    if (result) console.log(`[RESOLVE] \u2705 Resolved via tsconfig: ${result}`);
+    else console.log(`[RESOLVE] \u274C Not resolved`);
+  }
+  return result;
+}
+function configureResolverAliases(aliases, baseDir) {
+  customAliasEntries = aliases ? buildAliasEntries(aliases, baseDir) : [];
+}
+function resolveImport(specifier, importerAbs) {
+  const cacheKey = `${importerAbs}\0${specifier}`;
+  if (resolvePathCache.has(cacheKey)) {
+    return resolvePathCache.get(cacheKey) ?? null;
+  }
+  if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+    const aliasResolved = resolveWithAliases(specifier);
+    if (aliasResolved) {
+      resolvePathCache.set(cacheKey, aliasResolved);
+      return aliasResolved;
+    }
+    if (native?.resolveModule) {
+      try {
+        const resolved2 = native.resolveModule(specifier, importerAbs);
+        const kind = resolved2?.kind;
+        if (kind && kind !== "Builtin" && kind !== "Virtual" && kind !== "NotFound") {
+          const fsPath = resolved2?.fsPath ?? resolved2?.fs_path ?? null;
+          if (typeof fsPath === "string" && fsPath.length > 0) {
+            resolvePathCache.set(cacheKey, fsPath);
+            return fsPath;
+          }
+        }
+      } catch {
+      }
+    }
+    try {
+      const require2 = (0, import_module2.createRequire)(importerAbs);
+      const resolved2 = require2.resolve(specifier);
+      resolvePathCache.set(cacheKey, resolved2);
+      return resolved2;
+    } catch {
+      try {
+        const importerUrl = (0, import_url2.pathToFileURL)(importerAbs).href;
+        const resolvedUrl = import_meta.resolve(specifier, importerUrl);
+        if (resolvedUrl.startsWith("file://")) {
+          const resolved2 = (0, import_url2.fileURLToPath)(resolvedUrl);
+          resolvePathCache.set(cacheKey, resolved2);
+          return resolved2;
+        }
+        resolvePathCache.set(cacheKey, resolvedUrl);
+        return resolvedUrl;
+      } catch {
+        const nodeModulesPath = import_path7.default.join(import_path7.default.dirname(importerAbs), "node_modules", specifier);
+        const resolvedNodeModules = tryWithExt(nodeModulesPath);
+        if (resolvedNodeModules) {
+          resolvePathCache.set(cacheKey, resolvedNodeModules);
+          return resolvedNodeModules;
+        }
+        const srcPath = import_path7.default.join(resolverRootDir(), "src", specifier);
+        const resolvedSrc = tryWithExt(srcPath);
+        if (resolvedSrc) {
+          resolvePathCache.set(cacheKey, resolvedSrc);
+          return resolvedSrc;
+        }
+        const rootPath = import_path7.default.join(resolverRootDir(), specifier);
+        const resolvedRoot = tryWithExt(rootPath);
+        if (resolvedRoot) {
+          resolvePathCache.set(cacheKey, resolvedRoot);
+          return resolvedRoot;
+        }
+        resolvePathCache.set(cacheKey, null);
+        return null;
+      }
+    }
+  }
+  const baseDir = import_path7.default.dirname(importerAbs);
+  const target = import_path7.default.resolve(baseDir, specifier);
+  const resolved = tryWithExt(target);
+  resolvePathCache.set(cacheKey, resolved);
+  return resolved;
+}
+var import_fs7, import_path7, import_module2, import_url2, import_meta, SUPPORTED_EXTS, CONFIG_FILES, swc, cachedTsconfigAliases, customAliasEntries, resolvePathCache;
+var init_resolver = __esm({
+  "src/core/resolver.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs7 = __toESM(require("fs"), 1);
+    import_path7 = __toESM(require("path"), 1);
+    import_module2 = require("module");
+    import_url2 = require("url");
+    init_native();
+    import_meta = {};
+    SUPPORTED_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
+    CONFIG_FILES = ["tsconfig.json", "jsconfig.json"];
+    swc = null;
+    (() => {
+      try {
+        const require2 = (0, import_module2.createRequire)(importMetaUrl);
+        swc = require2("@swc/core");
+      } catch {
+        swc = null;
+      }
+    })();
+    customAliasEntries = [];
+    resolvePathCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/core/external-policy.ts
+function isRemoteUrlSpecifier(specifier) {
+  return specifier.startsWith("http://") || specifier.startsWith("https://");
+}
+function matchesExternalSpecifier(specifier, externalSpecifiers) {
+  for (const external of externalSpecifiers) {
+    if (typeof external !== "string") continue;
+    const trimmed = external.trim();
+    if (!trimmed) continue;
+    if (specifier === trimmed) return true;
+    if (trimmed.endsWith("/")) {
+      if (specifier.startsWith(trimmed)) return true;
+      continue;
+    }
+    if (specifier.startsWith(`${trimmed}/`)) return true;
+  }
+  return false;
+}
+function normalizeConfiguredExternalSpecifiers(raw) {
+  if (typeof raw === "string") return normalizeConfiguredExternalSpecifiers([raw]);
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw.filter((value) => typeof value === "string").map((value) => value.trim()).filter((value) => value.length > 0)
+    )
+  );
+}
+function collectFederationRemoteExternalSpecifiers(config) {
+  const remotes = config?.federation?.remotes;
+  if (!remotes || typeof remotes !== "object") return [];
+  const externalSpecifiers = [];
+  for (const [remoteName, remoteConfig] of Object.entries(remotes)) {
+    const normalizedName = typeof remoteName === "string" ? remoteName.trim() : "";
+    if (!normalizedName) continue;
+    externalSpecifiers.push(normalizedName);
+    if (remoteConfig && typeof remoteConfig === "object" && !Array.isArray(remoteConfig)) {
+      externalSpecifiers.push(
+        ...normalizeConfiguredExternalSpecifiers(remoteConfig.external)
+      );
+    }
+  }
+  return normalizeConfiguredExternalSpecifiers(externalSpecifiers);
+}
+function collectConfiguredExternalSpecifiers(config) {
+  return normalizeConfiguredExternalSpecifiers([
+    ...normalizeConfiguredExternalSpecifiers(config?.build?.external),
+    ...collectFederationRemoteExternalSpecifiers(config)
+  ]);
+}
+function isExternalGraphLeafId(id, externalSpecifiers = []) {
+  return isRemoteUrlSpecifier(id) || matchesExternalSpecifier(id, externalSpecifiers);
+}
+function isGenericExternalSpecifier(id) {
+  if (typeof id !== "string" || id.length === 0) return false;
+  if (id.startsWith("ws://")) return false;
+  if (import_path8.default.isAbsolute(id)) return false;
+  if (id.startsWith("./") || id.startsWith("../") || id === "." || id === "..") {
+    return false;
+  }
+  if (id.startsWith("/")) return false;
+  return true;
+}
+function isPersistableExternalGraphLeafId(id) {
+  return isRemoteUrlSpecifier(id) || isGenericExternalSpecifier(id);
+}
+function classifyImportSpecifiersForGraph(specs, importerAbs, externalSpecifiers) {
+  const localDeps = /* @__PURE__ */ new Set();
+  const externalDeps = /* @__PURE__ */ new Set();
+  for (const rawSpec of specs) {
+    if (typeof rawSpec !== "string") continue;
+    const spec = rawSpec.trim();
+    if (!spec) continue;
+    if (isExternalGraphLeafId(spec, externalSpecifiers)) {
+      externalDeps.add(spec);
+      continue;
+    }
+    const resolved = resolveImport(spec, importerAbs);
+    if (!resolved) continue;
+    if (isExternalGraphLeafId(resolved, externalSpecifiers)) {
+      externalDeps.add(resolved);
+      continue;
+    }
+    localDeps.add(resolved);
+  }
+  return {
+    localDeps: Array.from(localDeps),
+    externalDeps: Array.from(externalDeps)
+  };
+}
+var import_path8;
+var init_external_policy = __esm({
+  "src/core/external-policy.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_path8 = __toESM(require("path"), 1);
+    init_resolver();
+  }
+});
+
+// src/core/federation.ts
+function readProjectPackageJson(rootDir) {
+  const filePath = import_path9.default.join(rootDir, "package.json");
+  if (!import_fs8.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs8.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function normalizeRemoteConfig(remoteName, remoteConfig) {
+  if (typeof remoteConfig === "string") {
+    return { entry: remoteConfig, external: remoteName };
+  }
+  return {
+    ...remoteConfig,
+    external: remoteConfig.external ?? remoteName
+  };
+}
+function normalizeSharedConfig(sharedConfig) {
+  if (sharedConfig === true || sharedConfig === void 0) {
+    return {};
+  }
+  if (sharedConfig === false) {
+    return null;
+  }
+  return sharedConfig;
+}
+function mergeChunkFiles(target, next) {
+  return {
+    js: Array.from(/* @__PURE__ */ new Set([...target.js, ...next.js])),
+    css: Array.from(/* @__PURE__ */ new Set([...target.css, ...next.css])),
+    assets: Array.from(/* @__PURE__ */ new Set([...target.assets, ...next.assets]))
+  };
+}
+function relativeToRoot(rootDir, targetPath) {
+  const relative = import_path9.default.relative(rootDir, targetPath).split(import_path9.default.sep).join("/");
+  return relative.startsWith(".") ? relative : `./${relative}`;
+}
+function toPosixRelative(target) {
+  const normalized = target.split(import_path9.default.sep).join("/");
+  return normalized.startsWith(".") ? normalized : `./${normalized}`;
+}
+function synthNamespaceExportName(moduleId) {
+  return `__ionify_ns_${getCacheKey(moduleId).slice(0, 8)}`;
+}
+function federationGraphNodeId(kind, appName, key) {
+  const parts = [FEDERATION_GRAPH_PREFIX, kind, ":", encodeURIComponent(appName)];
+  if (typeof key === "string" && key.length > 0) {
+    parts.push(":", encodeURIComponent(key));
+  }
+  return parts.join("");
+}
+function resolveFederationHostName(config, rootDir) {
+  const packageJson = readProjectPackageJson(rootDir);
+  const packageName = typeof packageJson?.name === "string" && packageJson.name.trim().length > 0 ? packageJson.name.trim() : import_path9.default.basename(rootDir);
+  return typeof config?.federation?.host === "string" && config.federation.host.trim().length > 0 ? config.federation.host.trim() : packageName;
+}
+function buildFederationSharedContractHash(sharedName, appName, entry) {
+  return getCacheKey(
+    JSON.stringify({
+      sharedName,
+      appName,
+      singleton: entry.singleton,
+      requiredVersion: entry.requiredVersion ?? null,
+      providedVersion: entry.providedVersion ?? null,
+      strictVersion: entry.strictVersion,
+      eager: entry.eager,
+      shareScope: entry.shareScope
+    })
+  );
+}
+function federationContainerChunkId(contractHash) {
+  return `federation-container-${contractHash.slice(0, 12)}`;
+}
+function federationContainerEntryFile(chunkId) {
+  return `chunks/${chunkId}/${chunkId}.native.js`;
+}
+function federationContainerVirtualModuleId(outDir, contractHash) {
+  void outDir;
+  return `ionify:virtual-module:container.${contractHash.slice(0, 12)}.mjs`;
+}
+function buildFederationVersionContract(federation) {
+  if (!federation) return null;
+  const remotes = Object.entries(federation.remotes ?? {}).map(([remoteName, remoteConfig]) => {
+    const normalized = normalizeRemoteConfig(remoteName, remoteConfig);
+    return {
+      name: remoteName,
+      entry: normalized.entry,
+      external: normalizeConfiguredExternalSpecifiers(normalized.external ?? remoteName),
+      version: normalized.version ?? null,
+      integrity: normalized.integrity ?? null,
+      hash: normalized.hash ?? null
+    };
+  }).filter((remote) => typeof remote.entry === "string" && remote.entry.trim().length > 0).sort((a, b) => a.name.localeCompare(b.name));
+  const exposes = Object.entries(federation.exposes ?? {}).filter(([, exposeSource]) => typeof exposeSource === "string" && exposeSource.trim().length > 0).map(([exposeName, exposeSource]) => ({
+    name: exposeName,
+    source: exposeSource
+  })).sort((a, b) => a.name.localeCompare(b.name));
+  const shared = Object.entries(federation.shared ?? {}).map(([sharedName, sharedConfigRaw]) => {
+    const sharedConfig = normalizeSharedConfig(sharedConfigRaw);
+    if (!sharedConfig) return null;
+    return {
+      name: sharedName,
+      singleton: sharedConfig.singleton === true,
+      requiredVersion: typeof sharedConfig.requiredVersion === "string" && sharedConfig.requiredVersion.trim().length > 0 ? sharedConfig.requiredVersion.trim() : null,
+      version: typeof sharedConfig.version === "string" && sharedConfig.version.trim().length > 0 ? sharedConfig.version.trim() : null,
+      strictVersion: sharedConfig.strictVersion === true,
+      eager: sharedConfig.eager === true,
+      shareScope: typeof sharedConfig.shareScope === "string" && sharedConfig.shareScope.trim().length > 0 ? sharedConfig.shareScope.trim() : null
+    };
+  }).filter((value) => value !== null).sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    host: typeof federation.host === "string" && federation.host.trim().length > 0 ? federation.host.trim() : null,
+    remotes,
+    exposes,
+    shared
+  };
+}
+function isFederationGraphNodeId(id) {
+  return typeof id === "string" && id.startsWith(FEDERATION_GRAPH_PREFIX);
+}
+function collectFederationRemoteImportBindings(config, rootDir) {
+  const federation = config?.federation;
+  if (!federation?.remotes || typeof federation.remotes !== "object") return [];
+  const hostName = resolveFederationHostName(config, rootDir);
+  void hostName;
+  return Object.entries(federation.remotes).map(([remoteName, remoteConfig]) => {
+    const normalized = normalizeRemoteConfig(remoteName, remoteConfig);
+    const externalSpecifiers = normalizeConfiguredExternalSpecifiers(normalized.external ?? remoteName);
+    if (externalSpecifiers.length === 0) return null;
+    return {
+      remoteName,
+      appNodeId: federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_APP, remoteName),
+      externalSpecifiers
+    };
+  }).filter((binding) => binding !== null).sort((a, b) => a.remoteName.localeCompare(b.remoteName));
+}
+function rewriteFederationGraphEdgeIds(deps, bindings) {
+  if (!Array.isArray(deps) || deps.length === 0 || bindings.length === 0) return Array.from(new Set(deps));
+  const out = /* @__PURE__ */ new Set();
+  for (const dep of deps) {
+    let rewritten = dep;
+    for (const binding of bindings) {
+      if (binding.externalSpecifiers.some(
+        (specifier) => dep === specifier || dep.startsWith(`${specifier}/`)
+      )) {
+        rewritten = binding.appNodeId;
+        break;
+      }
+    }
+    out.add(rewritten);
+  }
+  return Array.from(out);
+}
+function buildFederationConfigGraphNodes(config, rootDir) {
+  const federation = config?.federation;
+  if (!federation) return [];
+  const hostName = resolveFederationHostName(config, rootDir);
+  const nodes = /* @__PURE__ */ new Map();
+  const sharedEntries = {};
+  for (const [sharedName, sharedConfigRaw] of Object.entries(federation.shared ?? {})) {
+    const sharedConfig = normalizeSharedConfig(sharedConfigRaw);
+    if (!sharedConfig) continue;
+    const entry = {
+      singleton: sharedConfig.singleton === true,
+      requiredVersion: typeof sharedConfig.requiredVersion === "string" && sharedConfig.requiredVersion.trim().length > 0 ? sharedConfig.requiredVersion.trim() : void 0,
+      providedVersion: typeof sharedConfig.version === "string" && sharedConfig.version.trim().length > 0 ? sharedConfig.version.trim() : void 0,
+      strictVersion: sharedConfig.strictVersion === true,
+      eager: sharedConfig.eager === true,
+      shareScope: typeof sharedConfig.shareScope === "string" && sharedConfig.shareScope.trim().length > 0 ? sharedConfig.shareScope.trim() : "default",
+      contractHash: ""
+    };
+    entry.contractHash = buildFederationSharedContractHash(sharedName, hostName, entry);
+    sharedEntries[sharedName] = entry;
+  }
+  const localExposeNodeIds = [];
+  for (const [exposeKey, exposeSource] of Object.entries(federation.exposes ?? {})) {
+    if (typeof exposeSource !== "string" || exposeSource.trim().length === 0) continue;
+    const sourcePath = exposeSource.startsWith("/") ? import_path9.default.join(rootDir, exposeSource) : import_path9.default.resolve(rootDir, exposeSource);
+    const source = relativeToRoot(rootDir, sourcePath);
+    const hash = getCacheKey(JSON.stringify({ app: hostName, exposeKey, source }));
+    const nodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_EXPOSE, hostName, exposeKey);
+    nodes.set(nodeId, {
+      id: nodeId,
+      hash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_EXPOSE
+    });
+    localExposeNodeIds.push(nodeId);
+  }
+  const localSharedNodeIds = [];
+  for (const [sharedName, entry] of Object.entries(sharedEntries)) {
+    const nodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP, hostName, sharedName);
+    nodes.set(nodeId, {
+      id: nodeId,
+      hash: entry.contractHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP
+    });
+    localSharedNodeIds.push(nodeId);
+  }
+  if (localExposeNodeIds.length > 0 || localSharedNodeIds.length > 0) {
+    const manifestNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_MANIFEST, hostName);
+    const manifestHash = getCacheKey(
+      JSON.stringify({
+        hostName,
+        exposes: localExposeNodeIds,
+        shared: localSharedNodeIds
+      })
+    );
+    nodes.set(manifestNodeId, {
+      id: manifestNodeId,
+      hash: manifestHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_MANIFEST
+    });
+    const appNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_APP, hostName);
+    nodes.set(appNodeId, {
+      id: appNodeId,
+      hash: getCacheKey(JSON.stringify({ hostName, manifestHash })),
+      deps: [manifestNodeId, ...localExposeNodeIds, ...localSharedNodeIds],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_APP
+    });
+  }
+  for (const [remoteName, remoteConfig] of Object.entries(federation.remotes ?? {})) {
+    const normalized = normalizeRemoteConfig(remoteName, remoteConfig);
+    if (typeof normalized.entry !== "string" || normalized.entry.trim().length === 0) continue;
+    const external = normalizeConfiguredExternalSpecifiers(normalized.external ?? remoteName);
+    const manifestNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_MANIFEST, remoteName);
+    const manifestHash = getCacheKey(
+      JSON.stringify({
+        remoteName,
+        entry: normalized.entry,
+        external,
+        version: normalized.version ?? null,
+        integrity: normalized.integrity ?? null,
+        hash: normalized.hash ?? null
+      })
+    );
+    nodes.set(manifestNodeId, {
+      id: manifestNodeId,
+      hash: manifestHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_MANIFEST
+    });
+    const remoteSharedNodeIds = [];
+    for (const [sharedName, entry] of Object.entries(sharedEntries)) {
+      const sharedNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP, remoteName, sharedName);
+      nodes.set(sharedNodeId, {
+        id: sharedNodeId,
+        hash: buildFederationSharedContractHash(sharedName, remoteName, entry),
+        deps: [],
+        dynamicDeps: [],
+        kind: FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP
+      });
+      remoteSharedNodeIds.push(sharedNodeId);
+    }
+    const appNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_APP, remoteName);
+    nodes.set(appNodeId, {
+      id: appNodeId,
+      hash: getCacheKey(JSON.stringify({ remoteName, manifestHash, external })),
+      deps: [manifestNodeId, ...remoteSharedNodeIds],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_APP
+    });
+  }
+  return Array.from(nodes.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+function buildFederationManifestGraphNodes(manifest) {
+  if (!manifest?.host?.name) return [];
+  const nodes = /* @__PURE__ */ new Map();
+  const hostName = manifest.host.name;
+  const localManifestNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_MANIFEST, hostName);
+  const localExposeNodeIds = [];
+  const localSharedNodeIds = [];
+  for (const [exposeKey, expose] of Object.entries(manifest.exposes ?? {})) {
+    const nodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_EXPOSE, hostName, exposeKey);
+    nodes.set(nodeId, {
+      id: nodeId,
+      hash: expose.contractHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_EXPOSE
+    });
+    localExposeNodeIds.push(nodeId);
+  }
+  for (const [sharedName, shared] of Object.entries(manifest.shared ?? {})) {
+    const nodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP, hostName, sharedName);
+    nodes.set(nodeId, {
+      id: nodeId,
+      hash: shared.contractHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP
+    });
+    localSharedNodeIds.push(nodeId);
+  }
+  nodes.set(localManifestNodeId, {
+    id: localManifestNodeId,
+    hash: getCacheKey(
+      JSON.stringify({
+        host: manifest.host.contractHash,
+        container: manifest.container?.contractHash ?? null
+      })
+    ),
+    deps: [],
+    dynamicDeps: [],
+    kind: FEDERATION_GRAPH_KIND_REMOTE_MANIFEST
+  });
+  const localAppNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_APP, hostName);
+  nodes.set(localAppNodeId, {
+    id: localAppNodeId,
+    hash: manifest.container?.contractHash ?? manifest.host.contractHash,
+    deps: [localManifestNodeId, ...localExposeNodeIds, ...localSharedNodeIds],
+    dynamicDeps: [],
+    kind: FEDERATION_GRAPH_KIND_REMOTE_APP
+  });
+  for (const [remoteName, remote] of Object.entries(manifest.remotes ?? {})) {
+    const manifestNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_MANIFEST, remoteName);
+    nodes.set(manifestNodeId, {
+      id: manifestNodeId,
+      hash: remote.contractHash,
+      deps: [],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_MANIFEST
+    });
+    const appNodeId = federationGraphNodeId(FEDERATION_GRAPH_KIND_REMOTE_APP, remoteName);
+    nodes.set(appNodeId, {
+      id: appNodeId,
+      hash: remote.hash ?? remote.contractHash,
+      deps: [manifestNodeId],
+      dynamicDeps: [],
+      kind: FEDERATION_GRAPH_KIND_REMOTE_APP
+    });
+  }
+  return Array.from(nodes.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+function collectFederationExposeEntryPaths(config, rootDir) {
+  const federation = config?.federation;
+  if (!federation?.exposes || typeof federation.exposes !== "object") return [];
+  const paths = Object.values(federation.exposes).filter((exposeSource) => typeof exposeSource === "string" && exposeSource.trim().length > 0).map(
+    (exposeSource) => exposeSource.startsWith("/") ? import_path9.default.join(rootDir, exposeSource) : import_path9.default.resolve(rootDir, exposeSource)
+  );
+  return Array.from(new Set(paths)).sort((a, b) => a.localeCompare(b));
+}
+function buildFederationBuildManifest(options) {
+  const { config, rootDir, workspaceRoot, outDir, plan, artifacts, hostEntryIds } = options;
+  const federation = config?.federation;
+  if (!federation) return null;
+  const filesByChunk = /* @__PURE__ */ new Map();
+  for (const artifact of artifacts) {
+    filesByChunk.set(artifact.id, artifact.files);
+  }
+  const packageJson = readProjectPackageJson(rootDir);
+  const packageName = typeof packageJson?.name === "string" && packageJson.name.trim().length > 0 ? packageJson.name.trim() : import_path9.default.basename(rootDir);
+  const hostName = typeof federation.host === "string" && federation.host.trim().length > 0 ? federation.host.trim() : packageName;
+  const hostEntryIdSet = new Set(hostEntryIds);
+  const entryChunkIds = plan.chunks.filter((chunk) => chunk.entry && chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer))).map((chunk) => chunk.id);
+  const hostContractHash = getCacheKey(
+    JSON.stringify({
+      hostName,
+      entryIds: hostEntryIds,
+      entryChunkIds
+    })
+  );
+  const remoteManifestEntries = {};
+  for (const [remoteName, remoteConfig] of Object.entries(federation.remotes ?? {})) {
+    const normalized = normalizeRemoteConfig(remoteName, remoteConfig);
+    if (typeof normalized.entry !== "string" || normalized.entry.trim().length === 0) continue;
+    const external = normalizeConfiguredExternalSpecifiers(normalized.external ?? remoteName);
+    const contractHash = getCacheKey(
+      JSON.stringify({
+        remoteName,
+        entry: normalized.entry,
+        external,
+        version: normalized.version ?? null,
+        integrity: normalized.integrity ?? null
+      })
+    );
+    remoteManifestEntries[remoteName] = {
+      entry: normalized.entry,
+      external,
+      format: "esm",
+      version: normalized.version,
+      integrity: normalized.integrity,
+      hash: normalized.hash ?? contractHash,
+      contractHash
+    };
+  }
+  const exposeManifestEntries = {};
+  for (const [exposeName, exposeSource] of Object.entries(federation.exposes ?? {})) {
+    if (typeof exposeSource !== "string" || exposeSource.trim().length === 0) continue;
+    const absPath = exposeSource.startsWith("/") ? import_path9.default.join(rootDir, exposeSource) : import_path9.default.resolve(rootDir, exposeSource);
+    const moduleId = toWsModuleId(absPath, workspaceRoot);
+    if (!moduleId) continue;
+    let artifactHash;
+    const chunkIds = [];
+    let files = { js: [], css: [], assets: [] };
+    let entryChunkId;
+    let entryFile;
+    const entryNamespace = synthNamespaceExportName(moduleId);
+    for (const chunk of plan.chunks) {
+      const matchedModule = chunk.modules.find((mod) => mod.id === moduleId);
+      if (!matchedModule) continue;
+      chunkIds.push(chunk.id);
+      artifactHash = artifactHash ?? matchedModule.hash ?? void 0;
+      const chunkFiles = filesByChunk.get(chunk.id) ?? { js: [], css: [], assets: [] };
+      files = mergeChunkFiles(files, chunkFiles);
+      if (!entryChunkId || chunk.entry) {
+        entryChunkId = chunk.id;
+        entryFile = chunkFiles.js[0] ?? entryFile;
+      }
+    }
+    const contractHash = getCacheKey(
+      JSON.stringify({
+        exposeName,
+        source: relativeToRoot(rootDir, absPath),
+        id: moduleId,
+        artifactHash: artifactHash ?? null,
+        entryChunkId: entryChunkId ?? null,
+        entryFile: entryFile ?? null,
+        entryNamespace,
+        chunkIds: chunkIds.slice().sort()
+      })
+    );
+    exposeManifestEntries[exposeName] = {
+      source: relativeToRoot(rootDir, absPath),
+      id: moduleId,
+      artifactHash,
+      entryChunkId,
+      entryFile,
+      entryNamespace,
+      chunkIds: Array.from(new Set(chunkIds)).sort(),
+      files,
+      contractHash
+    };
+  }
+  const dependencyVersions = {
+    ...packageJson?.dependencies ?? {},
+    ...packageJson?.peerDependencies ?? {},
+    ...packageJson?.optionalDependencies ?? {}
+  };
+  const sharedManifestEntries = {};
+  for (const [sharedName, sharedConfigRaw] of Object.entries(federation.shared ?? {})) {
+    const sharedConfig = normalizeSharedConfig(sharedConfigRaw);
+    if (!sharedConfig) continue;
+    const providedVersion = typeof sharedConfig.version === "string" && sharedConfig.version.trim().length > 0 ? sharedConfig.version.trim() : typeof dependencyVersions[sharedName] === "string" ? dependencyVersions[sharedName] : void 0;
+    const requiredVersion = typeof sharedConfig.requiredVersion === "string" && sharedConfig.requiredVersion.trim().length > 0 ? sharedConfig.requiredVersion.trim() : providedVersion;
+    const singleton = sharedConfig.singleton === true;
+    const strictVersion = sharedConfig.strictVersion === true;
+    const eager = sharedConfig.eager === true;
+    const shareScope = typeof sharedConfig.shareScope === "string" && sharedConfig.shareScope.trim().length > 0 ? sharedConfig.shareScope.trim() : "default";
+    const contractHash = getCacheKey(
+      JSON.stringify({
+        sharedName,
+        singleton,
+        requiredVersion: requiredVersion ?? null,
+        providedVersion: providedVersion ?? null,
+        strictVersion,
+        eager,
+        shareScope
+      })
+    );
+    sharedManifestEntries[sharedName] = {
+      singleton,
+      requiredVersion,
+      providedVersion,
+      strictVersion,
+      eager,
+      shareScope,
+      contractHash
+    };
+  }
+  const shareScopes = Array.from(
+    new Set(Object.values(sharedManifestEntries).map((entry) => entry.shareScope).filter(Boolean))
+  ).sort();
+  const containerExposes = Object.keys(exposeManifestEntries).sort();
+  const containerContractHash = getCacheKey(
+    JSON.stringify({
+      hostName,
+      exposes: containerExposes.map((key) => ({
+        key,
+        entryFile: exposeManifestEntries[key]?.entryFile ?? null,
+        files: exposeManifestEntries[key]?.files ?? { js: [], css: [], assets: [] }
+      })),
+      shareScopes
+    })
+  );
+  const containerChunkId = containerExposes.length > 0 ? federationContainerChunkId(containerContractHash) : void 0;
+  const containerEntry = containerChunkId ? toPosixRelative(federationContainerEntryFile(containerChunkId)) : void 0;
+  return {
+    version: 1,
+    host: {
+      name: hostName,
+      entryIds: hostEntryIds,
+      entryChunkIds,
+      contractHash: hostContractHash
+    },
+    container: containerEntry ? {
+      entry: containerEntry,
+      format: "esm",
+      exposes: containerExposes,
+      shareScopes,
+      contractHash: containerContractHash
+    } : void 0,
+    remotes: remoteManifestEntries,
+    exposes: exposeManifestEntries,
+    shared: sharedManifestEntries
+  };
+}
+function renderFederationContainerModule(manifest) {
+  const container = manifest.container;
+  if (!container) {
+    throw new Error("Federation container metadata is required to render a remote container module");
+  }
+  const containerDir = import_path9.default.posix.dirname(container.entry);
+  const relativeFromContainer = (target) => {
+    const relative = import_path9.default.posix.relative(containerDir, target);
+    return relative.startsWith(".") ? relative : `./${relative}`;
+  };
+  const exposes = Object.fromEntries(
+    Object.entries(manifest.exposes).filter(([, entry]) => typeof entry.entryFile === "string" && entry.entryFile.length > 0).map(([key, entry]) => [
+      key,
+      {
+        id: entry.id,
+        entryFile: relativeFromContainer(entry.entryFile),
+        entryNamespace: entry.entryNamespace ?? null,
+        files: {
+          js: entry.files.js.map(relativeFromContainer),
+          css: entry.files.css.map(relativeFromContainer),
+          assets: entry.files.assets.map(relativeFromContainer)
+        },
+        contractHash: entry.contractHash
+      }
+    ])
+  );
+  const shared = Object.fromEntries(
+    Object.entries(manifest.shared).map(([key, entry]) => [
+      key,
+      {
+        singleton: entry.singleton,
+        requiredVersion: entry.requiredVersion ?? null,
+        providedVersion: entry.providedVersion ?? null,
+        strictVersion: entry.strictVersion,
+        eager: entry.eager,
+        shareScope: entry.shareScope,
+        contractHash: entry.contractHash
+      }
+    ])
+  );
+  const payload = JSON.stringify(
+    {
+      version: manifest.version,
+      host: manifest.host,
+      container,
+      exposes,
+      shared
+    },
+    null,
+    2
+  );
+  return `const __ionify_container = ${payload};
+const __ionify_scope_state = new Map();
+
+function __ionify_to_absolute(target) {
+  try {
+    return new URL(target).toString();
+  } catch {}
+  const registry = globalThis && typeof globalThis === "object"
+    ? globalThis.__IONIFY_FEDERATION_CONTAINER_BASE_URLS__
+    : undefined;
+  const registeredBase =
+    registry && typeof registry === "object"
+      ? registry[__ionify_container.container.contractHash]
+      : undefined;
+  const fallbackBase =
+    typeof registeredBase === "string" && registeredBase.length > 0
+      ? registeredBase
+      : typeof document !== "undefined" &&
+          document.currentScript &&
+          typeof document.currentScript.src === "string" &&
+          document.currentScript.src.length > 0
+        ? document.currentScript.src
+        : typeof location !== "undefined" && typeof location.href === "string" && location.href.length > 0
+          ? location.href
+          : null;
+  if (!fallbackBase) {
+    throw new Error("Ionify federation container base URL is unavailable");
+  }
+  return new URL(target, fallbackBase).toString();
+}
+
+function __ionify_append_module_preload(href) {
+  if (typeof document === "undefined") return;
+  const existing = document.querySelector(\`link[rel="modulepreload"][href="\${href}"]\`);
+  if (existing) return;
+  const link = document.createElement("link");
+  link.rel = "modulepreload";
+  link.href = href;
+  document.head.appendChild(link);
+}
+
+function __ionify_append_stylesheet(href) {
+  if (typeof document === "undefined") return;
+  const existing = document.querySelector(\`link[rel="stylesheet"][href="\${href}"]\`);
+  if (existing) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = href;
+  document.head.appendChild(link);
+}
+
+function __ionify_set_scope(scopeName, scopeValue) {
+  if (!scopeValue || typeof scopeValue !== "object") return;
+  __ionify_scope_state.set(scopeName, { ...scopeValue });
+}
+
+async function __ionify_preload_expose(entry) {
+  for (const href of entry.files.js || []) __ionify_append_module_preload(__ionify_to_absolute(href));
+  for (const href of entry.files.css || []) __ionify_append_stylesheet(__ionify_to_absolute(href));
+}
+
+async function __ionify_import_expose(entry) {
+  await __ionify_preload_expose(entry);
+  const mod = await import(/* @vite-ignore */ __ionify_to_absolute(entry.entryFile));
+  if (entry.entryNamespace && mod && typeof mod === "object" && entry.entryNamespace in mod) {
+    return mod[entry.entryNamespace];
+  }
+  return mod;
+}
+
+export async function init(sharedScopes = {}) {
+  __ionify_scope_state.clear();
+  for (const [scopeName, scopeValue] of Object.entries(sharedScopes || {})) {
+    __ionify_set_scope(scopeName, scopeValue);
+  }
+  return Object.fromEntries(__ionify_scope_state.entries());
+}
+
+export async function get(exposeKey) {
+  const expose = __ionify_container.exposes[exposeKey];
+  if (!expose || !expose.entryFile) {
+    throw new Error(\`Ionify federation expose not found: \${String(exposeKey)}\`);
+  }
+  return async () => __ionify_import_expose(expose);
+}
+
+export function describe() {
+  return {
+    version: __ionify_container.version,
+    host: __ionify_container.host,
+    container: __ionify_container.container,
+    exposes: Object.keys(__ionify_container.exposes),
+    shared: __ionify_container.shared,
+    scopes: Object.fromEntries(__ionify_scope_state.entries()),
+  };
+}
+
+export default {
+  init,
+  get,
+  describe,
+};
+`;
+}
+function buildFederationContainerBuildSpec(manifest, outDir) {
+  const container = manifest.container;
+  if (!container?.entry) return null;
+  return {
+    moduleId: federationContainerVirtualModuleId(outDir, container.contractHash),
+    chunkId: federationContainerChunkId(container.contractHash),
+    entry: container.entry,
+    source: renderFederationContainerModule(manifest),
+    contractHash: container.contractHash
+  };
+}
+var import_fs8, import_path9, FEDERATION_GRAPH_PREFIX, FEDERATION_GRAPH_KIND_REMOTE_APP, FEDERATION_GRAPH_KIND_REMOTE_MANIFEST, FEDERATION_GRAPH_KIND_REMOTE_EXPOSE, FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP;
+var init_federation = __esm({
+  "src/core/federation.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs8 = __toESM(require("fs"), 1);
+    import_path9 = __toESM(require("path"), 1);
+    init_cache();
+    init_external_policy();
+    init_module_id();
+    FEDERATION_GRAPH_PREFIX = "ionify:federation:";
+    FEDERATION_GRAPH_KIND_REMOTE_APP = "remote_app";
+    FEDERATION_GRAPH_KIND_REMOTE_MANIFEST = "remote_manifest";
+    FEDERATION_GRAPH_KIND_REMOTE_EXPOSE = "remote_expose";
+    FEDERATION_GRAPH_KIND_REMOTE_SHARED_DEP = "remote_shared_dep";
+  }
+});
+
+// src/core/graph-kind.ts
+function isRuntimeGraphKind(kind) {
+  return typeof kind === "string" && RUNTIME_GRAPH_KINDS.has(kind);
+}
+function classifyStructuralGraphKind(absPath) {
+  const base = import_path10.default.basename(absPath).toLowerCase();
+  if (/^postcss\.config\./.test(base) || /^tailwind\.config\./.test(base) || /^dga\.config\./.test(base)) {
+    return GRAPH_KIND_TOOLCHAIN;
+  }
+  if (/^ionify\.config\./.test(base) || base === "package.json" || base === "pnpm-lock.yaml" || base === "package-lock.json" || base === "yarn.lock" || base === "tsconfig.json" || base === "jsconfig.json") {
+    return GRAPH_KIND_CONFIG;
+  }
+  return GRAPH_KIND_DEPENDENCY;
+}
+var import_path10, GRAPH_KIND_DEPENDENCY, GRAPH_KIND_VIRTUAL, GRAPH_KIND_CONFIG, GRAPH_KIND_TOOLCHAIN, RUNTIME_GRAPH_KINDS;
+var init_graph_kind = __esm({
+  "src/core/graph-kind.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_path10 = __toESM(require("path"), 1);
+    GRAPH_KIND_DEPENDENCY = "dependency";
+    GRAPH_KIND_VIRTUAL = "virtual";
+    GRAPH_KIND_CONFIG = "config";
+    GRAPH_KIND_TOOLCHAIN = "toolchain";
+    RUNTIME_GRAPH_KINDS = /* @__PURE__ */ new Set(["js", "css", "asset", "dep"]);
+  }
+});
+
+// src/core/utils/css-ext.ts
+function isCssLikeExt(ext) {
+  return CSS_LIKE_EXTENSIONS.includes(ext.toLowerCase());
+}
+function isCssLikePath(p) {
+  const clean = p.split("?")[0].split("#")[0];
+  const dot = clean.lastIndexOf(".");
+  if (dot < 0) return false;
+  return isCssLikeExt(clean.slice(dot));
+}
+function isCssModuleLikePath(p) {
+  const clean = p.split("?")[0].split("#")[0].toLowerCase();
+  return /\.module\.(?:css|scss|sass|less|styl)$/.test(clean);
+}
+var CSS_LIKE_EXTENSIONS;
+var init_css_ext = __esm({
+  "src/core/utils/css-ext.ts"() {
+    "use strict";
+    init_cjs_shims();
+    CSS_LIKE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
+  }
+});
+
+// src/core/graph.ts
+function resolveIonifyDir2(explicit) {
+  if (explicit) return import_path11.default.resolve(explicit);
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && import_path11.default.isAbsolute(fromEnv)) return fromEnv;
+  return import_path11.default.join(process.cwd(), ".ionify");
+}
+var import_fs9, import_path11, import_crypto3, Graph;
+var init_graph = __esm({
+  "src/core/graph.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs9 = __toESM(require("fs"), 1);
+    import_path11 = __toESM(require("path"), 1);
+    import_crypto3 = __toESM(require("crypto"), 1);
+    init_native();
+    init_module_id();
+    init_external_policy();
+    init_federation();
+    init_graph_kind();
+    init_css_ext();
+    Graph = class {
+      ionifyDir;
+      graphFile;
+      graphDbPath;
+      workspaceRoot;
+      nodes = /* @__PURE__ */ new Map();
+      dirty = false;
+      saveTimer = null;
+      native = native ?? null;
+      nativeFlushTimer = null;
+      queueSave() {
+        if (this.native) return;
+        this.dirty = true;
+        if (this.saveTimer) return;
+        this.saveTimer = setTimeout(() => this.save(), 300);
+      }
+      constructor(versionInputs, opts = {}) {
+        this.ionifyDir = resolveIonifyDir2(opts.ionifyDir ?? null);
+        this.graphFile = import_path11.default.join(this.ionifyDir, "graph.json");
+        this.graphDbPath = import_path11.default.join(this.ionifyDir, "graph.db");
+        this.workspaceRoot = resolveWorkspaceRoot(null);
+        if (!import_fs9.default.existsSync(this.ionifyDir)) {
+          import_fs9.default.mkdirSync(this.ionifyDir, { recursive: true });
+        }
+        if (this.native) {
+          const version = versionInputs ? computeGraphVersion(versionInputs) : void 0;
+          const ok = ensureNativeGraph(this.graphDbPath, version);
+          if (!ok) {
+            this.native = null;
+          }
+        }
+        this.load();
+      }
+      load() {
+        if (this.native) {
+          try {
+            const snapshot = this.native.graphLoad();
+            for (const node of snapshot) {
+              const id = node.id;
+              const fsPath = fromWsModuleId(id, this.workspaceRoot);
+              const stat = fsPath && import_fs9.default.existsSync(fsPath) ? import_fs9.default.statSync(fsPath) : null;
+              const dynamicDeps = Array.isArray(node.dynamicDeps) ? node.dynamicDeps : Array.isArray(node.dynamic_deps) ? node.dynamic_deps : [];
+              this.nodes.set(id, {
+                id,
+                hash: node.hash,
+                deps: Array.isArray(node.deps) ? node.deps : [],
+                dynamicDeps,
+                kind: node.kind,
+                configHash: node.config_hash ?? node.configHash ?? null,
+                mtimeMs: stat ? stat.mtimeMs : null
+              });
+            }
+          } catch {
+            this.loadFromDisk();
+          }
+          return;
+        }
+        this.loadFromDisk();
+      }
+      loadFromDisk() {
+        if (!import_fs9.default.existsSync(this.graphFile)) return;
+        try {
+          const raw = import_fs9.default.readFileSync(this.graphFile, "utf8");
+          const snap = JSON.parse(raw);
+          if (snap.version === 2 && snap.nodes) {
+            for (const [id, node] of Object.entries(snap.nodes)) {
+              if (!id.startsWith("ws://") && !isFederationGraphNodeId(id)) continue;
+              this.nodes.set(id, node);
+            }
+          }
+        } catch {
+        }
+      }
+      scheduleNativeFlush() {
+        if (!this.native?.graphFlush) return;
+        if (this.nativeFlushTimer) return;
+        this.nativeFlushTimer = setTimeout(() => {
+          this.nativeFlushTimer = null;
+          try {
+            this.native?.graphFlush?.();
+          } catch {
+          }
+        }, 250);
+      }
+      scheduleSave() {
+        if (this.native) return;
+        this.queueSave();
+      }
+      save() {
+        if (this.native) return;
+        try {
+          const snap = {
+            version: 2,
+            nodes: Object.fromEntries(this.nodes.entries())
+          };
+          import_fs9.default.writeFileSync(this.graphFile, JSON.stringify(snap, null, 2), "utf8");
+          this.dirty = false;
+        } catch {
+        } finally {
+          if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+          }
+        }
+      }
+      moduleIdForPath(absPath) {
+        return toWsModuleId(absPath, this.workspaceRoot);
+      }
+      pathForModuleId(moduleId) {
+        return fromWsModuleId(moduleId, this.workspaceRoot);
+      }
+      depsToPaths(ids) {
+        const out = [];
+        for (const id of ids) {
+          if (isPersistableExternalGraphLeafId(id) || isFederationGraphNodeId(id)) {
+            out.push(id);
+            continue;
+          }
+          const abs = this.pathForModuleId(id);
+          if (abs) out.push(abs);
+        }
+        return out;
+      }
+      listNodeIdsByPrefix(prefix) {
+        if (typeof prefix !== "string" || prefix.length === 0) return [];
+        return Array.from(this.nodes.keys()).filter((id) => id.startsWith(prefix)).sort((a, b) => a.localeCompare(b));
+      }
+      recordNodeById(id, hash, deps, dynamicDeps = [], kind = "virtual", configHash) {
+        if (typeof id !== "string" || id.length === 0) return false;
+        const prev = this.nodes.get(id);
+        const normalizedDeps = Array.from(new Set(deps.filter((dep) => typeof dep === "string" && dep.length > 0)));
+        const normalizedDynamicDeps = Array.from(
+          new Set(dynamicDeps.filter((dep) => typeof dep === "string" && dep.length > 0))
+        );
+        const node = {
+          id,
+          hash,
+          deps: normalizedDeps,
+          dynamicDeps: normalizedDynamicDeps,
+          kind,
+          configHash: configHash ?? process.env.IONIFY_CONFIG_HASH ?? null,
+          mtimeMs: null
+        };
+        this.nodes.set(id, node);
+        let changed = !prev || prev.hash !== node.hash || prev.kind !== node.kind || prev.configHash !== node.configHash || JSON.stringify(prev.deps) !== JSON.stringify(node.deps) || JSON.stringify(prev.dynamicDeps ?? []) !== JSON.stringify(node.dynamicDeps ?? []);
+        if (this.native) {
+          try {
+            changed = this.native.graphRecord(
+              id,
+              hash,
+              normalizedDeps,
+              normalizedDynamicDeps,
+              kind,
+              node.configHash ?? null
+            );
+            this.scheduleNativeFlush();
+          } catch (err) {
+            console.error(`[Graph] Failed to record virtual node ${id}:`, err);
+          }
+        }
+        this.scheduleSave();
+        return changed;
+      }
+      removeNodeById(id) {
+        if (typeof id !== "string" || id.length === 0) return;
+        const existed = this.nodes.delete(id);
+        if (!existed) return;
+        for (const node of this.nodes.values()) {
+          if (node.deps.includes(id)) {
+            node.deps = node.deps.filter((dep) => dep !== id);
+          }
+          if (node.dynamicDeps?.includes(id)) {
+            node.dynamicDeps = node.dynamicDeps.filter((dep) => dep !== id);
+          }
+        }
+        if (this.native) {
+          try {
+            this.native.graphRemove(id);
+            this.scheduleNativeFlush();
+          } catch {
+          }
+        }
+        this.queueSave();
+      }
+      /** Upsert a node and its deps; returns true if hash changed */
+      recordFile(absPath, contentHash, depsAbs, dynamicDeps, kind) {
+        const moduleId = this.moduleIdForPath(absPath);
+        if (!moduleId) return false;
+        const stat = import_fs9.default.existsSync(absPath) ? import_fs9.default.statSync(absPath) : null;
+        const mtimeMs = stat ? stat.mtimeMs : null;
+        const configHash = process.env.IONIFY_CONFIG_HASH || null;
+        const prev = this.nodes.get(moduleId);
+        let changed = !prev || prev.hash !== contentHash;
+        const deps = Array.from(new Set(
+          depsAbs.map((p) => {
+            if (isPersistableExternalGraphLeafId(p) || isFederationGraphNodeId(p)) return p;
+            return this.moduleIdForPath(p);
+          }).filter((v) => !!v)
+        ));
+        const dyn = dynamicDeps ? Array.from(new Set(
+          dynamicDeps.map((p) => {
+            if (isPersistableExternalGraphLeafId(p) || isFederationGraphNodeId(p)) return p;
+            return this.moduleIdForPath(p);
+          }).filter((v) => !!v)
+        )) : void 0;
+        const node = {
+          id: moduleId,
+          hash: contentHash,
+          deps,
+          dynamicDeps: dyn,
+          kind: kind || this.inferKind(absPath),
+          configHash,
+          mtimeMs
+        };
+        this.nodes.set(moduleId, node);
+        if (this.native) {
+          try {
+            changed = this.native.graphRecord(
+              moduleId,
+              contentHash,
+              deps,
+              dyn || [],
+              node.kind,
+              node.configHash ?? null
+            );
+            this.scheduleNativeFlush();
+          } catch (err) {
+            console.error(`[Graph] Failed to record ${moduleId}:`, err);
+          }
+        }
+        this.scheduleSave();
+        return changed;
+      }
+      recordStructuralFile(absPath, kind = classifyStructuralGraphKind(absPath)) {
+        const moduleId = this.moduleIdForPath(absPath);
+        if (!moduleId) return false;
+        const prev = this.nodes.get(moduleId);
+        if (prev && isRuntimeGraphKind(prev.kind)) return false;
+        if (!import_fs9.default.existsSync(absPath)) {
+          return this.recordNodeById(moduleId, null, [], [], GRAPH_KIND_VIRTUAL);
+        }
+        const stat = import_fs9.default.statSync(absPath);
+        if (!stat.isFile()) return false;
+        const hash = import_crypto3.default.createHash("sha256").update(import_fs9.default.readFileSync(absPath)).digest("hex");
+        return this.recordNodeById(moduleId, hash, [], [], kind);
+      }
+      recordStructuralFiles(absPaths) {
+        let changed = 0;
+        const seen = /* @__PURE__ */ new Set();
+        for (const absPath of absPaths) {
+          if (typeof absPath !== "string" || absPath.length === 0) continue;
+          if (!import_path11.default.isAbsolute(absPath) || seen.has(absPath)) continue;
+          seen.add(absPath);
+          if (this.recordStructuralFile(absPath)) changed++;
+        }
+        return changed;
+      }
+      /** Infer module kind from file extension */
+      inferKind(absPath) {
+        const ext = import_path11.default.extname(absPath).toLowerCase();
+        if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].includes(ext)) return "js";
+        if (isCssLikeExt(ext)) return "css";
+        if ([".json"].includes(ext)) return "json";
+        return "asset";
+      }
+      getNode(absPath) {
+        const moduleId = this.moduleIdForPath(absPath);
+        if (!moduleId) return void 0;
+        const node = this.nodes.get(moduleId);
+        if (!node) return void 0;
+        return {
+          id: absPath,
+          hash: node.hash,
+          deps: this.depsToPaths(node.deps),
+          dynamicDeps: node.dynamicDeps ? this.depsToPaths(node.dynamicDeps) : void 0,
+          kind: node.kind,
+          configHash: node.configHash,
+          mtimeMs: node.mtimeMs
+        };
+      }
+      getDeps(absPath) {
+        return this.getNode(absPath)?.deps ?? [];
+      }
+      /** Reverse edges: who depends on target? */
+      getDependents(targetAbs) {
+        const targetId = this.moduleIdForPath(targetAbs);
+        if (!targetId) return [];
+        const candidates = /* @__PURE__ */ new Set();
+        if (this.native?.graphDependents) {
+          try {
+            for (const dep of this.native.graphDependents(targetId) ?? []) {
+              candidates.add(dep);
+            }
+          } catch {
+          }
+        }
+        for (const [id, node] of this.nodes) {
+          if (node.deps.includes(targetId)) candidates.add(id);
+        }
+        const out = [];
+        for (const id of candidates) {
+          const abs = this.pathForModuleId(id);
+          if (abs) out.push(abs);
+        }
+        return out;
+      }
+      /** Collect dependents recursively (breadth-first) */
+      collectDependentsDeep(targetAbs) {
+        const targetId = this.moduleIdForPath(targetAbs);
+        if (!targetId) return [];
+        const result = /* @__PURE__ */ new Set();
+        const queue = [targetId];
+        while (queue.length) {
+          const current = queue.shift();
+          const abs = this.pathForModuleId(current);
+          if (!abs) continue;
+          const deps = this.getDependents(abs);
+          for (const depAbs of deps) {
+            const depId = this.moduleIdForPath(depAbs);
+            if (!depId) continue;
+            if (!result.has(depId)) {
+              result.add(depId);
+              queue.push(depId);
+            }
+          }
+        }
+        const out = [];
+        for (const id of result) {
+          const abs = this.pathForModuleId(id);
+          if (abs) out.push(abs);
+        }
+        return out;
+      }
+      /** Includes changed files and all dependents */
+      collectAffected(changed) {
+        const resultIds = /* @__PURE__ */ new Set();
+        const resultAbs = /* @__PURE__ */ new Set();
+        const changedIds = changed.map((p) => this.moduleIdForPath(p)).filter((v) => !!v);
+        let usedNative = false;
+        if (this.native?.graphCollectAffected) {
+          try {
+            const nativeList = this.native.graphCollectAffected(changedIds);
+            for (const item of nativeList ?? []) {
+              resultIds.add(item);
+            }
+            usedNative = true;
+          } catch {
+          }
+        }
+        for (const targetAbs of changed) {
+          resultAbs.add(targetAbs);
+          const id = this.moduleIdForPath(targetAbs);
+          if (id) resultIds.add(id);
+        }
+        if (!usedNative || resultIds.size === 0) {
+          for (const targetAbs of changed) {
+            const targetId = this.moduleIdForPath(targetAbs);
+            if (targetId) resultIds.add(targetId);
+            for (const depAbs of this.collectDependentsDeep(targetAbs)) {
+              resultAbs.add(depAbs);
+              const depId = this.moduleIdForPath(depAbs);
+              if (depId) resultIds.add(depId);
+            }
+          }
+        }
+        for (const id of resultIds) {
+          const abs = this.pathForModuleId(id);
+          if (abs) resultAbs.add(abs);
+        }
+        return Array.from(resultAbs);
+      }
+      /** Remove file from graph and clean up dependents lists */
+      removeFile(absPath) {
+        const moduleId = this.moduleIdForPath(absPath);
+        if (!moduleId) return;
+        const existed = this.nodes.delete(moduleId);
+        if (existed) {
+          for (const node of this.nodes.values()) {
+            if (node.deps.includes(moduleId)) {
+              node.deps = node.deps.filter((dep) => dep !== moduleId);
+            }
+          }
+          if (this.native) {
+            try {
+              this.native.graphRemove(moduleId);
+              this.scheduleNativeFlush();
+            } catch {
+            }
+          }
+          this.queueSave();
+        }
+      }
+      /** Persist immediately (e.g., on shutdown) */
+      flush() {
+        if (this.nativeFlushTimer) {
+          clearTimeout(this.nativeFlushTimer);
+          this.nativeFlushTimer = null;
+        }
+        if (this.native?.graphFlush) {
+          try {
+            this.native.graphFlush();
+          } catch {
+          }
+        }
+        if (this.dirty) this.save();
+      }
+    };
+  }
+});
+
+// src/core/worker/pool.ts
+var import_worker_threads, import_os, import_url3, workerPath, TransformWorkerPool;
+var init_pool = __esm({
+  "src/core/worker/pool.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_worker_threads = require("worker_threads");
+    import_os = __toESM(require("os"), 1);
+    import_url3 = require("url");
+    init_logger();
+    workerPath = (0, import_url3.fileURLToPath)(new URL("./worker.cjs", importMetaUrl));
+    TransformWorkerPool = class {
+      workers = [];
+      queue = [];
+      active = /* @__PURE__ */ new Map();
+      callbacks = /* @__PURE__ */ new Map();
+      waiters = [];
+      pendingBytes = 0;
+      closed = false;
+      size;
+      maxQueueBytes;
+      constructor(options = {}) {
+        const cpuDefault = Math.max(1, import_os.default.cpus().length - 1);
+        this.size = Math.max(1, options.size ?? cpuDefault);
+        this.maxQueueBytes = options.maxQueueBytes;
+        for (let i = 0; i < this.size; i++) {
+          this.spawnWorker();
+        }
+      }
+      spawnWorker() {
+        const worker = new import_worker_threads.Worker(workerPath, { env: process.env });
+        const id = worker.threadId;
+        worker.on("message", (message) => {
+          const item = this.active.get(id);
+          if (item) {
+            this.active.delete(id);
+            this.pendingBytes -= item.size;
+            this.resolveWaiters();
+          }
+          const cb = message ? this.callbacks.get(message.id) : void 0;
+          if (message && cb) cb(message);
+          if (message) this.callbacks.delete(message.id);
+          this.dequeue(worker);
+        });
+        worker.on("error", (err) => {
+          logWarn(`Transform worker error: ${String(err)}`);
+          const item = this.active.get(id);
+          if (item) {
+            this.active.delete(id);
+            this.queue.unshift(item);
+          }
+          this.spawnWorker();
+        });
+        worker.on("exit", (code) => {
+          const item = this.active.get(id);
+          if (item) {
+            this.active.delete(id);
+            this.queue.unshift(item);
+          }
+          if (!this.closed && code !== 0) {
+            logWarn(`Transform worker exited unexpectedly (${code}), respawning`);
+            this.spawnWorker();
+          }
+        });
+        this.workers.push(worker);
+      }
+      dequeue(worker) {
+        if (this.queue.length === 0) return;
+        const item = this.queue.shift();
+        this.active.set(worker.threadId, item);
+        worker.postMessage(item.job);
+      }
+      resolveWaiters() {
+        if (!this.maxQueueBytes) return;
+        while (this.waiters.length && this.pendingBytes < this.maxQueueBytes) {
+          const resolve = this.waiters.shift();
+          resolve && resolve();
+        }
+      }
+      async run(job) {
+        if (this.closed) {
+          throw new Error("Worker pool already closed");
+        }
+        const size = Buffer.byteLength(job.code, "utf8");
+        if (this.maxQueueBytes) {
+          while (this.pendingBytes + size > this.maxQueueBytes) {
+            await new Promise((resolve) => this.waiters.push(resolve));
+            await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
+          }
+        }
+        this.pendingBytes += size;
+        return new Promise((resolve) => {
+          this.callbacks.set(job.id, resolve);
+          const idleWorker = this.workers.find((w) => !this.active.has(w.threadId));
+          const item = { job, size };
+          if (idleWorker) {
+            this.active.set(idleWorker.threadId, item);
+            idleWorker.postMessage(job);
+          } else {
+            this.queue.push(item);
+          }
+        });
+      }
+      async runMany(jobs) {
+        const resultMap = /* @__PURE__ */ new Map();
+        await Promise.all(
+          jobs.map(async (job) => {
+            const res = await this.run(job);
+            resultMap.set(job.id, res);
+          })
+        );
+        return jobs.map((job) => resultMap.get(job.id));
+      }
+      async close() {
+        this.closed = true;
+        await Promise.all(this.workers.map((worker) => worker.terminate()));
+        this.workers = [];
+        this.queue = [];
+        this.active.clear();
+        this.callbacks.clear();
+        this.waiters.forEach((resolve) => resolve());
+        this.waiters = [];
+        this.pendingBytes = 0;
+      }
+      async drain() {
+        while (!this.closed && (this.queue.length || this.active.size)) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+    };
+  }
+});
+
+// src/core/loaders/css.ts
+function detectPreprocessorLang(filePath) {
+  const ext = import_path14.default.extname(filePath.split("?")[0].split("#")[0]).toLowerCase();
+  if (ext === ".scss") return "scss";
+  if (ext === ".sass") return "sass";
+  if (ext === ".less") return "less";
+  if (ext === ".styl" || ext === ".stylus") return "styl";
+  return null;
+}
+function loadProjectPreprocessor(name, rootDir, fromFile) {
+  for (const base of [fromFile, import_path14.default.join(rootDir, "package.json")]) {
+    try {
+      const req = (0, import_module3.createRequire)(base);
+      req.resolve(name);
+      return req(name);
+    } catch {
+    }
+  }
+  try {
+    return (0, import_module3.createRequire)(__filename ?? fromFile)(name);
+  } catch {
+    return null;
+  }
+}
+async function runPreprocessor(code, filePath, rootDir, lang, options) {
+  const deps = [];
+  if (lang === "scss" || lang === "sass") {
+    const sass = loadProjectPreprocessor("sass", rootDir, filePath);
+    if (!sass) {
+      throw new Error(
+        `[ionify:css] "${import_path14.default.basename(filePath)}" requires the "sass" package \u2014 install it in your project: pnpm add -D sass`
+      );
+    }
+    const langOpts = options?.[lang] ?? options?.scss ?? {};
+    const result = sass.compileString(code, {
+      syntax: lang === "sass" ? "indented" : "scss",
+      url: (0, import_url4.pathToFileURL)(filePath),
+      loadPaths: [import_path14.default.dirname(filePath), rootDir, import_path14.default.join(rootDir, "node_modules")],
+      ...langOpts
+    });
+    for (const u of result.loadedUrls ?? []) {
+      try {
+        const p = (0, import_url4.fileURLToPath)(u);
+        if (p && p !== filePath) deps.push(p);
+      } catch {
+      }
+    }
+    return { css: result.css, deps, version: `sass:${String(sass.info ?? "").split("	")[1] ?? ""}` };
+  }
+  if (lang === "less") {
+    const less = loadProjectPreprocessor("less", rootDir, filePath);
+    if (!less) {
+      throw new Error(
+        `[ionify:css] "${import_path14.default.basename(filePath)}" requires the "less" package \u2014 install it in your project: pnpm add -D less`
+      );
+    }
+    const langOpts = options?.less ?? {};
+    const result = await less.render(code, {
+      filename: filePath,
+      paths: [import_path14.default.dirname(filePath), rootDir],
+      ...langOpts
+    });
+    for (const p of result.imports ?? []) {
+      if (p && p !== filePath) deps.push(p);
+    }
+    return { css: result.css, deps, version: `less:${String((less.version ?? []).join?.(".") ?? less.version ?? "")}` };
+  }
+  throw new Error(
+    `[ionify:css] Stylus (.styl) is not yet wired into Ionify's preprocessor pre-pass \u2014 Sass/SCSS and Less are supported. (Native-Rust + Stylus are future-planned: css-pipeline-contract \xA78.)`
+  );
+}
+async function getPostcssConfig(rootDir) {
+  const key = import_path14.default.resolve(rootDir);
+  const cached = cachedPostcssConfigByRoot.get(key);
+  if (cached) return cached;
+  if (postcssConfigFailedRoots.has(key)) {
+    const empty = { plugins: [], options: {}, configFile: null };
+    cachedPostcssConfigByRoot.set(key, empty);
+    return empty;
+  }
+  try {
+    const result = await (0, import_postcss_load_config.default)({}, rootDir);
+    const configFile = typeof result?.file === "string" ? result.file : null;
+    const loaded = {
+      plugins: Array.isArray(result.plugins) ? result.plugins : [],
+      options: result.options ?? {},
+      configFile
+    };
+    cachedPostcssConfigByRoot.set(key, loaded);
+  } catch {
+    postcssConfigFailedRoots.add(key);
+    const empty = { plugins: [], options: {}, configFile: null };
+    cachedPostcssConfigByRoot.set(key, empty);
+  }
+  return cachedPostcssConfigByRoot.get(key);
+}
+function stablePluginName(plugin) {
+  if (!plugin || typeof plugin !== "function") return "unknown";
+  const anyPlugin = plugin;
+  if (typeof anyPlugin.postcssPlugin === "string" && anyPlugin.postcssPlugin.length > 0) {
+    return anyPlugin.postcssPlugin;
+  }
+  if (typeof anyPlugin.name === "string" && anyPlugin.name.length > 0) return anyPlugin.name;
+  if (typeof plugin.toString === "function") {
+    return "anonymous";
+  }
+  return "unknown";
+}
+function sortObjectKeys(value) {
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    out[key] = value[key];
+  }
+  return out;
+}
+function resolveCssSpecifier(spec, filePath, rootDir) {
+  const trimmed = spec.trim();
+  if (!trimmed) return null;
+  if (/^(data:|https?:|\/\/)/i.test(trimmed)) return null;
+  if (trimmed.startsWith("/")) return import_path14.default.resolve(rootDir, "." + trimmed);
+  if (trimmed.startsWith("@/")) return import_path14.default.resolve(rootDir, "src", trimmed.slice(2));
+  if (trimmed.startsWith(".") || trimmed.startsWith("..")) return import_path14.default.resolve(import_path14.default.dirname(filePath), trimmed);
+  const specifier = trimmed.startsWith("~") ? trimmed.slice(1) : trimmed;
+  try {
+    return (0, import_module3.createRequire)(filePath).resolve(specifier);
+  } catch {
+    return import_path14.default.resolve(import_path14.default.dirname(filePath), trimmed);
+  }
+}
+function discoverUrlDeps(css, filePath, rootDir) {
+  const deps = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (p) => {
+    if (!p) return;
+    const norm = p.replace(/\\+/g, "/");
+    if (seen.has(norm)) return;
+    seen.add(norm);
+    deps.push(p);
+  };
+  const urlRe = /url\(\s*(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)/gi;
+  let match;
+  while (match = urlRe.exec(css)) {
+    const spec = (match[1] || match[2] || match[3] || "").trim();
+    add(resolveCssSpecifier(spec, filePath, rootDir));
+  }
+  return deps;
+}
+function rewriteCssUrls(css, fromFsPath, rootDir, mapTarget) {
+  const urlRe = /url\(\s*(?:'([^']*)'|"([^"]*)"|([^'")\s]+))\s*\)/gi;
+  return css.replace(urlRe, (full, sQuote, dQuote, bare) => {
+    const spec = (sQuote ?? dQuote ?? bare ?? "").trim();
+    if (!spec) return full;
+    if (/^(?:data:|https?:|\/\/|#|\/)/i.test(spec)) return full;
+    const abs = resolveCssSpecifier(spec, fromFsPath, rootDir);
+    if (!abs) return full;
+    const replacement = mapTarget(abs, spec);
+    if (!replacement || replacement === spec) return full;
+    const quote = sQuote != null ? "'" : '"';
+    return `url(${quote}${replacement}${quote})`;
+  });
+}
+async function computePipelineHash(rootDir, modules, modulesOptions, preprocessor) {
+  const { plugins, options, configFile } = await getPostcssConfig(rootDir);
+  const pluginNames = plugins.map(stablePluginName).filter(Boolean).sort();
+  let configFileHash = null;
+  let configFileId = null;
+  if (configFile && import_fs14.default.existsSync(configFile)) {
+    try {
+      const raw = import_fs14.default.readFileSync(configFile);
+      configFileHash = getCacheKey(raw);
+      const abs = import_path14.default.resolve(configFile);
+      const rel = import_path14.default.relative(rootDir, abs).replace(/\\+/g, "/");
+      configFileId = rel && !rel.startsWith("../") ? rel : import_path14.default.basename(abs);
+    } catch {
+      configFileHash = null;
+    }
+  }
+  const normalizedModules = modules && modulesOptions ? {
+    localsConvention: typeof modulesOptions.localsConvention === "string" ? modulesOptions.localsConvention : null,
+    generateScopedName: typeof modulesOptions.generateScopedName === "string" ? modulesOptions.generateScopedName : typeof modulesOptions.generateScopedName === "function" ? "function" : null
+  } : null;
+  const normalizedOptions = {
+    map: options?.map ?? null
+  };
+  const payload = {
+    schema: "ionify:css-pipeline:v1",
+    configFile: configFileId,
+    configFileHash,
+    pluginNames,
+    options: normalizedOptions,
+    modules: modules ? 1 : 0,
+    modulesOptions: normalizedModules
+  };
+  if (preprocessor) {
+    let optionsTag = null;
+    try {
+      optionsTag = preprocessor.options ? JSON.stringify(preprocessor.options) : null;
+    } catch {
+      optionsTag = "<unserializable>";
+    }
+    payload.preprocessor = { lang: preprocessor.lang, version: preprocessor.version, options: optionsTag };
+  }
+  return getCacheKey(JSON.stringify(payload));
+}
+function createScopedNameGenerator({
+  rootDir,
+  filePath,
+  modulesOptions
+}) {
+  const custom = modulesOptions?.generateScopedName;
+  if (typeof custom === "function") {
+    return (name, filename, css) => custom(name, filename, css);
+  }
+  if (typeof custom === "string" && custom.trim().length > 0) {
+    const pattern = custom;
+    return (name, filename) => {
+      const baseName = import_path14.default.basename(filename || filePath).replace(/\.[^.]+$/, "");
+      const rel = import_path14.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
+      const hashHex = import_crypto4.default.createHash("sha256").update(`${rel}:${name}`).digest("hex");
+      return pattern.replace(/\[name\]/g, baseName).replace(/\[local\]/g, name).replace(/\[hash(?::(hex|base64))?(?::(\d+))?\]/g, (_m, enc, lenRaw) => {
+        const len = lenRaw ? Math.max(1, Math.min(32, Number(lenRaw))) : 6;
+        if (enc === "base64") {
+          const b64 = Buffer.from(hashHex, "hex").toString("base64url");
+          return b64.slice(0, len);
+        }
+        return hashHex.slice(0, len);
+      });
+    };
+  }
+  return (name, filename) => {
+    const relative = import_path14.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
+    const seed = import_crypto4.default.createHash("sha1").update(relative).digest("hex").slice(0, 6);
+    return `${name}___${seed}`;
+  };
+}
+async function compileCss({
+  code,
+  filePath,
+  rootDir,
+  modules = false,
+  modulesOptions,
+  preprocessorOptions
+}) {
+  const preprocessorLang = detectPreprocessorLang(filePath);
+  let sourceCss = code;
+  let preprocessorIdentity = null;
+  const preprocessorDeps = [];
+  if (preprocessorLang) {
+    const pre = await runPreprocessor(code, filePath, rootDir, preprocessorLang, preprocessorOptions);
+    sourceCss = pre.css;
+    preprocessorDeps.push(...pre.deps);
+    preprocessorIdentity = { lang: preprocessorLang, version: pre.version, options: preprocessorOptions };
+  }
+  const { plugins, options, configFile } = await getPostcssConfig(rootDir);
+  const pipeline = [...plugins];
+  let tokens;
+  if (modules) {
+    const scopedName = createScopedNameGenerator({ rootDir, filePath, modulesOptions });
+    pipeline.push(
+      (0, import_postcss_modules.default)({
+        generateScopedName: scopedName,
+        localsConvention: modulesOptions?.localsConvention,
+        getJSON(_filename, json) {
+          tokens = sortObjectKeys(json);
+        }
+      })
+    );
+  }
+  const runner = (0, import_postcss.default)(pipeline);
+  const result = await runner.process(sourceCss, {
+    ...options,
+    from: filePath,
+    map: false
+  });
+  const deps = [];
+  const urlDeps = [];
+  const seenDeps = /* @__PURE__ */ new Set();
+  const seenUrlDeps = /* @__PURE__ */ new Set();
+  const addDep = (depPath) => {
+    const normalized = depPath.replace(/\\+/g, "/");
+    if (seenDeps.has(normalized)) return;
+    seenDeps.add(normalized);
+    deps.push({ filePath: depPath, kind: "dependency" });
+  };
+  const addUrlDep = (depPath) => {
+    const normalized = depPath.replace(/\\+/g, "/");
+    if (seenUrlDeps.has(normalized)) return;
+    seenUrlDeps.add(normalized);
+    urlDeps.push({ filePath: depPath, kind: "dependency" });
+  };
+  if (configFile) addDep(configFile);
+  for (const dep of preprocessorDeps) addDep(dep);
+  for (const message of result.messages || []) {
+    const anyMsg = message;
+    if (anyMsg?.type === "dependency" && typeof anyMsg.file === "string") {
+      addDep(anyMsg.file);
+    }
+  }
+  const importRe = /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
+  let match;
+  while (match = importRe.exec(sourceCss)) {
+    const spec = (match[1] || match[2] || match[3] || "").trim();
+    if (!spec) continue;
+    const resolved = resolveCssSpecifier(spec, filePath, rootDir);
+    if (resolved) addDep(resolved);
+  }
+  for (const dep of discoverUrlDeps(result.css, filePath, rootDir)) {
+    addUrlDep(dep);
+  }
+  const pipelineHash = await computePipelineHash(rootDir, modules, modulesOptions, preprocessorIdentity);
+  const compiled = {
+    css: result.css,
+    tokens,
+    deps,
+    urlDeps,
+    pipelineHash
+  };
+  return compiled;
+}
+function renderCssModule({
+  css,
+  filePath,
+  tokens,
+  hmr = true,
+  inject = true
+}) {
+  const cssJson = JSON.stringify(css);
+  const styleId = `ionify-css-${getCacheKey(filePath).slice(0, 8)}`;
+  const tokensJson = tokens ? JSON.stringify(tokens) : "null";
+  return `
+// ionify:css
+const cssText = ${cssJson};
+const styleId = ${JSON.stringify(styleId)};
+${inject ? `let style = document.querySelector(\`style[data-ionify-id="\${styleId}"]\`);
+if (!style) {
+  style = document.createElement("style");
+  style.setAttribute("data-ionify-id", styleId);
+  document.head.appendChild(style);
+}
+style.textContent = cssText;` : ""}
+${tokens ? `const tokens = ${tokensJson};` : ""}
+export const css = cssText;
+${tokens ? `export const classes = tokens;
+export default tokens;` : `export default cssText;`}
+${hmr ? `if (import.meta.hot) {
+  import.meta.hot.accept();
+  import.meta.hot.dispose(() => {
+    const existing = document.querySelector(\`style[data-ionify-id="\${styleId}"]\`);
+    if (existing) existing.remove();
+  });
+}` : ""}
+`.trim();
+}
+function renderCssTokensModule(tokens) {
+  const sorted = sortObjectKeys(tokens);
+  const tokensJson = JSON.stringify(sorted);
+  return `
+// ionify:css
+const tokens = ${tokensJson};
+export const classes = tokens;
+export default tokens;
+`.trim();
+}
+function renderCssRawStringModule(cssText) {
+  return `
+// ionify:css
+const css = ${JSON.stringify(cssText)};
+export { css };
+export default css;
+`.trim();
+}
+function renderCssUrlModule(url2) {
+  return `
+// ionify:css
+const url = ${JSON.stringify(url2)};
+export { url };
+export default url;
+`.trim();
+}
+var import_fs14, import_path14, import_crypto4, import_module3, import_url4, import_postcss, import_postcss_load_config, import_postcss_modules, cachedPostcssConfigByRoot, postcssConfigFailedRoots;
+var init_css = __esm({
+  "src/core/loaders/css.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs14 = __toESM(require("fs"), 1);
+    import_path14 = __toESM(require("path"), 1);
+    import_crypto4 = __toESM(require("crypto"), 1);
+    import_module3 = require("module");
+    import_url4 = require("url");
+    import_postcss = __toESM(require("postcss"), 1);
+    import_postcss_load_config = __toESM(require("postcss-load-config"), 1);
+    import_postcss_modules = __toESM(require("postcss-modules"), 1);
+    init_cache();
+    cachedPostcssConfigByRoot = /* @__PURE__ */ new Map();
+    postcssConfigFailedRoots = /* @__PURE__ */ new Set();
+  }
+});
+
+// src/core/utils/public-path.ts
+function publicPathForFile(rootDir, absPath) {
+  const normalizedRoot = import_path15.default.resolve(rootDir);
+  const normalizedFile = import_path15.default.resolve(absPath);
+  if (normalizedFile.startsWith(normalizedRoot + import_path15.default.sep) || normalizedFile === normalizedRoot) {
+    const relative = import_path15.default.relative(normalizedRoot, normalizedFile).split(import_path15.default.sep).join("/");
+    return "/" + (relative.length ? relative : "");
+  }
+  const logicalNodeModulesPath = mapRealPathToProjectNodeModules(normalizedRoot, normalizedFile);
+  if (logicalNodeModulesPath) {
+    const relative = import_path15.default.relative(normalizedRoot, logicalNodeModulesPath).split(import_path15.default.sep).join("/");
+    return "/" + relative;
+  }
+  const wsId = toWsModuleId(normalizedFile, null);
+  const encoded = Buffer.from(wsId ?? "invalid").toString("base64url");
+  return MODULE_PREFIX + encoded;
+}
+function realpathOrResolve2(absPath) {
+  try {
+    const fn = import_fs15.default.realpathSync.native;
+    if (fn) return fn(absPath);
+    return import_fs15.default.realpathSync(absPath);
+  } catch {
+    return import_path15.default.resolve(absPath);
+  }
+}
+function mapRealPathToProjectNodeModules(rootDir, absPath) {
+  const normalizedRoot = import_path15.default.resolve(rootDir);
+  const normalizedFile = realpathOrResolve2(absPath);
+  const parts = normalizedFile.split(import_path15.default.sep).filter(Boolean);
+  for (let index = 0; index < parts.length; index += 1) {
+    if (parts[index] !== "node_modules") continue;
+    if (index === parts.length - 1) continue;
+    const suffix = parts.slice(index + 1);
+    if (suffix[0]?.startsWith("@") && suffix.length < 2) continue;
+    const candidate = import_path15.default.join(normalizedRoot, "node_modules", ...suffix);
+    if (!import_fs15.default.existsSync(candidate)) continue;
+    if (realpathOrResolve2(candidate) !== normalizedFile) continue;
+    return candidate;
+  }
+  return null;
+}
+function isWithinRoots(filePath, roots) {
+  const exists = import_fs15.default.existsSync(filePath);
+  const normalizedFile = exists ? realpathOrResolve2(filePath) : import_path15.default.resolve(filePath);
+  for (const root of roots) {
+    const normalizedRoot = realpathOrResolve2(root);
+    if (normalizedFile === normalizedRoot) return true;
+    if (normalizedFile.startsWith(normalizedRoot + import_path15.default.sep)) return true;
+  }
+  return false;
+}
+function isForbiddenPath(filePath) {
+  const normalized = filePath.replace(/\\+/g, "/");
+  return normalized.includes("/.git/") || normalized.includes("/.ionify/") || normalized.endsWith("/.git") || normalized.endsWith("/.ionify");
+}
+function isForbiddenFsPath(filePath) {
+  return isForbiddenPath(filePath);
+}
+function decodePublicPath(rootDir, urlPath, opts) {
+  if (urlPath.startsWith(MODULE_PREFIX)) {
+    const encoded = urlPath.slice(MODULE_PREFIX.length);
+    try {
+      const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+      if (!decoded || decoded.includes("\0")) return null;
+      const abs = fromWsModuleId(decoded, opts?.workspaceRoot ?? null);
+      if (!abs) return null;
+      if (isForbiddenPath(abs)) return null;
+      const allowedRoots = opts?.allowedRoots;
+      if (Array.isArray(allowedRoots) && allowedRoots.length > 0) {
+        if (!isWithinRoots(abs, allowedRoots)) return null;
+      }
+      return abs;
+    } catch {
+      return null;
+    }
+  }
+  const normalizedRoot = import_path15.default.resolve(rootDir);
+  const joined = import_path15.default.resolve(normalizedRoot, "." + urlPath);
+  if (!joined.startsWith(normalizedRoot + import_path15.default.sep) && joined !== normalizedRoot) {
+    return null;
+  }
+  if (isForbiddenPath(joined)) return null;
+  return joined;
+}
+var import_path15, import_fs15, MODULE_PREFIX;
+var init_public_path = __esm({
+  "src/core/utils/public-path.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_path15 = __toESM(require("path"), 1);
+    import_fs15 = __toESM(require("fs"), 1);
+    init_module_id();
+    MODULE_PREFIX = "/__ionify__/modules/";
+  }
+});
+
+// src/core/utils/cas.ts
+function getCasArtifactPath(casRoot, versionHash, moduleHash) {
+  return import_path17.default.join(casRoot, versionHash, moduleHash);
+}
+function getCompressionCasArtifactPath(casRoot, finalOutputHash, opts) {
+  const shard = finalOutputHash.slice(0, 2) || "00";
+  const settingsKey = `br${Math.max(0, Math.floor(opts.brotliQuality))}-gz${Math.max(0, Math.floor(opts.gzipLevel))}`;
+  return import_path17.default.join(casRoot, "compression", `v${COMPRESSION_CAS_VERSION}`, shard, finalOutputHash, settingsKey);
+}
+var import_path17, COMPRESSION_CAS_VERSION;
+var init_cas = __esm({
+  "src/core/utils/cas.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_path17 = __toESM(require("path"), 1);
+    COMPRESSION_CAS_VERSION = 1;
+  }
+});
+
+// src/core/deps/registry.ts
+function computeStableDepFileName(options) {
+  const pkgName = sanitizePackageName(options.packageName);
+  const pkgVersion = options.packageVersion || "0.0.0";
+  const subpath = normalizeSubpath(options.subpath);
+  const identity = buildDepIdentityFingerprint({
+    entryPath: options.entryPath,
+    packageName: options.packageName,
+    packageVersion: pkgVersion,
+    subpath
+  });
+  const hash = import_crypto5.default.createHash("sha256").update(identity).digest("hex").slice(0, 6);
+  const subpathSuffix = subpath ? `__${subpath}` : "";
+  return `${pkgName}@${pkgVersion}${subpathSuffix}_${hash}.js`;
+}
+function registerDepEntry(entry) {
+  const fileName = computeStableDepFileName({
+    entryPath: entry.entryPath,
+    packageName: entry.packageName,
+    packageVersion: entry.packageVersion,
+    subpath: entry.subpath
+  });
+  const existing = registry.get(fileName);
+  if (existing) {
+    return existing;
+  }
+  const record = { ...entry, fileName };
+  registry.set(fileName, record);
+  return record;
+}
+function getDepEntry(fileName) {
+  return registry.get(fileName);
+}
+function isCoreSingletonDepFileName(fileName) {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  return normalized.startsWith("react@") || normalized.startsWith("react-dom@") || normalized.startsWith("scheduler@") || normalized.startsWith("react-refresh@");
+}
+function computeSubpathFromEntryPath(entryPath) {
+  const packageRoot = findPackageRoot(entryPath);
+  if (!packageRoot) {
+    if (process.env.DEBUG_DEPS) {
+      console.log(`[computeSubpathFromEntryPath] No package root for: ${entryPath}`);
+    }
+    return "";
+  }
+  let rel = import_path18.default.relative(packageRoot, entryPath).replace(/\\/g, "/");
+  const extIndex = rel.lastIndexOf(".");
+  if (extIndex !== -1) {
+    rel = rel.substring(0, extIndex);
+  }
+  if (rel.endsWith("/index")) {
+    rel = rel.substring(0, rel.length - "/index".length);
+  }
+  const pkgName = import_path18.default.basename(packageRoot);
+  if (process.env.DEBUG_DEPS) {
+    console.log(`[subpath] entry: ${import_path18.default.basename(entryPath)}, root: ${pkgName}, rel: "${rel}", isMain: ${rel === pkgName}`);
+  }
+  if (rel === pkgName || rel === "index" || rel === "" || rel === ".") {
+    return "";
+  }
+  return rel || "";
+}
+function findPackageRoot(entryPath) {
+  let currentDir = import_path18.default.dirname(entryPath);
+  let previousDir = entryPath;
+  while (currentDir && currentDir !== previousDir) {
+    const parent = import_path18.default.dirname(currentDir);
+    const grandparent = import_path18.default.dirname(parent);
+    if (import_path18.default.basename(parent) === "node_modules") {
+      const pkgJsonPath = import_path18.default.join(currentDir, "package.json");
+      if (import_fs16.default.existsSync(pkgJsonPath)) {
+        return currentDir;
+      }
+    }
+    if (import_path18.default.basename(grandparent) === "node_modules" && import_path18.default.basename(parent).startsWith("@")) {
+      const pkgJsonPath = import_path18.default.join(currentDir, "package.json");
+      if (import_fs16.default.existsSync(pkgJsonPath)) {
+        return currentDir;
+      }
+    }
+    previousDir = currentDir;
+    currentDir = parent;
+  }
+  return null;
+}
+function sanitizePackageName(name) {
+  return name.replace(/^@/, "").replace(/\//g, "__");
+}
+function normalizeSubpath(subpath) {
+  if (!subpath) return "";
+  const cleaned = subpath.replace(/^\.\//, "").replace(/^\//, "");
+  if (!cleaned || cleaned === "." || cleaned === "index") return "";
+  return cleaned.replace(/\//g, "__");
+}
+function buildDepIdentityFingerprint(options) {
+  const canonicalPath = realpathOrSelf2(options.entryPath);
+  const peerIdentity = resolvePeerIdentitySignature(canonicalPath);
+  if (!peerIdentity) {
+    return canonicalPath;
+  }
+  return [
+    "peer-aware:v1",
+    options.packageName,
+    options.packageVersion,
+    options.subpath,
+    peerIdentity
+  ].join("|");
+}
+function resolvePeerIdentitySignature(entryPath) {
+  const canonicalEntry = realpathOrSelf2(entryPath);
+  if (peerIdentityCache.has(canonicalEntry)) {
+    return peerIdentityCache.get(canonicalEntry) ?? null;
+  }
+  const packageRoot = findPackageRoot(canonicalEntry);
+  if (!packageRoot) {
+    peerIdentityCache.set(canonicalEntry, null);
+    return null;
+  }
+  const manifest = readPackageManifest(packageRoot);
+  const peerNames = Object.keys(manifest?.peerDependencies ?? {}).sort();
+  if (!peerNames.length) {
+    peerIdentityCache.set(canonicalEntry, null);
+    return null;
+  }
+  const startDir = import_path18.default.dirname(packageRoot);
+  const signature = peerNames.map((peerName) => `${peerName}@${resolveInstalledPackageVersion(startDir, peerName) ?? "missing"}`).join("|");
+  peerIdentityCache.set(canonicalEntry, signature);
+  return signature;
+}
+function resolveInstalledPackageVersion(startDir, packageName) {
+  let currentDir = startDir;
+  let previousDir = "";
+  while (currentDir && currentDir !== previousDir) {
+    const manifestPath = import_path18.default.join(currentDir, "node_modules", packageName, "package.json");
+    if (import_fs16.default.existsSync(manifestPath)) {
+      return readPackageManifest(import_path18.default.dirname(manifestPath))?.version ?? null;
+    }
+    previousDir = currentDir;
+    currentDir = import_path18.default.dirname(currentDir);
+  }
+  return null;
+}
+function readPackageManifest(packageRoot) {
+  const canonicalRoot = realpathOrSelf2(packageRoot);
+  if (manifestCache.has(canonicalRoot)) {
+    return manifestCache.get(canonicalRoot) ?? null;
+  }
+  const manifestPath = import_path18.default.join(canonicalRoot, "package.json");
+  try {
+    const parsed = JSON.parse(import_fs16.default.readFileSync(manifestPath, "utf8"));
+    manifestCache.set(canonicalRoot, parsed);
+    return parsed;
+  } catch {
+    manifestCache.set(canonicalRoot, null);
+    return null;
+  }
+}
+function realpathOrSelf2(targetPath) {
+  try {
+    return import_fs16.default.realpathSync(targetPath);
+  } catch {
+    return targetPath;
+  }
+}
+var import_crypto5, import_fs16, import_path18, registry, manifestCache, peerIdentityCache;
+var init_registry = __esm({
+  "src/core/deps/registry.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_crypto5 = __toESM(require("crypto"), 1);
+    import_fs16 = __toESM(require("fs"), 1);
+    import_path18 = __toESM(require("path"), 1);
+    registry = /* @__PURE__ */ new Map();
+    manifestCache = /* @__PURE__ */ new Map();
+    peerIdentityCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/core/refresh/reactRefreshInstrumentation.ts
+function isPascalCaseIdentifier(name) {
+  return /^[A-Z][A-Za-z0-9_$]*$/.test(name);
+}
+function hasRefreshRegistrationsAlready(code) {
+  return /\$RefreshReg\$/.test(code);
+}
+function dedupeByExportName(items) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const it of items) {
+    const key = `${it.exportName}::${it.localName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+  return out;
+}
+function detectRefreshBoundaryExports(code) {
+  const out = [];
+  function isValidIdentifier(name) {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+  }
+  {
+    const re = /export\s+(?:async\s+)?function\s+([A-Z][A-Za-z0-9_$]*)\s*\(/g;
+    let m;
+    while (m = re.exec(code)) {
+      const name = m[1];
+      out.push({ exportName: name, localName: name });
+    }
+  }
+  {
+    const re = /export\s+(?:const|let)\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/g;
+    let m;
+    while (m = re.exec(code)) {
+      const name = m[1];
+      out.push({ exportName: name, localName: name });
+    }
+  }
+  {
+    const re = /export\s+default\s+(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/g;
+    const m = re.exec(code);
+    if (m?.[1]) {
+      const local = m[1];
+      if (isPascalCaseIdentifier(local)) {
+        out.push({ exportName: "default", localName: local });
+      }
+    }
+  }
+  {
+    const re = /export\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?/g;
+    let m;
+    while (m = re.exec(code)) {
+      const local = m[1];
+      if (local === "function" || local === "class") continue;
+      if (isPascalCaseIdentifier(local)) {
+        out.push({ exportName: "default", localName: local });
+      }
+    }
+  }
+  {
+    const re = /export\s+(default\s+)?class\s+([A-Z][A-Za-z0-9_$]*)\b/g;
+    let m;
+    while (m = re.exec(code)) {
+      const isDefault = Boolean(m[1]);
+      const local = m[2];
+      if (!isPascalCaseIdentifier(local)) continue;
+      out.push({ exportName: isDefault ? "default" : local, localName: local });
+    }
+  }
+  {
+    const re = /export\s+(?:const|let)\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*class\b/g;
+    let m;
+    while (m = re.exec(code)) {
+      const name = m[1];
+      if (!isPascalCaseIdentifier(name)) continue;
+      out.push({ exportName: name, localName: name });
+    }
+  }
+  {
+    const re = /export\s*{\s*([^}]+)\s*}\s*(?:from\s*(['"][^'"]+['"]))?\s*;?/g;
+    let m;
+    while (m = re.exec(code)) {
+      const from = m[2];
+      if (from) continue;
+      const specList = m[1] ?? "";
+      const parts = specList.split(",").map((p) => p.trim()).filter(Boolean);
+      for (const part of parts) {
+        if (part.startsWith("type ")) continue;
+        const asMatch = part.split(/\s+as\s+/);
+        const local = (asMatch[0] ?? "").trim();
+        const exported = (asMatch[1] ?? local).trim();
+        if (!local || !exported) continue;
+        if (local === "default") continue;
+        if (!isValidIdentifier(local) || !isValidIdentifier(exported)) continue;
+        if (!isPascalCaseIdentifier(local)) continue;
+        if (exported !== "default" && !isPascalCaseIdentifier(exported)) continue;
+        out.push({ exportName: exported, localName: local });
+      }
+    }
+  }
+  return dedupeByExportName(out);
+}
+async function buildReactRefreshRegistrations(code, _filePath) {
+  if (hasRefreshRegistrationsAlready(code)) return "";
+  const candidates = detectRefreshBoundaryExports(code);
+  if (!candidates.length) return "";
+  const lines = candidates.map(({ exportName, localName }) => {
+    return `window.$RefreshReg$?.(${localName}, normalizeRefreshModuleId(import.meta.url) + ":" + ${JSON.stringify(exportName)});`;
+  });
+  return "\n" + lines.join("\n") + "\n";
+}
+function needsReactRefresh(ext, isDev) {
+  if (!isDev) return false;
+  return ext === ".jsx" || ext === ".tsx";
+}
+function hasReactRootRenderSideEffect(code) {
+  const sample = code.slice(0, 64 * 1024);
+  return /\bcreateRoot\s*\(/.test(sample) || /\bhydrateRoot\s*\(/.test(sample) || /\bReactDOM\s*\.\s*createRoot\s*\(/.test(sample) || /\bReactDOM\s*\.\s*hydrateRoot\s*\(/.test(sample) || /\bReactDOM\s*\.\s*render\s*\(/.test(sample);
+}
+async function instrumentReactRefresh(options) {
+  const { code, filePath, ext, isDev, isEntry = false } = options;
+  if (!needsReactRefresh(ext, isDev)) {
+    return { shouldInstrument: false, prologue: "", registrations: "", epilogue: "" };
+  }
+  const registrations = isEntry ? "" : await buildReactRefreshRegistrations(code, filePath);
+  const prologue = `import { setupReactRefresh, normalizeRefreshModuleId } from "${REACT_REFRESH_RUNTIME_MODULE}";
+const __ionifyRefresh__ = setupReactRefresh(import.meta.hot ?? { accept() {}, dispose() {} }, normalizeRefreshModuleId(import.meta.url));
+`;
+  const shouldSelfAccept = !(isEntry && hasReactRootRenderSideEffect(code));
+  const epilogue = shouldSelfAccept ? `
+__ionifyRefresh__?.finalize?.();
+
+if (import.meta.hot) {
+  import.meta.hot.accept((newModule) => {
+    __ionifyRefresh__?.refresh?.(newModule);
+  });
+  import.meta.hot.dispose(() => {
+    __ionifyRefresh__?.dispose?.();
+  });
+}
+` : `
+__ionifyRefresh__?.finalize?.();
+`;
+  return { shouldInstrument: true, prologue, registrations, epilogue };
+}
+var REACT_REFRESH_RUNTIME_MODULE, REACT_REFRESH_HMR_CONTRACT_VERSION;
+var init_reactRefreshInstrumentation = __esm({
+  "src/core/refresh/reactRefreshInstrumentation.ts"() {
+    "use strict";
+    init_cjs_shims();
+    REACT_REFRESH_RUNTIME_MODULE = "/__ionify_hmr_client.js";
+    REACT_REFRESH_HMR_CONTRACT_VERSION = "entry-root-full-reload-v1";
+  }
+});
+
+// src/cli/utils/env.ts
+function parseValue(raw) {
+  let value = raw.trim();
+  if (!value) return "";
+  if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+    value = value.slice(1, -1);
+  }
+  value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+  return value;
+}
+function parseEnvFile(source) {
+  const env = {};
+  const lines = source.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_\.]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    const [, key, rest] = match;
+    env[key] = parseValue(rest);
+  }
+  return env;
+}
+function getModeAliases(mode) {
+  const normalized = typeof mode === "string" ? mode.trim() : "";
+  return [normalized || "development"];
+}
+function loadEnv(mode = "development", rootDir = process.cwd()) {
+  const [modeName] = getModeAliases(mode);
+  const candidates = [".env", ".env.local", `.env.${modeName}`, `.env.${modeName}.local`];
+  const merged = {};
+  for (const name of candidates) {
+    const filePath = import_path20.default.resolve(rootDir, name);
+    if (!import_fs18.default.existsSync(filePath) || !import_fs18.default.statSync(filePath).isFile()) {
+      continue;
+    }
+    const contents = import_fs18.default.readFileSync(filePath, "utf8");
+    const parsed = parseEnvFile(contents);
+    Object.assign(merged, parsed);
+  }
+  for (const [key, value] of Object.entries(merged)) {
+    if (process.env[key] === void 0) {
+      process.env[key] = value;
+    }
+  }
+  return {
+    ...merged
+  };
+}
+var import_fs18, import_path20;
+var init_env = __esm({
+  "src/cli/utils/env.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs18 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
+  }
+});
+
+// src/cli/utils/config.ts
+function resolveConfigMode(mode) {
+  return mode || process.env.MODE || process.env.IONIFY_MODE || process.env.NODE_ENV || "development";
+}
+function buildConfigEnv(mode, rootDir) {
+  const env = loadEnv(mode, rootDir);
+  const merged = {
+    ...env,
+    MODE: mode
+  };
+  if (typeof process.env.NODE_ENV === "string") {
+    merged.NODE_ENV = process.env.NODE_ENV;
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== "string") continue;
+    if (key.startsWith("VITE_") || key.startsWith("IONIFY_")) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+function findProjectRoot(startDir) {
+  let dir = import_path21.default.resolve(startDir);
+  for (let i = 0; i < 15; i++) {
+    const pkg = import_path21.default.join(dir, "package.json");
+    try {
+      if (import_fs19.default.existsSync(pkg) && import_fs19.default.statSync(pkg).isFile()) return dir;
+    } catch {
+    }
+    const parent = import_path21.default.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+async function bundleConfig(entry) {
+  const absDir = import_path21.default.dirname(entry);
+  const inlineIonifyPlugin = {
+    name: "inline-ionify",
+    setup(build2) {
+      build2.onResolve({ filter: /^ionify$/ }, () => ({
+        path: "ionify-virtual",
+        namespace: "ionify-ns"
+      }));
+      build2.onResolve({ filter: /^@ionify\/ionify$/ }, () => ({
+        path: "ionify-virtual",
+        namespace: "ionify-ns"
+      }));
+      build2.onLoad({ filter: /.*/, namespace: "ionify-ns" }, () => ({
+        contents: `
+          export function defineConfig(config) {
+            return config;
+          }
+        `,
+        loader: "js"
+      }));
+    }
+  };
+  const result = await (0, import_esbuild.build)({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    sourcemap: "inline",
+    write: false,
+    target: "node18",
+    logLevel: "silent",
+    absWorkingDir: absDir,
+    plugins: [inlineIonifyPlugin]
+  });
+  const output = result.outputFiles?.[0];
+  if (!output) throw new Error("Failed to bundle ionify config");
+  const dirnameLiteral = JSON.stringify(absDir);
+  const filenameLiteral = JSON.stringify(entry);
+  const importMetaLiteral = JSON.stringify((0, import_url5.pathToFileURL)(entry).href);
+  let contents = output.text;
+  if (contents.includes("import.meta.url")) {
+    contents = contents.replace(/import\.meta\.url/g, "__IONIFY_IMPORT_META_URL");
+    contents = `const __IONIFY_IMPORT_META_URL = ${importMetaLiteral};
+${contents}`;
+  }
+  const preamble = `const __dirname = ${dirnameLiteral};
+const __filename = ${filenameLiteral};
+`;
+  return preamble + contents;
+}
+function findConfigFile(cwd) {
+  for (const name of CONFIG_BASENAMES) {
+    const candidate = import_path21.default.resolve(cwd, name);
+    if (import_fs19.default.existsSync(candidate) && import_fs19.default.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+async function loadIonifyConfig(cwd = process.cwd(), mode) {
+  if (configLoaded) return cachedConfig;
+  configLoaded = true;
+  const configMode = resolveConfigMode(mode);
+  const configPath = findConfigFile(cwd);
+  if (!configPath) {
+    const projectRoot = findProjectRoot(cwd) ?? cwd;
+    cachedConfig = { root: projectRoot };
+    configureResolverAliases(void 0, projectRoot);
+    delete process.env.IONIFY_RESOLVE_ALIAS;
+    return cachedConfig;
+  }
+  try {
+    const configDir = import_path21.default.dirname(configPath);
+    const configEnv = buildConfigEnv(configMode, configDir);
+    const bundled = await bundleConfig(configPath);
+    const dataUrl = `data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`;
+    const imported = await import(dataUrl);
+    let resolved = imported?.default ?? imported?.config ?? imported ?? null;
+    if (resolved && typeof resolved === "function") {
+      resolved = resolved({ mode: configMode, env: configEnv });
+    }
+    if (resolved && typeof resolved?.then === "function") {
+      resolved = await resolved;
+    }
+    if (resolved && typeof resolved === "object") {
+      if (resolved.root) {
+        const rootPath = import_path21.default.isAbsolute(resolved.root) ? resolved.root : import_path21.default.resolve(import_path21.default.dirname(configPath), resolved.root);
+        if (!import_fs19.default.existsSync(rootPath)) {
+          logError(`Config error: root directory does not exist: ${rootPath}`);
+          throw new Error(`Invalid root: ${rootPath}`);
+        }
+        if (!import_fs19.default.statSync(rootPath).isDirectory()) {
+          logError(`Config error: root must be a directory: ${rootPath}`);
+          throw new Error(`Invalid root: ${rootPath}`);
+        }
+        resolved.root = rootPath;
+        logInfo(`Using project root: ${import_path21.default.relative(cwd, rootPath)}`);
+      } else {
+        resolved.root = import_path21.default.dirname(configPath);
+      }
+      if (resolved.optimizeDeps?.esbuildOptions) {
+        logWarn("optimizeDeps.esbuildOptions is not supported in Ionify (uses native Rust optimizer). This option will be ignored.");
+      }
+      cachedConfig = resolved;
+      const baseDir = typeof resolved.root === "string" && resolved.root.length > 0 ? resolved.root : import_path21.default.dirname(configPath);
+      const aliases = resolved?.resolve?.alias;
+      if (aliases && typeof aliases === "object") {
+        configureResolverAliases(aliases, baseDir);
+        try {
+          process.env.IONIFY_RESOLVE_ALIAS = JSON.stringify(aliases);
+        } catch {
+          delete process.env.IONIFY_RESOLVE_ALIAS;
+        }
+      } else {
+        configureResolverAliases(void 0, baseDir);
+        delete process.env.IONIFY_RESOLVE_ALIAS;
+      }
+      logInfo(`Loaded ionify config from ${import_path21.default.relative(cwd, configPath)}`);
+    } else {
+      throw new Error("Config did not export an object");
+    }
+  } catch (err) {
+    logError("Failed to load ionify.config", err);
+    cachedConfig = null;
+    configureResolverAliases(void 0, cwd);
+    delete process.env.IONIFY_RESOLVE_ALIAS;
+  }
+  return cachedConfig;
+}
+var import_fs19, import_path21, import_url5, import_esbuild, CONFIG_BASENAMES, cachedConfig, configLoaded;
+var init_config = __esm({
+  "src/cli/utils/config.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs19 = __toESM(require("fs"), 1);
+    import_path21 = __toESM(require("path"), 1);
+    import_url5 = require("url");
+    import_esbuild = require("esbuild");
+    init_logger();
+    init_resolver();
+    init_env();
+    CONFIG_BASENAMES = [
+      "ionify.config.ts",
+      "ionify.config.mts",
+      "ionify.config.js",
+      "ionify.config.mjs",
+      "ionify.config.cjs"
+    ];
+    cachedConfig = null;
+    configLoaded = false;
+  }
+});
+
+// src/cli/utils/lockfile.ts
+function readLockfile(workspaceRoot, projectRoot) {
+  const roots = [workspaceRoot, projectRoot].filter(Boolean);
+  const uniqueRoots2 = [];
+  for (const r of roots) {
+    const abs = import_path22.default.resolve(r);
+    if (!uniqueRoots2.includes(abs)) uniqueRoots2.push(abs);
+  }
+  for (const root of uniqueRoots2) {
+    for (const name of LOCKFILE_ORDER) {
+      const filePath = import_path22.default.join(root, name);
+      if (!import_fs20.default.existsSync(filePath)) continue;
+      const contents = import_fs20.default.readFileSync(filePath);
+      return { name, path: filePath, contents, packageCount: estimateLockfilePackageCount(name, contents) };
+    }
+  }
+  return null;
+}
+function estimateLockfilePackageCount(name, contents) {
+  if (name === "package-lock.json") {
+    try {
+      const parsed = JSON.parse(contents.toString("utf8"));
+      if (parsed?.packages && typeof parsed.packages === "object") {
+        return Object.keys(parsed.packages).length;
+      }
+    } catch {
+      return null;
+    }
+  }
+  if (name === "pnpm-lock.yaml") {
+    const text = contents.toString("utf8");
+    const lines = text.split(/\r?\n/);
+    const legacyCount = lines.filter((line) => line.trimStart().startsWith("/")).length;
+    if (legacyCount > 0) return legacyCount;
+    const packageSectionIndex = lines.findIndex((line) => line.trim() === "packages:");
+    if (packageSectionIndex < 0) return null;
+    let count = 0;
+    for (let i = packageSectionIndex + 1; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (/^\S/.test(line)) break;
+      if (/^\s{2}[^#\s].*:\s*$/.test(line)) count++;
+    }
+    return count;
+  }
+  if (name === "yarn.lock") {
+    const text = contents.toString("utf8");
+    return text.split("\n").filter((line) => line && !line.startsWith(" ") && line.endsWith(":")).length;
+  }
+  return null;
+}
+var import_fs20, import_path22, LOCKFILE_ORDER;
+var init_lockfile = __esm({
+  "src/cli/utils/lockfile.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
+    LOCKFILE_ORDER = [
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "bun.lockb"
+    ];
+  }
+});
+
+// src/cli/utils/minifier.ts
+function normalize(value) {
+  if (value === "oxc" || value === "swc" || value === "auto") return value;
+  if (typeof value === "string") {
+    const v = value.toLowerCase();
+    if (v === "oxc" || v === "swc" || v === "auto") return v;
+  }
+  return null;
+}
+function resolveMinifier(config, opts = {}) {
+  const fromCli = normalize(opts.cliFlag);
+  if (fromCli) return fromCli;
+  const fromEnv = normalize(opts.envVar);
+  if (fromEnv) return fromEnv;
+  const fromConfig = normalize(config?.minifier);
+  if (fromConfig) return fromConfig;
+  return "auto";
+}
+var init_minifier = __esm({
+  "src/cli/utils/minifier.ts"() {
+    "use strict";
+    init_cjs_shims();
+  }
+});
+
+// src/cli/utils/treeshake.ts
+function parseMode(value) {
+  if (!value) return null;
+  switch (value.toLowerCase()) {
+    case "off":
+    case "false":
+      return "off";
+    case "aggressive":
+      return "aggressive";
+    case "safe":
+    case "true":
+      return "safe";
+    default:
+      return null;
+  }
+}
+function normalizeList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.filter((entry) => typeof entry === "string" && entry.length > 0);
+  }
+  return [];
+}
+function parseEnvList(raw) {
+  if (!raw || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeList(parsed);
+  } catch {
+    return null;
+  }
+}
+function extractConfigObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  return null;
+}
+function resolveTreeshake(input, options = {}) {
+  let resolved = { ...DEFAULT_RESOLUTION };
+  const objectValue = extractConfigObject(input);
+  if (objectValue) {
+    resolved.include = normalizeList(objectValue.include);
+    resolved.exclude = normalizeList(objectValue.exclude);
+    if (objectValue.mode) {
+      const objectMode = parseMode(objectValue.mode);
+      if (objectMode) {
+        resolved.mode = objectMode;
+      }
+    }
+  } else if (typeof input === "boolean") {
+    resolved.mode = input ? "safe" : "off";
+  } else if (typeof input === "string") {
+    resolved.mode = parseMode(input) ?? DEFAULT_RESOLUTION.mode;
+  }
+  const envMode = parseMode(options.envMode);
+  if (envMode) {
+    resolved.mode = envMode;
+  }
+  const includeOverride = parseEnvList(options.includeEnv);
+  if (includeOverride) {
+    resolved.include = includeOverride;
+  }
+  const excludeOverride = parseEnvList(options.excludeEnv);
+  if (excludeOverride) {
+    resolved.exclude = excludeOverride;
+  }
+  return resolved;
+}
+var DEFAULT_RESOLUTION;
+var init_treeshake = __esm({
+  "src/cli/utils/treeshake.ts"() {
+    "use strict";
+    init_cjs_shims();
+    DEFAULT_RESOLUTION = {
+      mode: "safe",
+      include: [],
+      exclude: []
+    };
+  }
+});
+
+// src/cli/utils/scope-hoist.ts
+function parseBool(value) {
+  if (value === true || value === false) return value;
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    if (["true", "1", "yes", "on", "enable"].includes(normalized)) return true;
+    if (["false", "0", "no", "off", "disable"].includes(normalized)) return false;
+  }
+  return null;
+}
+function parseEnvFlag(value) {
+  if (!value) return null;
+  return parseBool(value);
+}
+function resolveScopeHoist(configValue, options = {}) {
+  let resolved = { ...DEFAULT_SCOPE_HOIST };
+  const scopeConfig = configValue;
+  if (typeof scopeConfig === "boolean") {
+    resolved.enable = scopeConfig;
+  } else if (scopeConfig && typeof scopeConfig === "object") {
+    resolved.enable = true;
+    if (scopeConfig.inlineFunctions !== void 0) {
+      resolved.inlineFunctions = !!scopeConfig.inlineFunctions;
+    }
+    if (scopeConfig.constantFolding !== void 0) {
+      resolved.constantFolding = !!scopeConfig.constantFolding;
+    }
+    if (scopeConfig.combineVariables !== void 0) {
+      resolved.combineVariables = !!scopeConfig.combineVariables;
+    }
+  }
+  const envMode = parseEnvFlag(options.envMode);
+  if (envMode !== null) {
+    resolved.enable = envMode;
+  }
+  const inlineEnv = parseEnvFlag(options.inlineEnv);
+  if (inlineEnv !== null) {
+    resolved.inlineFunctions = inlineEnv;
+  } else if (!resolved.enable) {
+    resolved.inlineFunctions = false;
+  }
+  const constantEnv = parseEnvFlag(options.constantEnv);
+  if (constantEnv !== null) {
+    resolved.constantFolding = constantEnv;
+  } else if (!resolved.enable) {
+    resolved.constantFolding = false;
+  }
+  const combineEnv = parseEnvFlag(options.combineEnv);
+  if (combineEnv !== null) {
+    resolved.combineVariables = combineEnv;
+  } else if (!resolved.enable) {
+    resolved.combineVariables = false;
+  }
+  return resolved;
+}
+var DEFAULT_SCOPE_HOIST;
+var init_scope_hoist = __esm({
+  "src/cli/utils/scope-hoist.ts"() {
+    "use strict";
+    init_cjs_shims();
+    DEFAULT_SCOPE_HOIST = {
+      enable: true,
+      inlineFunctions: true,
+      constantFolding: true,
+      combineVariables: true
+    };
+  }
+});
+
+// src/cli/utils/parser.ts
+function normalize2(mode) {
+  if (typeof mode !== "string") return null;
+  const lower = mode.toLowerCase();
+  if (lower === "swc") return "swc";
+  if (lower === "hybrid") return "hybrid";
+  if (lower === "oxc") return "oxc";
+  return null;
+}
+function resolveParser(config, opts) {
+  const envRaw = opts?.envMode ?? process.env.IONIFY_PARSER;
+  const env = normalize2(envRaw);
+  if (env) return env;
+  const fromConfig = normalize2(config?.parser);
+  return fromConfig ?? "hybrid";
+}
+function applyParserEnv(mode) {
+  process.env.IONIFY_PARSER = mode;
+}
+var init_parser = __esm({
+  "src/cli/utils/parser.ts"() {
+    "use strict";
+    init_cjs_shims();
+  }
+});
+
+// src/core/workspace.ts
+function realpathOrResolve3(absPath) {
+  try {
+    const fn = import_fs21.default.realpathSync.native;
+    if (fn) return fn(absPath);
+    return import_fs21.default.realpathSync(absPath);
+  } catch {
+    return import_path23.default.resolve(absPath);
+  }
+}
+function fileExists(filePath) {
+  try {
+    return import_fs21.default.existsSync(filePath) && import_fs21.default.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+function dirExists(dirPath) {
+  try {
+    return import_fs21.default.existsSync(dirPath) && import_fs21.default.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function hasGitRootMarker(dir) {
+  const dotGit = import_path23.default.join(dir, ".git");
+  return fileExists(dotGit) || dirExists(dotGit);
+}
+function hasWorkspacesField(dir) {
+  const pkgPath = import_path23.default.join(dir, "package.json");
+  if (!fileExists(pkgPath)) return false;
+  try {
+    const raw = import_fs21.default.readFileSync(pkgPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const ws = parsed?.workspaces;
+    if (Array.isArray(ws) && ws.length > 0) return true;
+    if (ws && typeof ws === "object") return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+function findUp(startDir, predicate) {
+  let current = import_path23.default.resolve(startDir);
+  for (let i = 0; i < 50; i++) {
+    const markers = predicate(current);
+    if (markers && markers.length) return { dir: current, markers };
+    const parent = import_path23.default.dirname(current);
+    if (!parent || parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+function findNearestPackageRoot(startDir) {
+  const found = findUp(startDir, (dir) => fileExists(import_path23.default.join(dir, "package.json")) ? ["package.json"] : null);
+  return found?.dir ?? null;
+}
+function detectWorkspaceRoot(projectRoot) {
+  const explicit = findUp(projectRoot, (dir) => {
+    const markers = [];
+    for (const name of WORKSPACE_MARKERS) {
+      if (fileExists(import_path23.default.join(dir, name))) markers.push(name);
+    }
+    if (hasWorkspacesField(dir)) markers.push("package.json#workspaces");
+    for (const name of LOCKFILE_MARKERS) {
+      if (fileExists(import_path23.default.join(dir, name))) markers.push(name);
+    }
+    return markers.length ? markers : null;
+  });
+  if (explicit) return explicit;
+  const git = findUp(projectRoot, (dir) => hasGitRootMarker(dir) ? [".git"] : null);
+  if (git) return git;
+  return { dir: projectRoot, markers: [] };
+}
+function readGitSubmoduleRoots(workspaceRoot) {
+  const gitmodulesPath = import_path23.default.join(workspaceRoot, ".gitmodules");
+  if (!fileExists(gitmodulesPath)) return [];
+  let text;
+  try {
+    text = import_fs21.default.readFileSync(gitmodulesPath, "utf8");
+  } catch {
+    return [];
+  }
+  const roots = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*path\s*=\s*(.+)\s*$/);
+    if (!m) continue;
+    const raw = m[1] ? String(m[1]).trim() : "";
+    if (!raw) continue;
+    const abs = import_path23.default.resolve(workspaceRoot, raw);
+    const normalizedWs = realpathOrResolve3(workspaceRoot);
+    const normalizedAbs = realpathOrResolve3(abs);
+    if (normalizedAbs === normalizedWs || normalizedAbs.startsWith(normalizedWs + import_path23.default.sep)) {
+      roots.push(abs);
+    }
+  }
+  return Array.from(new Set(roots.map((p) => realpathOrResolve3(p)))).sort();
+}
+function computeWorkspaceId(workspaceRoot) {
+  const hash = import_crypto6.default.createHash("sha256");
+  hash.update("ionify:workspace:v1\n");
+  const identityFiles = [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "lerna.json",
+    "nx.json",
+    "rush.json",
+    ".gitmodules"
+  ];
+  for (const name of identityFiles) {
+    const p = import_path23.default.join(workspaceRoot, name);
+    if (!fileExists(p)) continue;
+    try {
+      hash.update(name);
+      hash.update("\0");
+      hash.update(import_fs21.default.readFileSync(p));
+      hash.update("\0");
+    } catch {
+    }
+  }
+  return hash.digest("hex").slice(0, 12);
+}
+function computeProjectId(workspaceRoot, projectRoot) {
+  const rel = import_path23.default.relative(workspaceRoot, projectRoot).split(import_path23.default.sep).join("/");
+  const normalizedRel = rel && rel !== "." ? rel : "root";
+  const hash = import_crypto6.default.createHash("sha256").update(`ionify:project:v1:${normalizedRel}`).digest("hex");
+  return { id: hash.slice(0, 10), rel: normalizedRel };
+}
+function uniqueRoots(roots) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const r of roots) {
+    const normalized = realpathOrResolve3(import_path23.default.resolve(r));
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+function resolveWorkspace(startDir, opts = {}) {
+  const startAbs = realpathOrResolve3(import_path23.default.resolve(startDir));
+  const projectRoot = opts.projectRootOverride ? realpathOrResolve3(import_path23.default.resolve(opts.projectRootOverride)) : realpathOrResolve3(findNearestPackageRoot(startAbs) ?? startAbs);
+  const ws = detectWorkspaceRoot(projectRoot);
+  const workspaceRoot = realpathOrResolve3(ws.dir);
+  const ionifyDir = import_path23.default.join(workspaceRoot, ".ionify");
+  const submoduleRoots = readGitSubmoduleRoots(workspaceRoot);
+  const markers = ws.markers;
+  const workspaceId = computeWorkspaceId(workspaceRoot);
+  const { id: projectId, rel: projectRelPath } = computeProjectId(workspaceRoot, projectRoot);
+  const allowedRoots = uniqueRoots([workspaceRoot, projectRoot, ...submoduleRoots]);
+  return {
+    projectRoot,
+    workspaceRoot,
+    ionifyDir,
+    workspaceId,
+    projectId,
+    projectRelPath,
+    markers,
+    submoduleRoots,
+    allowedRoots
+  };
+}
+var import_fs21, import_path23, import_crypto6, WORKSPACE_MARKERS, LOCKFILE_MARKERS;
+var init_workspace = __esm({
+  "src/core/workspace.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs21 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
+    WORKSPACE_MARKERS = [
+      "pnpm-workspace.yaml",
+      "turbo.json",
+      "lerna.json",
+      "nx.json",
+      "rush.json",
+      ".gitmodules"
+    ];
+    LOCKFILE_MARKERS = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb"];
+  }
+});
+
+// src/core/deps/usage.ts
+function isBareSpecifier(spec) {
+  if (!spec) return false;
+  return !spec.startsWith(".") && !spec.startsWith("/") && !spec.startsWith("http://") && !spec.startsWith("https://");
+}
+function getStringLiteralValue(node) {
+  if (!node || typeof node !== "object") return null;
+  const type = node.type;
+  if (type === "StringLiteral" || type === "Str") {
+    const value = node.value;
+    return typeof value === "string" ? value : null;
+  }
+  if (type === "Literal") {
+    const value = node.value;
+    return typeof value === "string" ? value : null;
+  }
+  return null;
+}
+function collectDynamicImports(node, out) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectDynamicImports(item, out);
+    return;
+  }
+  if (node.type === "CallExpression" || node.type === "CallExpr") {
+    const callee = node.callee;
+    if (callee && typeof callee === "object" && callee.type === "Import") {
+      const args = node.arguments ?? node.args ?? [];
+      const first = Array.isArray(args) ? args[0] : null;
+      const expr = first?.expression ?? first?.expr ?? first;
+      const value = getStringLiteralValue(expr);
+      if (value) out.push(value);
+    }
+  }
+  for (const value of Object.values(node)) {
+    collectDynamicImports(value, out);
+  }
+}
+function parseModuleForUsage(absPath, code) {
+  const ext = import_path24.default.extname(absPath).toLowerCase();
+  const isTypeScript = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts";
+  const isTsx = ext === ".tsx";
+  const isJsx = ext === ".jsx";
+  let ast;
+  try {
+    ast = (0, import_core2.parseSync)(code, {
+      syntax: isTypeScript ? "typescript" : "ecmascript",
+      tsx: isTypeScript ? isTsx : false,
+      jsx: !isTypeScript ? isJsx : false,
+      decorators: true,
+      dynamicImport: true,
+      importAssertions: true
+    });
+  } catch {
+    return [];
+  }
+  const out = [];
+  const body = Array.isArray(ast?.body) ? ast.body : [];
+  for (const item of body) {
+    if (!item || typeof item.type !== "string") continue;
+    if (item.type === "ImportDeclaration") {
+      const source = item.source?.value;
+      if (typeof source !== "string") continue;
+      const imported = [];
+      const specs = Array.isArray(item.specifiers) ? item.specifiers : [];
+      for (const spec of specs) {
+        if (!spec || typeof spec.type !== "string") continue;
+        if (spec.isTypeOnly === true) continue;
+        if (spec.type === "ImportDefaultSpecifier") {
+          imported.push({ kind: "default" });
+        } else if (spec.type === "ImportNamespaceSpecifier") {
+          imported.push({ kind: "namespace" });
+        } else if (spec.type === "ImportSpecifier") {
+          const importedName = spec.imported?.value ?? spec.local?.value;
+          if (typeof importedName === "string" && importedName.length > 0) {
+            imported.push({
+              kind: importedName === "default" ? "default" : "named",
+              name: importedName
+            });
+          }
+        }
+      }
+      out.push({ source, imported });
+      continue;
+    }
+    if (item.type === "ExportNamedDeclaration") {
+      const source = item.source?.value;
+      if (typeof source !== "string") continue;
+      const imported = [];
+      const specs = Array.isArray(item.specifiers) ? item.specifiers : [];
+      for (const spec of specs) {
+        if (!spec || typeof spec.type !== "string") continue;
+        if (spec.type === "ExportSpecifier") {
+          const named = spec?.orig ?? spec?.local ?? spec?.exported;
+          const exported = spec?.exported ?? named;
+          const name = exported?.value ?? named?.value;
+          if (typeof name === "string" && name.length > 0) {
+            imported.push({
+              kind: name === "default" ? "default" : "named",
+              name
+            });
+          }
+        } else if (spec.type === "ExportNamespaceSpecifier") {
+          imported.push({ kind: "namespace" });
+        }
+      }
+      out.push({ source, imported });
+      continue;
+    }
+    if (item.type === "ExportAllDeclaration") {
+      const source = item.source?.value;
+      if (typeof source !== "string") continue;
+      out.push({ source, imported: [{ kind: "export-star" }] });
+      continue;
+    }
+  }
+  const dynamic = [];
+  collectDynamicImports(ast, dynamic);
+  for (const source of dynamic) {
+    if (typeof source === "string" && source.length > 0) {
+      out.push({ source, imported: [] });
+    }
+  }
+  return out;
+}
+function resolveDepEntryForBareImport(spec, importerAbs) {
+  const resolved = native?.resolveModule ? native.resolveModule(spec, importerAbs) : null;
+  const kind = resolved?.kind;
+  if (!resolved || kind === "Builtin" || kind === "Virtual" || kind === "NotFound") return null;
+  const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
+  if (typeof fsPath !== "string" || fsPath.length === 0) return null;
+  const pkg = resolved?.pkg ?? null;
+  const packageName = pkg && typeof pkg.name === "string" && pkg.name.length > 0 ? pkg.name : spec;
+  const packageVersion = pkg && typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : "0.0.0";
+  const subpath = computeSubpathFromEntryPath(fsPath);
+  const dep = registerDepEntry({
+    entryPath: fsPath,
+    packageName,
+    packageVersion,
+    subpath
+  });
+  return { fileName: dep.fileName, entryPath: fsPath, packageName, packageVersion };
+}
+function safeRealpath(absPath) {
+  const resolved = import_path24.default.resolve(absPath);
+  try {
+    const nativeFn = import_fs22.default.realpathSync.native;
+    return nativeFn ? nativeFn(resolved) : import_fs22.default.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+function dedupeSortedStrings2(values) {
+  const sorted = Array.from(values).map((value) => typeof value === "string" ? value : "").filter(Boolean).sort();
+  const unique = [];
+  for (const name of sorted) {
+    if (unique.length === 0 || unique[unique.length - 1] !== name) unique.push(name);
+  }
+  return unique;
+}
+function buildCanonicalDepFileNameIndex(entries) {
+  const out = /* @__PURE__ */ new Map();
+  for (const entry of entries) {
+    const fileName = typeof entry?.fileName === "string" ? entry.fileName : "";
+    const entryPath = typeof entry?.entryPath === "string" ? entry.entryPath : "";
+    if (!fileName || !entryPath) continue;
+    const key = safeRealpath(entryPath);
+    if (!out.has(key)) out.set(key, fileName);
+  }
+  return out;
+}
+function canonicalizeDepFileName(fileName, entryPath, canonicalFileNamesByEntryPath) {
+  if (!fileName || !entryPath || !canonicalFileNamesByEntryPath || canonicalFileNamesByEntryPath.size === 0) {
+    return fileName;
+  }
+  return canonicalFileNamesByEntryPath.get(safeRealpath(entryPath)) ?? fileName;
+}
+function canonicalizeDepUsageIndex(index, canonicalFileNamesByEntryPath) {
+  if (!canonicalFileNamesByEntryPath || canonicalFileNamesByEntryPath.size === 0) {
+    return index;
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const usage of index.values()) {
+    const canonicalFileName = canonicalizeDepFileName(
+      usage.fileName,
+      usage.entryPath,
+      canonicalFileNamesByEntryPath
+    );
+    const existing = out.get(canonicalFileName);
+    if (!existing) {
+      out.set(canonicalFileName, {
+        ...usage,
+        fileName: canonicalFileName,
+        usedExports: dedupeSortedStrings2(usage.usedExports),
+        importerKeys: dedupeSortedStrings2(usage.importerKeys),
+        entryRootKeys: dedupeSortedStrings2(usage.entryRootKeys)
+      });
+      continue;
+    }
+    existing.usedExports = dedupeSortedStrings2([
+      ...existing.usedExports,
+      ...Array.isArray(usage.usedExports) ? usage.usedExports : []
+    ]);
+    existing.hasNamespace = existing.hasNamespace || usage.hasNamespace;
+    existing.hasExportStar = existing.hasExportStar || usage.hasExportStar;
+    existing.importerKeys = dedupeSortedStrings2([
+      ...Array.isArray(existing.importerKeys) ? existing.importerKeys : [],
+      ...Array.isArray(usage.importerKeys) ? usage.importerKeys : []
+    ]);
+    existing.entryRootKeys = dedupeSortedStrings2([
+      ...Array.isArray(existing.entryRootKeys) ? existing.entryRootKeys : [],
+      ...Array.isArray(usage.entryRootKeys) ? usage.entryRootKeys : []
+    ]);
+  }
+  return out;
+}
+function normalizeAllowedRoots(roots) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const root of roots) {
+    if (typeof root !== "string" || root.length === 0) continue;
+    const normalized = safeRealpath(root).replace(/[\\\/]+$/, "");
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  out.sort();
+  return out;
+}
+function isWithinAllowedRoots(absPath, allowedRoots) {
+  for (const root of allowedRoots) {
+    if (absPath === root) return true;
+    if (absPath.startsWith(root + import_path24.default.sep)) return true;
+  }
+  return false;
+}
+function normalizeProjectKey(rootDir, absPath) {
+  const normalizedRoot = safeRealpath(rootDir);
+  const normalizedPath = safeRealpath(absPath);
+  const rel = import_path24.default.relative(normalizedRoot, normalizedPath).replace(/\\/g, "/");
+  if (!rel || rel === ".") return ".";
+  return rel;
+}
+async function scanDepUsage(options) {
+  const { rootDir, entries } = options;
+  const allowedRoots = normalizeAllowedRoots(
+    Array.isArray(options.allowedRoots) && options.allowedRoots.length ? options.allowedRoots : [rootDir]
+  );
+  const usage = /* @__PURE__ */ new Map();
+  const queue = [];
+  const visitedFiles = /* @__PURE__ */ new Set();
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    const abs = import_path24.default.isAbsolute(entry) ? entry : import_path24.default.resolve(rootDir, entry);
+    queue.push({
+      absPath: abs,
+      entryRootKey: normalizeProjectKey(rootDir, abs)
+    });
+  }
+  while (queue.length) {
+    const queued = queue.shift();
+    const absPath = safeRealpath(queued.absPath);
+    const entryRootKey = queued.entryRootKey;
+    const visitKey = `${absPath}\0${entryRootKey}`;
+    if (visitedFiles.has(visitKey)) continue;
+    visitedFiles.add(visitKey);
+    if (!isWithinAllowedRoots(absPath, allowedRoots)) continue;
+    if (absPath.includes(`${import_path24.default.sep}node_modules${import_path24.default.sep}`)) continue;
+    const ext = import_path24.default.extname(absPath).toLowerCase();
+    if (!SCAN_EXTS.has(ext)) continue;
+    if (absPath.endsWith(".d.ts")) continue;
+    if (!import_fs22.default.existsSync(absPath)) continue;
+    let code = "";
+    try {
+      code = import_fs22.default.readFileSync(absPath, "utf8");
+    } catch {
+      continue;
+    }
+    const records = parseModuleForUsage(absPath, code);
+    for (const record of records) {
+      const source = record.source;
+      if (typeof source !== "string" || source.length === 0) continue;
+      const resolvedImport = resolveImport(source, absPath);
+      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path24.default.sep}node_modules${import_path24.default.sep}`) ? resolvedImport : null;
+      if (resolvedLocalImport) {
+        queue.push({ absPath: resolvedLocalImport, entryRootKey });
+        continue;
+      }
+      if (isBareSpecifier(source)) {
+        const resolved = resolveDepEntryForBareImport(source, absPath);
+        if (!resolved) continue;
+        const key = resolved.fileName;
+        let item = usage.get(key);
+        if (!item) {
+          item = {
+            fileName: resolved.fileName,
+            entryPath: resolved.entryPath,
+            packageName: resolved.packageName,
+            packageVersion: resolved.packageVersion,
+            used: /* @__PURE__ */ new Set(),
+            hasNamespace: false,
+            hasExportStar: false,
+            importers: /* @__PURE__ */ new Set(),
+            entryRoots: /* @__PURE__ */ new Set()
+          };
+          usage.set(key, item);
+        }
+        item.importers.add(normalizeProjectKey(rootDir, absPath));
+        item.entryRoots.add(entryRootKey);
+        for (const imp of record.imported) {
+          if (imp.kind === "namespace") item.hasNamespace = true;
+          if (imp.kind === "export-star") item.hasExportStar = true;
+          if (imp.kind === "default") item.used.add("default");
+          if (imp.kind === "named" && imp.name) item.used.add(imp.name);
+        }
+        continue;
+      }
+    }
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const item of usage.values()) {
+    out.set(item.fileName, {
+      fileName: item.fileName,
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
+      usedExports: dedupeSortedStrings2(item.used.values()),
+      hasNamespace: item.hasNamespace,
+      hasExportStar: item.hasExportStar,
+      importerKeys: dedupeSortedStrings2(item.importers.values()),
+      entryRootKeys: dedupeSortedStrings2(item.entryRoots.values())
+    });
+  }
+  return out;
+}
+async function scanDepEntryPaths(options) {
+  const { rootDir, entries } = options;
+  const allowedRoots = normalizeAllowedRoots(
+    Array.isArray(options.allowedRoots) && options.allowedRoots.length ? options.allowedRoots : [rootDir]
+  );
+  const queue = [];
+  const visitedFiles = /* @__PURE__ */ new Set();
+  const entryPaths = /* @__PURE__ */ new Map();
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    queue.push(import_path24.default.isAbsolute(entry) ? entry : import_path24.default.resolve(rootDir, entry));
+  }
+  while (queue.length) {
+    const absPath = safeRealpath(queue.shift());
+    if (visitedFiles.has(absPath)) continue;
+    visitedFiles.add(absPath);
+    if (!isWithinAllowedRoots(absPath, allowedRoots)) continue;
+    if (absPath.includes(`${import_path24.default.sep}node_modules${import_path24.default.sep}`)) continue;
+    const ext = import_path24.default.extname(absPath).toLowerCase();
+    if (!SCAN_EXTS.has(ext)) continue;
+    if (absPath.endsWith(".d.ts")) continue;
+    if (!import_fs22.default.existsSync(absPath)) continue;
+    let code = "";
+    try {
+      code = import_fs22.default.readFileSync(absPath, "utf8");
+    } catch {
+      continue;
+    }
+    const records = parseModuleForUsage(absPath, code);
+    for (const record of records) {
+      const source = record.source;
+      if (typeof source !== "string" || source.length === 0) continue;
+      const resolvedImport = resolveImport(source, absPath);
+      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path24.default.sep}node_modules${import_path24.default.sep}`) ? resolvedImport : null;
+      if (resolvedLocalImport) {
+        queue.push(resolvedLocalImport);
+        continue;
+      }
+      if (!isBareSpecifier(source)) continue;
+      const resolved = resolveDepEntryForBareImport(source, absPath);
+      if (!resolved || !resolved.entryPath.includes("node_modules")) continue;
+      const canonicalEntryPath = safeRealpath(resolved.entryPath);
+      if (!entryPaths.has(canonicalEntryPath)) {
+        entryPaths.set(canonicalEntryPath, {
+          entryPath: canonicalEntryPath,
+          packageName: resolved.packageName
+        });
+      }
+    }
+  }
+  return Array.from(entryPaths.values()).sort((a, b) => a.entryPath.localeCompare(b.entryPath));
+}
+var import_fs22, import_path24, import_core2, SCAN_EXTS;
+var init_usage = __esm({
+  "src/core/deps/usage.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs22 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
+    import_core2 = require("@swc/core");
+    init_resolver();
+    init_native();
+    init_registry();
+    SCAN_EXTS = /* @__PURE__ */ new Set([
+      ".js",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".mjs",
+      ".cjs",
+      ".mts",
+      ".cts"
+    ]);
+  }
+});
+
+// src/core/utils/define.ts
+function applyDefineReplacements(code, definitions) {
+  if (!definitions || Object.keys(definitions).length === 0) {
+    return code;
+  }
+  let result = code;
+  const sortedKeys = Object.keys(definitions).sort((a, b) => b.length - a.length);
+  for (const key of sortedKeys) {
+    if (key === "import.meta.env") continue;
+    const value = definitions[key];
+    let replacement;
+    if (typeof value === "string") {
+      if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+        replacement = value;
+      } else {
+        replacement = JSON.stringify(value);
+      }
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      replacement = String(value);
+    } else if (value === null || value === void 0) {
+      replacement = "null";
+    } else {
+      replacement = JSON.stringify(value);
+    }
+    if (key.includes(".")) {
+      result = replaceMemberExpression(result, key, replacement);
+    } else {
+      result = replaceIdentifier(result, key, replacement);
+    }
+  }
+  if ("import.meta.env" in definitions) {
+    const envObj = definitions["import.meta.env"];
+    let envObjLiteral;
+    if (typeof envObj === "string" && envObj.startsWith("{")) {
+      envObjLiteral = envObj;
+    } else {
+      envObjLiteral = JSON.stringify(envObj);
+    }
+    result = result.replace(/(?<![\w.$])import\.meta\.env(?!\w)/g, envObjLiteral);
+  }
+  return result;
+}
+function replaceIdentifier(code, identifier, replacement) {
+  const regex = new RegExp(
+    `(?<![\\w.$])${escapeRegExp(identifier)}(?![\\w])`,
+    "g"
+  );
+  return code.replace(regex, replacement);
+}
+function replaceMemberExpression(code, expression, replacement) {
+  const parts = expression.split(".");
+  const pattern = parts.map(escapeRegExp).join("\\s*\\.\\s*");
+  const regex = new RegExp(
+    `(?<![\\w.$])${pattern}(?![\\w.])`,
+    "g"
+  );
+  return code.replace(regex, replacement);
+}
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildDefineConfig(userDefine, envValues, envPrefix = ["VITE_", "IONIFY_"]) {
+  const define = { ...userDefine || {} };
+  const prefixes = Array.isArray(envPrefix) ? envPrefix : [envPrefix];
+  const prefixedEnvVars = {};
+  for (const [key, value] of Object.entries(envValues)) {
+    const hasPrefix = prefixes.some((prefix) => key.startsWith(prefix));
+    if (hasPrefix || key === "NODE_ENV" || key === "MODE") {
+      prefixedEnvVars[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(prefixedEnvVars)) {
+    const importMetaKey = `import.meta.env.${key}`;
+    if (!(importMetaKey in define)) {
+      define[importMetaKey] = value;
+    }
+  }
+  const isProductionRuntime = envValues.NODE_ENV === "production";
+  if (!("import.meta.env.DEV" in define)) {
+    define["import.meta.env.DEV"] = !isProductionRuntime;
+  }
+  if (!("import.meta.env.PROD" in define)) {
+    define["import.meta.env.PROD"] = isProductionRuntime;
+  }
+  if (!("process.env.NODE_ENV" in define) && typeof envValues.NODE_ENV === "string") {
+    define["process.env.NODE_ENV"] = envValues.NODE_ENV;
+  }
+  if (!("process.env.MODE" in define) && typeof envValues.MODE === "string") {
+    define["process.env.MODE"] = envValues.MODE;
+  }
+  if (!("import.meta.env" in define)) {
+    const envObj = {
+      MODE: envValues.MODE ?? "development",
+      DEV: !isProductionRuntime,
+      PROD: isProductionRuntime,
+      BASE_URL: "/",
+      SSR: false
+    };
+    for (const [key, value] of Object.entries(prefixedEnvVars)) {
+      envObj[key] = value;
+    }
+    define["import.meta.env"] = envObj;
+  }
+  return define;
+}
+function substituteEnvPlaceholders(input, envValues, envPrefix = ["VITE_", "IONIFY_"]) {
+  const prefixes = Array.isArray(envPrefix) ? envPrefix : [envPrefix];
+  return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key) => {
+    const known = key === "NODE_ENV" || key === "MODE" || prefixes.some((prefix) => key.startsWith(prefix));
+    if (!known) return match;
+    const replacement = envValues[key];
+    return replacement !== void 0 ? replacement : match;
+  });
+}
+var ENV_PLACEHOLDER_PATTERN;
+var init_define = __esm({
+  "src/core/utils/define.ts"() {
+    "use strict";
+    init_cjs_shims();
+    ENV_PLACEHOLDER_PATTERN = /%([A-Z0-9_]+)%/g;
+  }
+});
+
+// src/cli/utils/deps-hash.ts
+function computeDepsHash(configHash, lockfile, opts) {
+  const hash = import_crypto7.default.createHash("sha256");
+  hash.update(configHash);
+  hash.update(`depsSchema=${DEPS_CACHE_SCHEMA_VERSION}`);
+  if (lockfile) {
+    hash.update(lockfile.contents);
+  }
+  hash.update(`NODE_ENV=${opts.nodeEnv}`);
+  hash.update(`optimizeDeps.sourcemap=${opts.sourcemap ? "1" : "0"}`);
+  hash.update(`optimizeDeps.bundleEsm=${opts.bundleEsm ? "1" : "0"}`);
+  hash.update(`optimizeDeps.sharedChunks=${opts.sharedChunks}`);
+  hash.update(`optimizeDeps.outputVersion=${opts.outputVersion}`);
+  return hash.digest("hex").slice(0, 16);
+}
+var import_crypto7, DEPS_CACHE_SCHEMA_VERSION;
+var init_deps_hash = __esm({
+  "src/cli/utils/deps-hash.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_crypto7 = __toESM(require("crypto"), 1);
+    DEPS_CACHE_SCHEMA_VERSION = 1;
+  }
+});
+
+// src/cli/utils/optimization-level.ts
+function getOptimizationPreset(level) {
+  switch (level) {
+    case 0:
+      return {
+        minifier: "swc",
+        treeshake: {
+          mode: "off",
+          include: [],
+          exclude: []
+        },
+        scopeHoist: {
+          enable: false,
+          inlineFunctions: false,
+          constantFolding: false,
+          combineVariables: false
+        }
+      };
+    case 1:
+      return {
+        minifier: "oxc",
+        treeshake: {
+          mode: "safe",
+          include: [],
+          exclude: []
+        },
+        scopeHoist: {
+          enable: true,
+          inlineFunctions: true,
+          constantFolding: false,
+          combineVariables: false
+        }
+      };
+    case 2:
+      return {
+        minifier: "oxc",
+        treeshake: {
+          mode: "safe",
+          include: [],
+          exclude: []
+        },
+        scopeHoist: {
+          enable: true,
+          inlineFunctions: true,
+          constantFolding: true,
+          combineVariables: true
+        }
+      };
+    case 3:
+      return {
+        minifier: "oxc",
+        treeshake: {
+          mode: "aggressive",
+          include: [],
+          exclude: []
+        },
+        scopeHoist: {
+          enable: true,
+          inlineFunctions: true,
+          constantFolding: true,
+          combineVariables: true
+        }
+      };
+    default:
+      return getOptimizationPreset(2);
+  }
+}
+function resolveOptimizationLevel(configLevel, options = {}) {
+  if (options.cliLevel !== void 0) {
+    const parsed = typeof options.cliLevel === "number" ? options.cliLevel : parseInt(options.cliLevel, 10);
+    if ([0, 1, 2, 3].includes(parsed)) {
+      return parsed;
+    }
+  }
+  if (options.envLevel) {
+    const parsed = parseInt(options.envLevel, 10);
+    if ([0, 1, 2, 3].includes(parsed)) {
+      return parsed;
+    }
+  }
+  if (configLevel !== void 0 && [0, 1, 2, 3].includes(configLevel)) {
+    return configLevel;
+  }
+  return null;
+}
+var init_optimization_level = __esm({
+  "src/cli/utils/optimization-level.ts"() {
+    "use strict";
+    init_cjs_shims();
+  }
+});
+
+// src/core/bundler.ts
+function resolveIonifyDir4() {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && import_path27.default.isAbsolute(fromEnv)) return fromEnv;
+  const projectRoot = process.env.IONIFY_PROJECT_ROOT;
+  if (projectRoot && import_path27.default.isAbsolute(projectRoot)) return import_path27.default.join(projectRoot, ".ionify");
+  return import_path27.default.join(process.cwd(), ".ionify");
+}
+function classifyModuleKind(id) {
+  const raw = id.startsWith(WS_MODULE_PREFIX) ? id.slice(WS_MODULE_PREFIX.length) : id;
+  const ext = import_path27.default.posix.extname(raw.replace(/\\/g, "/")).toLowerCase();
+  if (CSS_EXTENSIONS.has(ext)) return "css";
+  if (JS_EXTENSIONS2.has(ext)) return "js";
+  return "asset";
+}
+async function writeTextFileIfChanged(filePath, contents) {
+  const nextBytes = Buffer.byteLength(contents, "utf8");
+  try {
+    const stat = await import_fs25.default.promises.stat(filePath);
+    if (stat.isFile() && stat.size === nextBytes) {
+      const existing = await import_fs25.default.promises.readFile(filePath, "utf8");
+      if (existing === contents) return false;
+    }
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  await import_fs25.default.promises.mkdir(import_path27.default.dirname(filePath), { recursive: true });
+  await import_fs25.default.promises.writeFile(filePath, contents, "utf8");
+  return true;
+}
+async function writeBufferFileIfChanged(filePath, contents) {
+  try {
+    const stat = await import_fs25.default.promises.stat(filePath);
+    if (stat.isFile() && stat.size === contents.length) {
+      const existing = await import_fs25.default.promises.readFile(filePath);
+      if (Buffer.compare(existing, contents) === 0) return false;
+    }
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  await import_fs25.default.promises.mkdir(import_path27.default.dirname(filePath), { recursive: true });
+  await import_fs25.default.promises.writeFile(filePath, contents);
+  return true;
+}
+function loadPreviousOutputStats(outputDir) {
+  const statsPath = import_path27.default.join(outputDir, "build.stats.json");
+  try {
+    const statsFile = import_fs25.default.statSync(statsPath);
+    if (!statsFile.isFile()) return null;
+    const raw = import_fs25.default.readFileSync(statsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const files = /* @__PURE__ */ new Map();
+    for (const [rel, entry] of Object.entries(parsed)) {
+      if (entry && typeof entry === "object" && typeof entry.bytes === "number" && Number.isFinite(entry.bytes) && typeof entry.hash === "string" && entry.hash.length > 0) {
+        files.set(rel, { bytes: entry.bytes, hash: entry.hash });
+      }
+    }
+    return { statsMtimeMs: statsFile.mtimeMs, files };
+  } catch {
+    return null;
+  }
+}
+async function writeTextFileIfStatsMatch(outputDir, previousStats, filePath, contents, hash) {
+  const rel = toPosix(import_path27.default.relative(outputDir, filePath));
+  const bytes = Buffer.byteLength(contents, "utf8");
+  const previous = previousStats?.files.get(rel);
+  if (previous && previous.bytes === bytes && previous.hash === hash) {
+    try {
+      const stat = await import_fs25.default.promises.stat(filePath);
+      if (stat.isFile() && stat.size === bytes && stat.mtimeMs <= previousStats.statsMtimeMs + 1) {
+        return false;
+      }
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+  }
+  await import_fs25.default.promises.mkdir(import_path27.default.dirname(filePath), { recursive: true });
+  await import_fs25.default.promises.writeFile(filePath, contents, "utf8");
+  return true;
+}
+function minifyCss(input) {
+  return input.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").replace(/\s*([{};:,])\s*/g, "$1").trim();
+}
+function orderCssModules(chunk) {
+  const cssModules = chunk.modules.filter((m) => m.kind === "css");
+  const cssSet = new Set(cssModules.map((m) => m.id));
+  const adj = /* @__PURE__ */ new Map();
+  for (const mod of cssModules) {
+    const deps = [...mod.deps || [], ...mod.dynamicDeps || []].filter((d) => cssSet.has(d));
+    deps.sort();
+    adj.set(mod.id, deps);
+  }
+  const visited = /* @__PURE__ */ new Set();
+  const temp = /* @__PURE__ */ new Set();
+  const ordered = [];
+  const dfs = (id) => {
+    if (visited.has(id) || temp.has(id)) return;
+    temp.add(id);
+    const edges = adj.get(id) || [];
+    for (const dep of edges) dfs(dep);
+    temp.delete(id);
+    visited.add(id);
+    ordered.push(id);
+  };
+  const sorted = [...cssModules.map((m) => m.id)].sort();
+  for (const id of sorted) {
+    dfs(id);
+  }
+  return ordered;
+}
+function normalizeModules(rawModules) {
+  const modules = [];
+  for (const raw of rawModules) {
+    if (typeof raw === "string") {
+      modules.push({
+        id: raw,
+        fsPath: null,
+        hash: null,
+        kind: classifyModuleKind(raw),
+        deps: [],
+        dynamicDeps: []
+      });
+      continue;
+    }
+    if (!raw || typeof raw !== "object") continue;
+    const id = typeof raw.id === "string" ? raw.id : null;
+    if (!id) continue;
+    const rawKind = typeof raw.kind === "string" ? raw.kind : classifyModuleKind(id);
+    const kind = rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
+    const deps = Array.isArray(raw.deps) ? raw.deps.filter(isNonEmptyString) : [];
+    const dynamicSource = Array.isArray(raw.dynamicDeps) ? raw.dynamicDeps : Array.isArray(raw.dynamic_deps) ? raw.dynamic_deps : [];
+    const dynamicDeps = dynamicSource.filter(isNonEmptyString);
+    const fsPath = typeof raw.fsPath === "string" ? raw.fsPath : typeof raw.fs_path === "string" ? raw.fs_path : null;
+    const hash = typeof raw.hash === "string" && raw.hash.length ? raw.hash : null;
+    modules.push({
+      id,
+      fsPath,
+      hash,
+      kind,
+      deps,
+      dynamicDeps
+    });
+  }
+  return modules;
+}
+function normalizePlan(plan) {
+  const entries = Array.isArray(plan?.entries) ? Array.from(new Set(plan.entries.filter(isNonEmptyString))) : [];
+  const rawChunks = Array.isArray(plan?.chunks) ? plan.chunks : [];
+  const normalizedChunks = rawChunks.map((chunk, index) => {
+    const id = typeof chunk?.id === "string" && chunk.id.length ? chunk.id : `chunk-${index}`;
+    const modules = normalizeModules(Array.isArray(chunk?.modules) ? chunk.modules : []);
+    const consumersRaw = Array.isArray(chunk?.consumers) ? chunk.consumers.filter(isNonEmptyString) : null;
+    const cssRaw = Array.isArray(chunk?.css) ? chunk.css.filter(isNonEmptyString) : null;
+    const assetsRaw = Array.isArray(chunk?.assets) ? chunk.assets.filter(isNonEmptyString) : null;
+    const consumers = consumersRaw && consumersRaw.length ? Array.from(new Set(consumersRaw)) : [...entries];
+    const inferredCss = cssRaw && cssRaw.length ? cssRaw : modules.filter((m) => m.kind === "css").map((m) => m.id);
+    const inferredAssets = assetsRaw && assetsRaw.length ? assetsRaw : modules.filter((m) => m.kind === "asset").map((m) => m.id);
+    return {
+      id,
+      modules,
+      entry: chunk?.entry === true,
+      shared: chunk?.shared === true,
+      consumers,
+      css: inferredCss,
+      assets: inferredAssets
+    };
+  });
+  return {
+    entries,
+    chunks: normalizedChunks
+  };
+}
+function normalizeNativeGraphMap(graph) {
+  const out = /* @__PURE__ */ new Map();
+  if (!graph) return out;
+  for (const raw of Object.values(graph)) {
+    if (!raw || typeof raw.id !== "string" || raw.id.length === 0) continue;
+    out.set(raw.id, {
+      id: raw.id,
+      hash: typeof raw.hash === "string" ? raw.hash : null,
+      deps: Array.isArray(raw.deps) ? raw.deps.filter(isNonEmptyString) : [],
+      dynamicDeps: Array.isArray(raw.dynamicDeps) ? raw.dynamicDeps.filter(isNonEmptyString) : Array.isArray(raw.dynamic_deps) ? raw.dynamic_deps.filter(isNonEmptyString) : [],
+      kind: typeof raw.kind === "string" ? raw.kind : void 0
+    });
+  }
+  return out;
+}
+function resolveGraphSeedDeps(specs, importerAbs, externalSpecifiers) {
+  return classifyImportSpecifiersForGraph(specs, importerAbs, externalSpecifiers);
+}
+function validateGraphForEntries(graph, entryIds, externalSpecifiers = []) {
+  const nodes = normalizeNativeGraphMap(graph);
+  if (nodes.size === 0) return { ok: false, reason: "empty" };
+  if (entryIds.length === 0) return { ok: true, reason: "no explicit entries" };
+  for (const entryId of entryIds) {
+    if (!nodes.has(entryId)) {
+      return { ok: false, reason: `entry missing: ${entryId}` };
+    }
+  }
+  const queue = [...entryIds];
+  const seen = /* @__PURE__ */ new Set();
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = nodes.get(id);
+    if (!node) {
+      if (isExternalGraphLeafId(id, externalSpecifiers)) {
+        continue;
+      }
+      return { ok: false, reason: `reachable node missing: ${id}` };
+    }
+    for (const dep of [...node.deps || [], ...node.dynamicDeps || []]) {
+      if (!seen.has(dep)) queue.push(dep);
+    }
+  }
+  return { ok: true, reason: `entry-reachable (${seen.size} modules)` };
+}
+function buildGraphSeedNodesFromEntries(entryPaths, workspaceRoot, depStopMap, externalSpecifiers = []) {
+  const queue = [...entryPaths];
+  const seen = new Set(queue);
+  const graphSeedNodes = [];
+  while (queue.length) {
+    const file = queue.shift();
+    if (!import_fs25.default.existsSync(file)) continue;
+    const code = import_fs25.default.readFileSync(file, "utf8");
+    let hash = getCacheKey(code);
+    let specs = [];
+    let dynamicSpecs = [];
+    if (native?.parseModuleIr) {
+      try {
+        const ir = native.parseModuleIr(file, code);
+        hash = ir.hash;
+        const staticDeps = ir.dependencies.filter((d) => d.kind !== "Dynamic");
+        const dynamicDeps = ir.dependencies.filter((d) => d.kind === "Dynamic");
+        specs = staticDeps.map((d) => d.specifier);
+        dynamicSpecs = dynamicDeps.map((d) => d.specifier);
+      } catch {
+        specs = extractImports(code, file);
+      }
+    } else {
+      specs = extractImports(code, file);
+    }
+    const staticResolved = resolveGraphSeedDeps(specs, file, externalSpecifiers);
+    const dynamicResolved = resolveGraphSeedDeps(dynamicSpecs, file, externalSpecifiers);
+    const depsAbs = staticResolved.localDeps;
+    const dynamicAbs = dynamicResolved.localDeps;
+    const fileId = toWsModuleId(file, workspaceRoot);
+    if (!fileId) continue;
+    const depsIds = Array.from(/* @__PURE__ */ new Set([
+      ...depsAbs.map((dep) => toWsModuleId(dep, workspaceRoot)).filter((id) => typeof id === "string" && id.length > 0),
+      ...staticResolved.externalDeps
+    ]));
+    const dynamicIds = Array.from(/* @__PURE__ */ new Set([
+      ...dynamicAbs.map((dep) => toWsModuleId(dep, workspaceRoot)).filter((id) => typeof id === "string" && id.length > 0),
+      ...dynamicResolved.externalDeps
+    ]));
+    graphSeedNodes.push({
+      id: fileId,
+      hash,
+      deps: depsIds,
+      dynamicDeps: dynamicIds,
+      kind: classifyModuleKind(fileId)
+    });
+    for (const dep of [...depsAbs, ...dynamicAbs]) {
+      if (!seen.has(dep)) {
+        seen.add(dep);
+        if (depStopMap && depStopMap.size > 0) {
+          let canonical;
+          try {
+            canonical = import_fs25.default.realpathSync.native(dep);
+          } catch {
+            canonical = import_path27.default.resolve(dep);
+          }
+          const artifactHash = depStopMap.get(canonical);
+          if (artifactHash) {
+            const depId = toWsModuleId(dep, workspaceRoot) ?? canonical;
+            graphSeedNodes.push({
+              id: depId,
+              hash: artifactHash,
+              deps: [],
+              dynamicDeps: [],
+              kind: "dep"
+            });
+            continue;
+          }
+        }
+        queue.push(dep);
+      }
+    }
+  }
+  return graphSeedNodes;
+}
+function recordGraphSeedNodes(nodes) {
+  if (nodes.length === 0) return;
+  if (typeof native?.graphRecordBatch === "function") {
+    native.graphRecordBatch(nodes);
+    return;
+  }
+  if (typeof native?.graphRecord === "function") {
+    for (const node of nodes) {
+      native.graphRecord(node.id, node.hash, node.deps, node.dynamicDeps, node.kind);
+    }
+    return;
+  }
+  if (typeof native?.recordFile === "function") {
+    for (const node of nodes) {
+      native.recordFile(node.id, node.hash, node.deps, node.dynamicDeps, node.kind);
+    }
+  }
+}
+function rebuildGraphFromEntries(entryPaths, workspaceRoot, depStops, externalSpecifiers = []) {
+  const depStopMap = depStops && depStops.length > 0 ? new Map(
+    depStops.filter((s) => s.artifactHash.length > 0).map((s) => {
+      let canonical;
+      try {
+        canonical = import_fs25.default.realpathSync.native(s.entryPath);
+      } catch {
+        canonical = import_path27.default.resolve(s.entryPath);
+      }
+      return [canonical, s.artifactHash];
+    })
+  ) : null;
+  const canUseNativeBuilder = typeof native?.graphBuildFromEntries === "function";
+  if (canUseNativeBuilder) {
+    try {
+      const result = native.graphBuildFromEntries(
+        entryPaths,
+        workspaceRoot,
+        resolveIonifyDir4(),
+        depStops ?? null,
+        externalSpecifiers.length ? Array.from(externalSpecifiers) : null
+      );
+      const moduleCount = typeof result?.moduleCount === "number" ? result.moduleCount : typeof result?.module_count === "number" ? result.module_count : 0;
+      if (moduleCount > 0) {
+        return { moduleCount, native: true };
+      }
+      logWarn("[Build] Native graph build returned no modules; falling back to TS graph rebuild.");
+    } catch (err) {
+      logWarn(`[Build] Native graph build failed; falling back to TS graph rebuild (${String(err)})`);
+    }
+  }
+  const graphSeedNodes = buildGraphSeedNodesFromEntries(entryPaths, workspaceRoot, depStopMap, externalSpecifiers);
+  recordGraphSeedNodes(graphSeedNodes);
+  return { moduleCount: graphSeedNodes.length, native: false };
+}
+async function generateBuildPlan(entries, versionInputs, depStops, externalSpecifiers = []) {
+  const workspaceRoot = resolveWorkspaceRoot(null);
+  const entryIds = Array.isArray(entries) ? entries.map((entry) => {
+    if (typeof entry !== "string" || entry.length === 0) return null;
+    if (entry.startsWith(WS_MODULE_PREFIX)) return entry;
+    if (!import_path27.default.isAbsolute(entry)) return null;
+    return toWsModuleId(entry, workspaceRoot);
+  }).filter((id) => typeof id === "string" && id.length > 0) : [];
+  const entryPaths = Array.isArray(entries) ? entries.map((entry) => {
+    if (typeof entry !== "string" || entry.length === 0) return null;
+    if (import_path27.default.isAbsolute(entry)) return entry;
+    if (entry.startsWith(WS_MODULE_PREFIX)) return fromWsModuleId(entry, workspaceRoot);
+    return null;
+  }).filter((p) => typeof p === "string" && p.length > 0) : [];
+  const version = versionInputs ? computeGraphVersion(versionInputs) : void 0;
+  logInfo(`Graph version: ${version || "default"}`);
+  const graphDbPath = import_path27.default.join(resolveIonifyDir4(), "graph.db");
+  const graphInitStart = Date.now();
+  let nativeGraphReady = ensureNativeGraph(graphDbPath, version, {
+    retryMs: 1500,
+    retryIntervalMs: 50
+  });
+  profileLog(`ensureNativeGraph_ms=${Date.now() - graphInitStart} graph=shared`);
+  let usingBuildLocalGraph = false;
+  let moduleCount = 0;
+  let persistedGraph = null;
+  if (nativeGraphReady && native?.graphLoadMap) {
+    try {
+      const graphLoadStart = Date.now();
+      persistedGraph = native.graphLoadMap();
+      profileLog(`graphLoadMap_ms=${Date.now() - graphLoadStart}`);
+      const graphSize = persistedGraph ? Object.keys(persistedGraph).length : 0;
+      moduleCount = graphSize;
+      logInfo(`Native graph loaded: ${graphSize} modules`);
+      if (persistedGraph && graphSize > 0) {
+        logInfo(`Loaded persisted graph with ${graphSize} modules`);
+      }
+    } catch (err) {
+      logWarn(`Failed to load persisted graph: ${String(err)}`);
+      persistedGraph = null;
+    }
+  } else {
+    logWarn(`graphLoadMap not available, native binding: ${!!native}`);
+  }
+  let graphValidation = nativeGraphReady ? validateGraphForEntries(persistedGraph, entryIds, externalSpecifiers) : { ok: false, reason: "native graph unavailable" };
+  if (!graphValidation.ok && entryPaths.length > 0 && native) {
+    if (!nativeGraphReady) {
+      const buildGraphDbPath = import_path27.default.join(resolveIonifyDir4(), "build", "graph.db");
+      try {
+        import_fs25.default.rmSync(buildGraphDbPath, { recursive: true, force: true });
+      } catch {
+      }
+      const buildGraphVersion = version ? `${version}-build` : "build";
+      const buildGraphInitStart = Date.now();
+      nativeGraphReady = ensureNativeGraph(buildGraphDbPath, buildGraphVersion);
+      profileLog(`ensureNativeGraph_ms=${Date.now() - buildGraphInitStart} graph=build-local`);
+      usingBuildLocalGraph = nativeGraphReady;
+      if (nativeGraphReady) {
+        logWarn(`[Build] Shared graph unavailable (${graphValidation.reason}); using build-local planner graph.`);
+      }
+    }
+    if (!nativeGraphReady) {
+      throw new Error(`Build graph is not available and cannot be rebuilt (${graphValidation.reason})`);
+    }
+    logWarn(`[Build] Graph is not planner-ready (${graphValidation.reason}) \u2014 rebuilding from entries...`);
+    const rebuild = rebuildGraphFromEntries(entryPaths, workspaceRoot, depStops, externalSpecifiers);
+    try {
+      const reloadStart = Date.now();
+      persistedGraph = native.graphLoadMap ? native.graphLoadMap() : null;
+      profileLog(`graphReloadAfterRebuild_ms=${Date.now() - reloadStart}`);
+      moduleCount = persistedGraph ? Object.keys(persistedGraph).length : rebuild.moduleCount;
+    } catch (err) {
+      persistedGraph = null;
+      moduleCount = rebuild.moduleCount;
+      logWarn(`Failed to reload rebuilt graph: ${String(err)}`);
+    }
+    graphValidation = validateGraphForEntries(persistedGraph, entryIds, externalSpecifiers);
+    if (!graphValidation.ok) {
+      throw new Error(`Build graph rebuild did not produce an entry-reachable graph (${graphValidation.reason})`);
+    }
+    logInfo(`[Build] Dependency graph rebuilt: ${moduleCount} modules (${rebuild.native ? "native" : "ts"})`);
+  }
+  if (!nativeGraphReady) {
+    throw new Error("Native graph is unavailable; refusing to emit build output from fallback graph state.");
+  }
+  let planCachePath = null;
+  if (nativeGraphReady && version && native?.graphStateFingerprint) {
+    try {
+      const fpStart = Date.now();
+      const fp = typeof native.planCacheFingerprint === "function" ? native.planCacheFingerprint() : native.graphStateFingerprint();
+      profileLog(`planFingerprint_ms=${Date.now() - fpStart}`);
+      if (fp) {
+        planCachePath = import_path27.default.join(resolveIonifyDir4(), "cas", version, "plan-v1", `${fp}.json`);
+        if (import_fs25.default.existsSync(planCachePath)) {
+          try {
+            const planReadStart = Date.now();
+            const cached = JSON.parse(import_fs25.default.readFileSync(planCachePath, "utf8"));
+            profileLog(`planCacheRead_ms=${Date.now() - planReadStart}`);
+            logInfo(`[Planner] Plan cache HIT (fp=${fp.slice(0, 8)}): skipped graphLoadMap + BFS`);
+            return normalizePlan(cached);
+          } catch {
+          }
+        }
+        logInfo(`[Planner] Plan cache path ready (fp=${fp.slice(0, 8)})`);
+      }
+    } catch {
+      planCachePath = null;
+    }
+  }
+  if (nativeGraphReady && native?.plannerPlanBuild) {
+    try {
+      const start = Date.now();
+      const graphLabel = usingBuildLocalGraph ? "build-local" : "shared";
+      logInfo(`[Planner] Calling native plannerPlanBuild with ${entryIds.length} entries (${graphLabel} graph)`);
+      const plan = native.plannerPlanBuild(entryIds);
+      logInfo(`[Planner] Native plan returned: ${plan.entries.length} entries, ${plan.chunks.length} chunks in ${Date.now() - start}ms`);
+      const normalized = normalizePlan(plan);
+      if (planCachePath) {
+        try {
+          import_fs25.default.mkdirSync(import_path27.default.dirname(planCachePath), { recursive: true });
+          import_fs25.default.writeFileSync(planCachePath, JSON.stringify(normalized), "utf8");
+        } catch {
+        }
+      }
+      return normalized;
+    } catch (err) {
+      throw new Error(`plannerPlanBuild failed after graph validation: ${String(err)}`);
+    }
+  }
+  throw new Error("native.plannerPlanBuild is unavailable; refusing to emit build output from fallback graph state.");
+}
+async function writeBuildManifest(outputDir, plan, artifacts, options) {
+  const filesByChunk = /* @__PURE__ */ new Map();
+  for (const artifact of artifacts) {
+    filesByChunk.set(artifact.id, artifact.files);
+  }
+  const manifest = {
+    entries: plan.entries,
+    chunks: plan.chunks.map((chunk) => ({
+      id: chunk.id,
+      entry: chunk.entry,
+      shared: chunk.shared,
+      consumers: chunk.consumers,
+      modules: chunk.modules.map((mod) => ({
+        id: mod.id,
+        kind: mod.kind,
+        deps: mod.deps,
+        dynamicDeps: mod.dynamicDeps,
+        // artifactHash is the final computed transform hash (set via plan refs during build/dev).
+        // Used by `ionify push --tier1` to locate CAS blobs and publish the cloud manifest.
+        artifactHash: mod.hash ?? void 0
+      })),
+      files: filesByChunk.get(chunk.id) ?? { js: [], css: [], assets: [] }
+    })),
+    federation: options?.federation ?? void 0
+  };
+  const dir = import_path27.default.resolve(outputDir);
+  await import_fs25.default.promises.mkdir(dir, { recursive: true });
+  const file = import_path27.default.join(dir, "manifest.json");
+  const contents = JSON.stringify(manifest, null, 2);
+  await writeTextFileIfChanged(file, contents);
+  return {
+    file: toPosix(import_path27.default.relative(dir, file)),
+    bytes: Buffer.byteLength(contents, "utf8"),
+    hash: getCacheKey(contents)
+  };
+}
+function makeCssSelfContained(css, fromFsPath, visited, ctx) {
+  if (!fromFsPath) return css;
+  const importRe = new RegExp(CSS_AT_IMPORT_RE_SRC, "gi");
+  let out = "";
+  let lastIndex = 0;
+  let match;
+  while (match = importRe.exec(css)) {
+    out += rewriteCssUrls(css.slice(lastIndex, match.index), fromFsPath, ctx.rootDir, ctx.emitUrlAsset);
+    out += inlineOneCssImport(match, fromFsPath, visited, ctx);
+    lastIndex = match.index + match[0].length;
+  }
+  out += rewriteCssUrls(css.slice(lastIndex), fromFsPath, ctx.rootDir, ctx.emitUrlAsset);
+  return out;
+}
+function inlineOneCssImport(match, fromFsPath, visited, ctx) {
+  const full = match[0];
+  const spec = (match[2] || "").trim();
+  const mediaTail = (match[3] || "").trim();
+  if (!spec) return full;
+  if (/^(?:[a-z]+:)?\/\//i.test(spec) || spec.startsWith("data:")) return full;
+  let target = null;
+  if (spec.startsWith(".")) {
+    target = import_path27.default.resolve(import_path27.default.dirname(fromFsPath), spec);
+  } else {
+    try {
+      const r = native?.resolveModule?.(spec, fromFsPath);
+      const fp = r?.fsPath ?? r?.fs_path ?? null;
+      if (typeof fp === "string" && fp.toLowerCase().endsWith(".css")) target = fp;
+    } catch {
+    }
+  }
+  if (!target) return full;
+  target = target.split("?")[0].split("#")[0];
+  if (!import_fs25.default.existsSync(target)) return full;
+  let real;
+  try {
+    real = import_fs25.default.realpathSync(target);
+  } catch {
+    real = target;
+  }
+  if (visited.has(real)) return "";
+  visited.add(real);
+  let imported;
+  try {
+    imported = import_fs25.default.readFileSync(target, "utf8");
+  } catch {
+    return full;
+  }
+  imported = makeCssSelfContained(imported, target, visited, ctx);
+  return mediaTail ? `@media ${mediaTail} {
+${imported}
+}` : imported;
+}
+async function emitChunks(outputDir, plan, moduleOutputs, opts) {
+  if (!native?.buildChunks) {
+    logWarn("Native buildChunks binding is not available; using JS fallback emitter.");
+    const rawArtifacts2 = buildJsFallbackArtifacts(plan, moduleOutputs);
+    return emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts2);
+  }
+  const start = Date.now();
+  const rawArtifacts = native.buildChunks(plan, opts?.casRoot, opts?.versionHash, opts?.nativeOptions) ?? [];
+  logInfo(`[Bundler] buildChunks completed in ${Date.now() - start}ms (native)`);
+  return emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts);
+}
+function buildJsFallbackArtifacts(plan, moduleOutputs) {
+  const artifacts = [];
+  for (const chunk of plan.chunks) {
+    const jsParts = [];
+    const assets = [];
+    const idToFsPath = /* @__PURE__ */ new Map();
+    for (const mod of chunk.modules) {
+      const fsPath = mod.fsPath;
+      if (typeof fsPath === "string" && fsPath.length > 0) {
+        idToFsPath.set(mod.id, fsPath);
+      }
+    }
+    for (const mod of chunk.modules) {
+      const output = moduleOutputs.get(mod.id);
+      if (output?.type === "js") {
+        jsParts.push(`// ${mod.id}
+${output.code}`);
+      }
+    }
+    for (const assetId of chunk.assets) {
+      const assetPath = idToFsPath.get(assetId);
+      if (!assetPath) continue;
+      try {
+        const data = import_fs25.default.readFileSync(assetPath);
+        if (data.length < 4096) {
+          const mime = "application/octet-stream";
+          const inline = `data:${mime};base64,${data.toString("base64")}`;
+          jsParts.push(`// ${assetId}
+export const __ionify_asset = "${inline}";`);
+          continue;
+        }
+        const hash = import_crypto9.default.createHash("sha256").update(data).digest("hex").slice(0, 16);
+        const ext = import_path27.default.extname(assetPath) || ".bin";
+        const fileName = `assets/${hash}${ext}`;
+        assets.push({
+          source: assetPath,
+          file_name: fileName
+        });
+      } catch {
+        const fileName = import_path27.default.basename(assetPath) || "asset";
+        assets.push({
+          source: assetPath,
+          file_name: fileName
+        });
+      }
+    }
+    const code = jsParts.length ? jsParts.join("\n\n") : `// Ionify JS fallback for ${chunk.id}
+export default {};`;
+    artifacts.push({
+      id: chunk.id,
+      file_name: `${chunk.id}.fallback.js`,
+      code,
+      map: null,
+      assets,
+      code_bytes: Buffer.byteLength(code, "utf8"),
+      map_bytes: 0
+    });
+  }
+  return artifacts;
+}
+function normalizeNativeArtifact(raw) {
+  const id = raw.id;
+  if (!id) {
+    throw new Error("Native artifact missing id");
+  }
+  const file_name = raw.file_name ?? `${id.replace(/::/g, ".")}.native.js`;
+  const code = raw.code ?? "";
+  const map = raw.map ?? null;
+  const code_bytes = typeof raw.code_bytes === "number" ? raw.code_bytes : Buffer.byteLength(code, "utf8");
+  const map_bytes = typeof raw.map_bytes === "number" ? raw.map_bytes : map ? Buffer.byteLength(map, "utf8") : 0;
+  const assets = Array.isArray(raw.assets) ? raw.assets.map((asset) => ({
+    source: asset.source,
+    file_name: asset.file_name ?? asset.fileName ?? import_path27.default.basename(asset.source ?? "asset")
+  })) : [];
+  return { id, file_name, code, map, assets, code_bytes, map_bytes };
+}
+async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts) {
+  const chunkDir = import_path27.default.join(outputDir, "chunks");
+  await import_fs25.default.promises.mkdir(chunkDir, { recursive: true });
+  const assetsDir = import_path27.default.join(outputDir, "assets");
+  await import_fs25.default.promises.mkdir(assetsDir, { recursive: true });
+  const previousOutputStats = loadPreviousOutputStats(outputDir);
+  const enableSourceMaps = process.env.IONIFY_SOURCEMAPS === "true";
+  const cssProfile = isBundleProfileEnabled() ? {
+    chunksWithCss: 0,
+    cssModulesVisited: 0,
+    cssFsFallbackReads: 0,
+    cssDedupedModules: 0,
+    cssFilesWritten: 0,
+    cssInputBytes: 0,
+    cssOutputBytes: 0,
+    nsOrder: 0n,
+    nsMinify: 0n,
+    nsEmit: 0n
+  } : null;
+  const grouped = /* @__PURE__ */ new Map();
+  for (const raw of rawArtifacts) {
+    const artifact = normalizeNativeArtifact(raw);
+    const baseId = artifact.id.split("::")[0] ?? artifact.id;
+    const bucket = grouped.get(baseId);
+    if (bucket) bucket.push(artifact);
+    else grouped.set(baseId, [artifact]);
+  }
+  const buildStats = {};
+  const results = [];
+  const cssUrlRootDir = process.env.IONIFY_PROJECT_ROOT || process.cwd();
+  const emittedUrlAssets = /* @__PURE__ */ new Set();
+  const cssCtx = {
+    rootDir: cssUrlRootDir,
+    emitUrlAsset: (absPath) => {
+      try {
+        if (isForbiddenFsPath(absPath) || !import_fs25.default.existsSync(absPath)) return null;
+        const data = import_fs25.default.readFileSync(absPath);
+        const ext = import_path27.default.extname(absPath);
+        const safeBase = import_path27.default.basename(absPath, ext).replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
+        const hash = getCacheKey(data).slice(0, 8);
+        const fileName = `${safeBase}.${hash}${ext}`;
+        if (!emittedUrlAssets.has(fileName)) {
+          const destAbs = import_path27.default.join(assetsDir, fileName);
+          let needWrite = true;
+          try {
+            if (import_fs25.default.existsSync(destAbs) && import_fs25.default.readFileSync(destAbs).equals(data)) needWrite = false;
+          } catch {
+          }
+          if (needWrite) import_fs25.default.writeFileSync(destAbs, data);
+          buildStats[`assets/${fileName}`] = {
+            bytes: data.length,
+            hash: getCacheKey(data),
+            emitter: "css-url",
+            type: "asset"
+          };
+          emittedUrlAssets.add(fileName);
+        }
+        return `./${fileName}`;
+      } catch {
+        return null;
+      }
+    }
+  };
+  for (const chunk of plan.chunks) {
+    const artifacts = grouped.get(chunk.id);
+    if (!artifacts || !artifacts.length) {
+      throw new Error(`Native bundler did not emit artifacts for ${chunk.id}`);
+    }
+    const chunkOutDir = import_path27.default.join(chunkDir, chunk.id);
+    await import_fs25.default.promises.mkdir(chunkOutDir, { recursive: true });
+    artifacts.sort((a, b) => {
+      if (a.id === chunk.id) return -1;
+      if (b.id === chunk.id) return 1;
+      return a.id.localeCompare(b.id);
+    });
+    const jsFiles = [];
+    const cssFiles = [];
+    const assetFiles = [];
+    const assetWritten = /* @__PURE__ */ new Set();
+    const idToFsPath = /* @__PURE__ */ new Map();
+    for (const mod of chunk.modules) {
+      const fsPath = mod.fsPath;
+      if (typeof fsPath === "string" && fsPath.length > 0) {
+        idToFsPath.set(mod.id, fsPath);
+      }
+    }
+    const copyAssets = async (assets) => {
+      for (const asset of assets) {
+        if (!asset?.source) continue;
+        const relName = asset.file_name ?? import_path27.default.basename(asset.source);
+        const assetFile = import_path27.default.join(outputDir, relName);
+        if (assetWritten.has(assetFile)) continue;
+        try {
+          const data = await import_fs25.default.promises.readFile(asset.source);
+          await writeBufferFileIfChanged(assetFile, data);
+          const rel = toPosix(import_path27.default.relative(outputDir, assetFile));
+          buildStats[rel] = {
+            bytes: data.length,
+            hash: getCacheKey(data),
+            emitter: "native",
+            type: "asset"
+          };
+          assetFiles.push(rel);
+          assetWritten.add(assetFile);
+        } catch (err) {
+          logWarn(`Failed to emit asset ${asset.source}: ${String(err)}`);
+        }
+      }
+    };
+    const cssOrderStart = cssProfile ? process.hrtime.bigint() : 0n;
+    const cssOrder = orderCssModules(chunk);
+    if (cssProfile) {
+      cssProfile.nsOrder += process.hrtime.bigint() - cssOrderStart;
+      if (cssOrder.length) cssProfile.chunksWithCss += 1;
+    }
+    let cssFileRel = null;
+    if (cssOrder.length) {
+      const seenCss = /* @__PURE__ */ new Set();
+      const cssPieces = [];
+      for (const cssId of cssOrder) {
+        if (cssProfile) cssProfile.cssModulesVisited += 1;
+        let cssSource = moduleOutputs.get(cssId)?.code;
+        const cssPath = idToFsPath.get(cssId) ?? null;
+        if (!cssSource && cssPath && import_fs25.default.existsSync(cssPath)) {
+          try {
+            cssSource = await import_fs25.default.promises.readFile(cssPath, "utf8");
+            if (cssProfile) cssProfile.cssFsFallbackReads += 1;
+          } catch (err) {
+            logWarn(`Failed to read CSS source ${cssId}: ${String(err)}`);
+          }
+        }
+        if (!cssSource) continue;
+        cssSource = makeCssSelfContained(cssSource, cssPath, /* @__PURE__ */ new Set(), cssCtx);
+        if (cssProfile) cssProfile.cssInputBytes += Buffer.byteLength(cssSource, "utf8");
+        const minifyStart = cssProfile ? process.hrtime.bigint() : 0n;
+        const minified = minifyCss(cssSource);
+        if (cssProfile) cssProfile.nsMinify += process.hrtime.bigint() - minifyStart;
+        if (!minified.length) continue;
+        const key = getCacheKey(minified);
+        if (seenCss.has(key)) {
+          if (cssProfile) cssProfile.cssDedupedModules += 1;
+          continue;
+        }
+        seenCss.add(key);
+        cssPieces.push(minified);
+      }
+      if (cssPieces.length) {
+        const combinedCss = cssPieces.join("\n");
+        if (cssProfile) cssProfile.cssOutputBytes += Buffer.byteLength(combinedCss, "utf8");
+        const cssHash = getCacheKey(combinedCss).slice(0, 8);
+        const cssFileName = `assets/${chunk.id}.${cssHash}.css`;
+        const cssFilePath = import_path27.default.join(outputDir, cssFileName);
+        const cssFullHash = getCacheKey(combinedCss);
+        const emitStart = cssProfile ? process.hrtime.bigint() : 0n;
+        const cssChanged = await writeTextFileIfStatsMatch(
+          outputDir,
+          previousOutputStats,
+          cssFilePath,
+          combinedCss,
+          cssFullHash
+        );
+        if (cssProfile) {
+          cssProfile.nsEmit += process.hrtime.bigint() - emitStart;
+          if (cssChanged) cssProfile.cssFilesWritten += 1;
+        }
+        cssFileRel = toPosix(import_path27.default.relative(outputDir, cssFilePath));
+        buildStats[cssFileRel] = {
+          bytes: Buffer.byteLength(combinedCss),
+          hash: cssFullHash,
+          emitter: "native",
+          type: "css"
+        };
+        cssFiles.push(cssFileRel);
+      }
+    }
+    for (const artifact of artifacts) {
+      const nativeFile = import_path27.default.join(chunkOutDir, artifact.file_name);
+      let nativeCode = artifact.code;
+      if (cssFileRel && !chunk.entry) {
+        const absCss = import_path27.default.join(outputDir, cssFileRel);
+        const relCss = toPosix(import_path27.default.relative(import_path27.default.dirname(nativeFile), absCss));
+        const inject = `(()=>{const url=new URL(${JSON.stringify(
+          relCss
+        )},import.meta.url).toString();if(typeof document!=="undefined"&&!document.querySelector('link[data-ionify-css="'+url+'"]')){const l=document.createElement("link");l.rel="stylesheet";l.href=url;l.setAttribute("data-ionify-css",url);document.head.appendChild(l);}})();`;
+        nativeCode = `${inject}
+${nativeCode}`;
+      }
+      if (enableSourceMaps && artifact.map) {
+        const mapFile = `${nativeFile}.map`;
+        const mapHash = getCacheKey(artifact.map);
+        await writeTextFileIfStatsMatch(outputDir, previousOutputStats, mapFile, artifact.map, mapHash);
+        nativeCode = `${nativeCode}
+//# sourceMappingURL=${import_path27.default.basename(mapFile)}`;
+        const relMap = toPosix(import_path27.default.relative(outputDir, mapFile));
+        buildStats[relMap] = {
+          bytes: Buffer.byteLength(artifact.map, "utf8"),
+          hash: mapHash,
+          emitter: "native",
+          type: "map"
+        };
+        jsFiles.push(relMap);
+      }
+      const nativeHash = getCacheKey(nativeCode);
+      await writeTextFileIfStatsMatch(
+        outputDir,
+        previousOutputStats,
+        nativeFile,
+        nativeCode,
+        nativeHash
+      );
+      const relNative = toPosix(import_path27.default.relative(outputDir, nativeFile));
+      buildStats[relNative] = {
+        bytes: Buffer.byteLength(nativeCode, "utf8"),
+        hash: nativeHash,
+        emitter: "native",
+        type: "js"
+      };
+      jsFiles.push(relNative);
+      await copyAssets(artifact.assets);
+    }
+    results.push({
+      id: chunk.id,
+      files: {
+        js: jsFiles,
+        css: cssFiles,
+        assets: assetFiles
+      }
+    });
+  }
+  if (cssProfile) {
+    buildStats.__cssPipelineProfile = {
+      chunksWithCss: cssProfile.chunksWithCss,
+      cssModulesVisited: cssProfile.cssModulesVisited,
+      cssFsFallbackReads: cssProfile.cssFsFallbackReads,
+      cssDedupedModules: cssProfile.cssDedupedModules,
+      cssFilesWritten: cssProfile.cssFilesWritten,
+      cssInputBytes: cssProfile.cssInputBytes,
+      cssOutputBytes: cssProfile.cssOutputBytes,
+      orderMs: nsToMs(cssProfile.nsOrder),
+      minifyMs: nsToMs(cssProfile.nsMinify),
+      emitMs: nsToMs(cssProfile.nsEmit)
+    };
+    console.error(
+      `[BundlerProfile][css] chunks=${cssProfile.chunksWithCss} modules=${cssProfile.cssModulesVisited} fs_reads=${cssProfile.cssFsFallbackReads} deduped=${cssProfile.cssDedupedModules} writes=${cssProfile.cssFilesWritten} order_ms=${nsToMs(
+        cssProfile.nsOrder
+      ).toFixed(2)} minify_ms=${nsToMs(cssProfile.nsMinify).toFixed(2)} emit_ms=${nsToMs(
+        cssProfile.nsEmit
+      ).toFixed(2)} bytes_in=${cssProfile.cssInputBytes} bytes_out=${cssProfile.cssOutputBytes}`
+    );
+  }
+  return { artifacts: results, stats: buildStats };
+}
+async function writeAssetsManifest(outputDir, artifacts) {
+  const dir = import_path27.default.resolve(outputDir);
+  await import_fs25.default.promises.mkdir(dir, { recursive: true });
+  const file = import_path27.default.join(dir, "manifest.assets.json");
+  const payload = {
+    chunks: artifacts
+  };
+  const contents = JSON.stringify(payload, null, 2);
+  await writeTextFileIfChanged(file, contents);
+  return {
+    file: toPosix(import_path27.default.relative(dir, file)),
+    bytes: Buffer.byteLength(contents, "utf8"),
+    hash: getCacheKey(contents)
+  };
+}
+var import_fs25, import_path27, import_crypto9, JS_EXTENSIONS2, CSS_EXTENSIONS, isNonEmptyString, toPosix, isBundleProfileEnabled, nsToMs, profileLog, CSS_AT_IMPORT_RE_SRC;
+var init_bundler = __esm({
+  "src/core/bundler.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs25 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
+    import_crypto9 = __toESM(require("crypto"), 1);
+    init_native();
+    init_logger();
+    init_cache();
+    init_css();
+    init_public_path();
+    init_css_ext();
+    init_module_id();
+    init_resolver();
+    init_external_policy();
+    JS_EXTENSIONS2 = /* @__PURE__ */ new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+    CSS_EXTENSIONS = new Set(CSS_LIKE_EXTENSIONS);
+    isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
+    toPosix = (p) => p.split(import_path27.default.sep).join("/");
+    isBundleProfileEnabled = () => process.env.IONIFY_BUNDLE_PROFILE === "1" || process.env.IONIFY_BUNDLE_PROFILE === "true";
+    nsToMs = (value) => Number(value) / 1e6;
+    profileLog = (message) => {
+      if (isBundleProfileEnabled()) logInfo(`[BuildProfile] ${message}`);
+    };
+    CSS_AT_IMPORT_RE_SRC = `@import\\s+(?:url\\(\\s*)?(['"]?)([^'")\\s]+)\\1\\s*\\)?\\s*([^;]*);`;
+  }
+});
+
+// src/core/utils/define-signature.ts
+function stableStringify3(value) {
+  return JSON.stringify(value, (_key, val) => {
+    if (!val || typeof val !== "object") return val;
+    if (Array.isArray(val)) return val;
+    const out = {};
+    for (const k of Object.keys(val).sort()) {
+      out[k] = val[k];
+    }
+    return out;
+  });
+}
+function computeDefineSignature(defineConfig) {
+  const keys = Object.keys(defineConfig).sort();
+  if (keys.length === 0) return "";
+  const parts = [];
+  for (const key of keys) {
+    parts.push(`${key}=${stableStringify3(defineConfig[key])}`);
+  }
+  return parts.join("|");
+}
+var init_define_signature = __esm({
+  "src/core/utils/define-signature.ts"() {
+    "use strict";
+    init_cjs_shims();
+  }
+});
+
+// src/core/deps/dep-stops.ts
+function loadDepStopsFromManifest(depsRoot) {
+  const manifestPath = import_path28.default.join(depsRoot, "manifest.json");
+  if (!import_fs26.default.existsSync(manifestPath)) return [];
+  try {
+    const raw = import_fs26.default.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries = parsed?.entries ?? {};
+    const stops = [];
+    for (const [entryPath, entry] of Object.entries(entries)) {
+      const artifactHash = entry?.artifactHash ?? "";
+      if (!artifactHash) continue;
+      stops.push({ entryPath, artifactHash });
+    }
+    return stops;
+  } catch {
+    return [];
+  }
+}
+var import_fs26, import_path28;
+var init_dep_stops = __esm({
+  "src/core/deps/dep-stops.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs26 = __toESM(require("fs"), 1);
+    import_path28 = __toESM(require("path"), 1);
+  }
+});
+
+// src/core/production-artifact-publishing.ts
+function resolveProductionPublicationDir(ionifyDir) {
+  return import_path29.default.join(ionifyDir, "production-publication");
+}
+function resolveProductionPublicationStatePath(ionifyDir) {
+  return import_path29.default.join(resolveProductionPublicationDir(ionifyDir), "state.v1.json");
+}
+function resolveProductionPublicationPlanPath(ionifyDir) {
+  return import_path29.default.join(resolveProductionPublicationDir(ionifyDir), "plan.v1.json");
+}
+function readProductionPublicationState(ionifyDir) {
+  const statePath = resolveProductionPublicationStatePath(ionifyDir);
+  try {
+    const parsed = JSON.parse(import_fs27.default.readFileSync(statePath, "utf8"));
+    if (parsed?.version !== 1 || parsed?.noDistWrites !== true) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function samePublicationIdentity(a, b) {
+  return a.mode === b.mode && a.nodeEnv === b.nodeEnv && a.configHash === b.configHash && a.depsHash === b.depsHash && a.depsOptimizerOutputVersion === b.depsOptimizerOutputVersion && a.entrySource === b.entrySource && JSON.stringify(a.entries ?? []) === JSON.stringify(b.entries ?? []);
+}
+function readProductionPublicationPlan(ionifyDir, expectedIdentity) {
+  const state = readProductionPublicationState(ionifyDir);
+  if (!state || state.state !== "published" || state.tiers.plan.state !== "published" || !samePublicationIdentity(state.identity, expectedIdentity)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(import_fs27.default.readFileSync(resolveProductionPublicationPlanPath(ionifyDir), "utf8"));
+    if (parsed?.version !== 1 || !parsed.identity || !parsed.plan) return null;
+    if (!samePublicationIdentity(parsed.identity, expectedIdentity)) return null;
+    if (!Array.isArray(parsed.plan.entries) || !Array.isArray(parsed.plan.chunks)) return null;
+    return parsed.plan;
+  } catch {
+    return null;
+  }
+}
+function writeProductionPublicationPlan(ionifyDir, identity, plan) {
+  const planPath = resolveProductionPublicationPlanPath(ionifyDir);
+  const dir = import_path29.default.dirname(planPath);
+  import_fs27.default.mkdirSync(dir, { recursive: true });
+  const tmp = import_path29.default.join(dir, `.plan.v1.${process.pid}.${Date.now()}.tmp`);
+  import_fs27.default.writeFileSync(
+    tmp,
+    `${JSON.stringify(
+      {
+        version: 1,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        identity,
+        plan
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  import_fs27.default.renameSync(tmp, planPath);
+}
+function writeProductionPublicationState(ionifyDir, state) {
+  const statePath = resolveProductionPublicationStatePath(ionifyDir);
+  const dir = import_path29.default.dirname(statePath);
+  import_fs27.default.mkdirSync(dir, { recursive: true });
+  const tmp = import_path29.default.join(dir, `.state.v1.${process.pid}.${Date.now()}.tmp`);
+  import_fs27.default.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}
+`, "utf8");
+  import_fs27.default.renameSync(tmp, statePath);
+}
+function createProductionPublicationState(identity, phase, state) {
+  return {
+    version: 1,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    state,
+    phase,
+    noDistWrites: true,
+    identity,
+    tiers: {
+      deps: { state: "pending" },
+      graph: { state: "pending" },
+      plan: { state: "pending" },
+      transforms: { state: "pending" },
+      chunks: { state: phase === "B" ? "pending" : "skipped", reason: "Production Artifacts publishes chunk artifacts" },
+      compression: { state: phase === "B" ? "pending" : "skipped", reason: "Production Artifacts publishes compression sidecars" }
+    },
+    timingsMs: {}
+  };
+}
+function summarizePlanForPublication(plan) {
+  return {
+    chunks: plan.chunks.length,
+    modules: plan.chunks.reduce((sum, chunk) => sum + chunk.modules.length, 0),
+    entries: plan.entries.length
+  };
+}
+var import_fs27, import_path29;
+var init_production_artifact_publishing = __esm({
+  "src/core/production-artifact-publishing.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs27 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
+  }
+});
+
+// src/core/build-entry-inference.ts
+function resolveConfiguredBuildEntries(config, rootDir) {
+  const configured = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? import_path30.default.join(rootDir, entry) : import_path30.default.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
+  return configured.length > 0 ? configured : void 0;
+}
+function resolveHtmlModuleEntryPath(htmlInput, rootDir, src) {
+  const trimmed = typeof src === "string" ? src.trim() : "";
+  if (!trimmed) return null;
+  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(trimmed)) return null;
+  if (trimmed.startsWith("data:") || trimmed.startsWith("javascript:") || trimmed.startsWith("#")) return null;
+  const withoutQuery = trimmed.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
+  if (!withoutQuery) return null;
+  if (withoutQuery.startsWith("/")) {
+    return import_path30.default.join(rootDir, withoutQuery.replace(/^[/\\]+/, ""));
+  }
+  return import_path30.default.resolve(import_path30.default.dirname(htmlInput), withoutQuery);
+}
+function inferBuildEntriesFromHtml(rootDir, onWarn) {
+  const htmlInput = import_path30.default.join(rootDir, "index.html");
+  if (!import_fs28.default.existsSync(htmlInput)) return [];
+  let html = "";
+  try {
+    html = import_fs28.default.readFileSync(htmlInput, "utf8");
+  } catch {
+    return [];
+  }
+  const moduleScriptRe = /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>/gi;
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const match of html.matchAll(moduleScriptRe)) {
+    const src = typeof match[1] === "string" ? match[1] : "";
+    const resolved = resolveHtmlModuleEntryPath(htmlInput, rootDir, src);
+    if (!resolved) continue;
+    if (!import_fs28.default.existsSync(resolved)) {
+      onWarn?.(`[Build] Skipping inferred entry "${src}" from index.html because the file does not exist`);
+      continue;
+    }
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    entries.push(resolved);
+  }
+  return entries;
+}
+function resolveProductionBuildEntries(config, rootDir, onWarn) {
+  const configured = resolveConfiguredBuildEntries(config, rootDir);
+  if (configured?.length) return { entries: configured, source: "config" };
+  const inferred = inferBuildEntriesFromHtml(rootDir, onWarn);
+  if (inferred.length > 0) return { entries: inferred, source: "html" };
+  return { entries: void 0, source: "graph" };
+}
+var import_fs28, import_path30;
+var init_build_entry_inference = __esm({
+  "src/core/build-entry-inference.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs28 = __toESM(require("fs"), 1);
+    import_path30 = __toESM(require("path"), 1);
+  }
+});
+
+// src/core/production-build-identity.ts
+function createProductionGraphVersionInputs(options) {
+  const { config, parserMode, minifier, treeshake, scopeHoist, entries } = options;
+  const pluginNames = Array.isArray(config?.plugins) ? config.plugins.map((p) => typeof p === "string" ? p : p?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
+  return {
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    plugins: pluginNames,
+    entry: entries ?? null,
+    resolveOptions: {
+      alias: config?.resolve?.alias,
+      extensions: config?.resolve?.extensions,
+      conditions: config?.resolve?.conditions,
+      mainFields: config?.resolve?.mainFields
+    },
+    cssOptions: config?.css,
+    assetOptions: config?.assets ?? config?.asset,
+    runtimeContracts: {
+      reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+      federation: buildFederationVersionContract(config?.federation)
+    }
+  };
+}
+var init_production_build_identity = __esm({
+  "src/core/production-build-identity.ts"() {
+    "use strict";
+    init_cjs_shims();
+    init_reactRefreshInstrumentation();
+    init_federation();
+  }
+});
+
+// src/cli/commands/build.ts
+var build_exports = {};
+__export(build_exports, {
+  collectNativeExternalModules: () => collectNativeExternalModules,
+  precompressBuildOutputs: () => precompressBuildOutputs,
+  rerouteDepsArtifacts: () => rerouteDepsArtifacts,
+  runBuildCommand: () => runBuildCommand
+});
+function isBuildProfileEnabled() {
+  return process.env.IONIFY_BUNDLE_PROFILE === "1" || process.env.IONIFY_BUNDLE_PROFILE === "true";
+}
+function logBuildProfile(label, startedAt) {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(`[BuildProfile] ${label}_ms=${Date.now() - startedAt}`);
+}
+function readJsonFile5(filePath) {
+  if (!import_fs29.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs29.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile5(filePath, data) {
+  try {
+    const next = JSON.stringify(data, null, 2) + "\n";
+    try {
+      if (import_fs29.default.existsSync(filePath)) {
+        const prev = import_fs29.default.readFileSync(filePath, "utf8");
+        if (prev === next) return;
+      }
+    } catch {
+    }
+    import_fs29.default.writeFileSync(filePath, next, "utf8");
+  } catch {
+  }
+}
+async function writeTextFileIfChanged2(filePath, contents) {
+  const nextBytes = Buffer.byteLength(contents, "utf8");
+  try {
+    const stat = await import_fs29.default.promises.stat(filePath);
+    if (stat.isFile() && stat.size === nextBytes) {
+      const existing = await import_fs29.default.promises.readFile(filePath, "utf8");
+      if (existing === contents) return;
+    }
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  await import_fs29.default.promises.mkdir(import_path31.default.dirname(filePath), { recursive: true });
+  await import_fs29.default.promises.writeFile(filePath, contents, "utf8");
+}
+function syncFederationGraphNodes2(graph, nodes) {
+  const nextIds = new Set(nodes.map((node) => node.id));
+  for (const existingId of graph.listNodeIdsByPrefix(FEDERATION_GRAPH_PREFIX)) {
+    if (!nextIds.has(existingId)) {
+      graph.removeNodeById(existingId);
+    }
+  }
+  for (const node of nodes) {
+    graph.recordNodeById(node.id, node.hash, node.deps, node.dynamicDeps ?? [], node.kind);
+  }
+}
+function mergeFederationGraphNodes(...groups) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const group of groups) {
+    for (const node of group) merged.set(node.id, node);
+  }
+  return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+function resolvePublicDir2(rootDir, value) {
+  if (value === false) return null;
+  const dir = typeof value === "string" && value.trim().length > 0 ? value.trim() : "public";
+  return import_path31.default.isAbsolute(dir) ? dir : import_path31.default.resolve(rootDir, dir);
+}
+async function copyPublicDirToOutDir(publicDirAbs, outDirAbs) {
+  if (!publicDirAbs) return [];
+  const srcRoot = import_path31.default.resolve(publicDirAbs);
+  const destRoot = import_path31.default.resolve(outDirAbs);
+  let srcStat = null;
+  try {
+    srcStat = import_fs29.default.statSync(srcRoot);
+  } catch {
+    return [];
+  }
+  if (!srcStat.isDirectory()) return [];
+  const copiedEntries = [];
+  const conflicts = [];
+  const queue = [srcRoot];
+  while (queue.length) {
+    const dir = queue.pop();
+    let entries;
+    try {
+      entries = await import_fs29.default.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const srcPath = import_path31.default.join(dir, entry.name);
+      if (isForbiddenFsPath(srcPath)) continue;
+      if (entry.isDirectory()) {
+        queue.push(srcPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const rel = import_path31.default.relative(srcRoot, srcPath);
+      if (!rel || rel.startsWith("..")) continue;
+      const destPath = import_path31.default.join(destRoot, rel);
+      if (!destPath.startsWith(destRoot + import_path31.default.sep) && destPath !== destRoot) continue;
+      if (import_fs29.default.existsSync(destPath)) {
+        conflicts.push(rel.replace(/\\+/g, "/"));
+        continue;
+      }
+      try {
+        const fileBytes = await import_fs29.default.promises.readFile(srcPath);
+        await import_fs29.default.promises.mkdir(import_path31.default.dirname(destPath), { recursive: true });
+        await import_fs29.default.promises.writeFile(destPath, fileBytes);
+        copiedEntries.push({
+          file: rel.replace(/\\+/g, "/"),
+          bytes: fileBytes.length,
+          hash: getCacheKey(fileBytes)
+        });
+      } catch {
+      }
+    }
+  }
+  if (copiedEntries.length) {
+    logInfo(`[Build][public] Copied ${copiedEntries.length} file(s) from publicDir into ${import_path31.default.basename(destRoot)}/`);
+  }
+  if (conflicts.length) {
+    logWarn(`[Build][public] Skipped ${conflicts.length} file(s) due to output conflicts (will not overwrite build artifacts)`);
+  }
+  return copiedEntries;
+}
+function isCssModuleFile(filePath) {
+  return isCssModuleLikePath(filePath);
+}
+function recordStructuralGraphFiles(absPaths, workspaceRoot, configHash) {
+  if (!native?.graphRecord) return;
+  const seen = /* @__PURE__ */ new Set();
+  for (const absPath of absPaths) {
+    if (typeof absPath !== "string" || absPath.length === 0 || !import_path31.default.isAbsolute(absPath)) continue;
+    if (seen.has(absPath)) continue;
+    seen.add(absPath);
+    const id = toWsModuleId(absPath, workspaceRoot);
+    if (!id) continue;
+    try {
+      const existing = typeof native.graphGet === "function" ? native.graphGet(id) : null;
+      if (existing && isRuntimeGraphKind(existing.kind)) continue;
+      if (!import_fs29.default.existsSync(absPath)) {
+        native.graphRecord(id, null, [], [], GRAPH_KIND_VIRTUAL, configHash);
+        continue;
+      }
+      const stat = import_fs29.default.statSync(absPath);
+      if (!stat.isFile()) continue;
+      const hash = import_crypto10.default.createHash("sha256").update(import_fs29.default.readFileSync(absPath)).digest("hex");
+      native.graphRecord(id, hash, [], [], classifyStructuralGraphKind(absPath), configHash);
+    } catch {
+    }
+  }
+}
+function computeDepsContentStampHash(depsAbs, moduleMetaById, workspaceRoot) {
+  if (!depsAbs.length) return "0";
+  const entries = [];
+  for (const depAbs of depsAbs) {
+    const abs = import_path31.default.resolve(depAbs);
+    let hash = null;
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId) hash = moduleMetaById.get(depId)?.hash ?? null;
+    if (!hash) {
+      try {
+        const raw = import_fs29.default.readFileSync(abs);
+        hash = getCacheKey(raw);
+      } catch {
+        hash = "missing";
+      }
+    }
+    entries.push(`${depId ?? abs.replace(/\\+/g, "/")}:${hash}`);
+  }
+  entries.sort();
+  return getCacheKey(entries.join("|"));
+}
+function loadDepsManifestIndex3(depsRoot) {
+  const manifestPath = import_path31.default.join(depsRoot, "manifest.json");
+  if (!import_fs29.default.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
+  try {
+    const raw = import_fs29.default.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries = parsed?.entries ?? {};
+    const map = /* @__PURE__ */ new Map();
+    for (const [entryPath, entry] of Object.entries(entries)) {
+      const outFile = entry?.outFile ?? entry?.out_file ?? null;
+      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
+      const sizeBytes = typeof entry.sizeBytes === "number" ? entry.sizeBytes : typeof entry.size_bytes === "number" ? entry.size_bytes : 0;
+      const moduleCount = typeof entry.moduleCount === "number" ? entry.moduleCount : typeof entry.module_count === "number" ? entry.module_count : 0;
+      const edgeCount = typeof entry.edgeCount === "number" ? entry.edgeCount : typeof entry.edge_count === "number" ? entry.edge_count : 0;
+      const externalCount = typeof entry.externalCount === "number" ? entry.externalCount : typeof entry.external_count === "number" ? entry.external_count : 0;
+      const chunkGroup = typeof entry.chunkGroup === "string" ? entry.chunkGroup : typeof entry.chunk_group === "string" ? entry.chunk_group : null;
+      const chunkFilesRaw = Array.isArray(entry.chunkFiles) ? entry.chunkFiles : Array.isArray(entry.chunk_files) ? entry.chunk_files : [];
+      const chunkFiles = (Array.isArray(chunkFilesRaw) ? chunkFilesRaw : []).map((v) => typeof v === "string" ? v : null).filter((v) => typeof v === "string" && v.length > 0);
+      map.set(outFile, {
+        entryPath,
+        packageLabel: entry.package || "unknown",
+        hasSourcemap: entry.hasSourcemap === true,
+        sizeBytes,
+        moduleCount,
+        edgeCount,
+        externalCount,
+        chunkGroup,
+        chunkFiles
+      });
+    }
+    return map;
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+}
+function collectNativeExternalModules(plan, configuredExternals) {
+  const externals = /* @__PURE__ */ new Set();
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      for (const dep of [...mod.deps ?? [], ...mod.dynamicDeps ?? []]) {
+        if (isExternalGraphLeafId(dep, configuredExternals)) {
+          externals.add(dep);
+        }
+      }
+    }
+  }
+  return Array.from(externals).sort();
+}
+function rerouteDepsArtifacts(options) {
+  const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
+  const depsArtifactsByEntry = /* @__PURE__ */ new Map();
+  const manifestPath = import_path31.default.join(depsRoot, "manifest.json");
+  if (!import_fs29.default.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  try {
+    const raw = import_fs29.default.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const manifestEntries = parsed?.entries ?? {};
+    for (const [entryPath, entry] of Object.entries(manifestEntries)) {
+      const outFile = entry?.outFile ?? entry?.out_file ?? null;
+      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
+      const artifactPath = import_path31.default.join(depsRoot, outFile);
+      if (!import_fs29.default.existsSync(artifactPath)) continue;
+      const artifactHash = entry?.artifactHash ?? "";
+      const sharedImports = Array.isArray(entry?.sharedImports) ? entry.sharedImports : [];
+      let canonicalEntry;
+      try {
+        canonicalEntry = import_fs29.default.realpathSync.native(entryPath);
+      } catch {
+        canonicalEntry = import_path31.default.resolve(entryPath);
+      }
+      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, sharedImports });
+    }
+  } catch {
+    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  }
+  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  let rerouted = 0;
+  let pruned = 0;
+  let idRewritten = 0;
+  const idRemap = /* @__PURE__ */ new Map();
+  const claimedNewIds = /* @__PURE__ */ new Set();
+  const reroutedPathsByChunk = /* @__PURE__ */ new Map();
+  for (const chunk of plan.chunks) {
+    const keptModules = [];
+    for (const mod of chunk.modules) {
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, workspaceRoot);
+      }
+      if (!fsPath && typeof mod.id === "string" && import_path31.default.isAbsolute(mod.id)) {
+        fsPath = mod.id;
+      }
+      const isNodeModules = fsPath ? fsPath.includes("node_modules") : mod.id.includes("node_modules");
+      if (!isNodeModules) {
+        keptModules.push(mod);
+        continue;
+      }
+      let canonical = null;
+      if (fsPath) {
+        try {
+          canonical = import_fs29.default.realpathSync.native(fsPath);
+        } catch {
+          canonical = import_path31.default.resolve(fsPath);
+        }
+      }
+      const artifact = canonical ? depsArtifactsByEntry.get(canonical) : null;
+      if (artifact) {
+        let resolvedHash;
+        const artifactCasDir = artifact.artifactHash ? getCasArtifactPath(casRoot, configHash, artifact.artifactHash) : null;
+        const artifactCasFile = artifactCasDir ? import_path31.default.join(artifactCasDir, "transformed.js") : null;
+        if (artifact.artifactHash && artifactCasFile && import_fs29.default.existsSync(artifactCasFile) && casTextFileMatchesHash(artifactCasFile, artifact.artifactHash)) {
+          resolvedHash = artifact.artifactHash;
+        } else {
+          const artifactCode = import_fs29.default.readFileSync(artifact.artifactPath, "utf8");
+          resolvedHash = artifact.artifactHash || getCacheKey(artifactCode);
+          const casDir = getCasArtifactPath(casRoot, configHash, resolvedHash);
+          const casFile = import_path31.default.join(casDir, "transformed.js");
+          import_fs29.default.mkdirSync(casDir, { recursive: true });
+          import_fs29.default.writeFileSync(casFile, artifactCode, "utf8");
+        }
+        mod.fsPath = artifact.artifactPath;
+        mod.hash = resolvedHash;
+        mod.kind = "js";
+        const oldId = typeof mod.id === "string" ? mod.id : null;
+        let newId = null;
+        try {
+          newId = toWsModuleId(artifact.artifactPath, workspaceRoot);
+        } catch {
+          newId = null;
+        }
+        if (oldId && newId && oldId !== newId) {
+          idRemap.set(oldId, newId);
+          if (claimedNewIds.has(newId)) {
+            pruned += 1;
+            continue;
+          }
+          claimedNewIds.add(newId);
+          mod.id = newId;
+          idRewritten += 1;
+        }
+        keptModules.push(mod);
+        rerouted += 1;
+        let chunkSet = reroutedPathsByChunk.get(chunk.id);
+        if (!chunkSet) {
+          chunkSet = /* @__PURE__ */ new Set();
+          reroutedPathsByChunk.set(chunk.id, chunkSet);
+        }
+        chunkSet.add(artifact.artifactPath);
+      } else {
+        pruned += 1;
+      }
+    }
+    chunk.modules = keptModules;
+  }
+  if (idRemap.size > 0 || pruned > 0) {
+    const remapDepList = (list) => {
+      const out = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const dep of list) {
+        let mapped = dep;
+        if (idRemap.has(dep)) {
+          mapped = idRemap.get(dep);
+        } else if (typeof dep === "string" && dep.includes("node_modules")) {
+          mapped = null;
+        }
+        if (mapped && !seen.has(mapped)) {
+          seen.add(mapped);
+          out.push(mapped);
+        }
+      }
+      return out;
+    };
+    for (const chunk of plan.chunks) {
+      for (const mod of chunk.modules) {
+        if (Array.isArray(mod.deps)) mod.deps = remapDepList(mod.deps);
+        if (Array.isArray(mod.dynamicDeps)) {
+          mod.dynamicDeps = remapDepList(mod.dynamicDeps);
+        }
+      }
+    }
+  }
+  const artifactSharedImports = /* @__PURE__ */ new Map();
+  for (const entry of depsArtifactsByEntry.values()) {
+    if (entry.sharedImports.length > 0) {
+      artifactSharedImports.set(entry.artifactPath, entry.sharedImports);
+    }
+  }
+  const depsImportRe = /["'](\/@deps\/([^"'?]+\.js))["']/g;
+  const prewarnedSharedPaths = /* @__PURE__ */ new Set();
+  let sharedPrewarmed = 0;
+  for (const [chunkId, artifactPaths] of reroutedPathsByChunk.entries()) {
+    const chunk = plan.chunks.find((c) => c.id === chunkId);
+    if (!chunk) continue;
+    const sharedFilesToAdd = [];
+    for (const wrapperPath of artifactPaths) {
+      const persistedImports = artifactSharedImports.get(wrapperPath);
+      if (persistedImports !== void 0) {
+        for (const relFile of persistedImports) {
+          const absPath = import_path31.default.join(depsRoot, relFile);
+          if (prewarnedSharedPaths.has(absPath)) continue;
+          if (!import_fs29.default.existsSync(absPath)) continue;
+          let sharedCode;
+          try {
+            sharedCode = import_fs29.default.readFileSync(absPath, "utf8");
+          } catch {
+            continue;
+          }
+          const sharedHash = getCacheKey(sharedCode);
+          const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
+          const sharedCasFile = import_path31.default.join(sharedCasDir, "transformed.js");
+          if (!import_fs29.default.existsSync(sharedCasFile)) {
+            import_fs29.default.mkdirSync(sharedCasDir, { recursive: true });
+            import_fs29.default.writeFileSync(sharedCasFile, sharedCode, "utf8");
+          }
+          prewarnedSharedPaths.add(absPath);
+          sharedFilesToAdd.push({ absPath, hash: sharedHash });
+          sharedPrewarmed += 1;
+        }
+        continue;
+      }
+      let wrapperCode;
+      try {
+        wrapperCode = import_fs29.default.readFileSync(wrapperPath, "utf8");
+      } catch {
+        continue;
+      }
+      depsImportRe.lastIndex = 0;
+      let match;
+      while ((match = depsImportRe.exec(wrapperCode)) !== null) {
+        const relFile = match[2];
+        const isSharedOrPack = relFile.startsWith("shared.") || relFile.startsWith("vendor-pack.") || relFile.startsWith("vendor-core.");
+        if (!isSharedOrPack) continue;
+        const absPath = import_path31.default.join(depsRoot, relFile);
+        if (prewarnedSharedPaths.has(absPath)) continue;
+        if (!import_fs29.default.existsSync(absPath)) continue;
+        let sharedCode;
+        try {
+          sharedCode = import_fs29.default.readFileSync(absPath, "utf8");
+        } catch {
+          continue;
+        }
+        const sharedHash = getCacheKey(sharedCode);
+        const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
+        const sharedCasFile = import_path31.default.join(sharedCasDir, "transformed.js");
+        if (!import_fs29.default.existsSync(sharedCasFile)) {
+          import_fs29.default.mkdirSync(sharedCasDir, { recursive: true });
+          import_fs29.default.writeFileSync(sharedCasFile, sharedCode, "utf8");
+        }
+        prewarnedSharedPaths.add(absPath);
+        sharedFilesToAdd.push({ absPath, hash: sharedHash });
+        sharedPrewarmed += 1;
+      }
+    }
+    for (const { absPath, hash } of sharedFilesToAdd) {
+      let sharedId = absPath;
+      try {
+        sharedId = toWsModuleId(absPath, workspaceRoot) ?? absPath;
+      } catch {
+        sharedId = absPath;
+      }
+      chunk.modules.push({
+        id: sharedId,
+        fsPath: absPath,
+        hash,
+        kind: "js",
+        deps: [],
+        dynamicDeps: []
+      });
+    }
+  }
+  return { rerouted, pruned, sharedPrewarmed, idRewritten };
+}
+function casTextFileMatchesHash(filePath, expectedHash) {
+  try {
+    return getCacheKey(import_fs29.default.readFileSync(filePath, "utf8")) === expectedHash;
+  } catch {
+    return false;
+  }
+}
+function computeBuildSlimmingSavedPercent(depsRoot, depsHash) {
+  let entries = [];
+  try {
+    entries = import_fs29.default.readdirSync(depsRoot);
+  } catch {
+    return null;
+  }
+  let totalFull = 0;
+  let totalSlim = 0;
+  const slimFiles = entries.filter((name) => name.startsWith("vendor-pack.manual.") && name.endsWith(".slim.json"));
+  for (const fileName of slimFiles) {
+    const group = fileName.slice("vendor-pack.manual.".length, -".slim.json".length);
+    if (!group) continue;
+    const baseStatePath = import_path31.default.join(depsRoot, `vendor-pack.manual.${group}.json`);
+    const slimStatePath = import_path31.default.join(depsRoot, fileName);
+    if (!import_fs29.default.existsSync(baseStatePath) || !import_fs29.default.existsSync(slimStatePath)) continue;
+    try {
+      const base = JSON.parse(import_fs29.default.readFileSync(baseStatePath, "utf8"));
+      const slim = JSON.parse(import_fs29.default.readFileSync(slimStatePath, "utf8"));
+      if (!base || !slim) continue;
+      if (base.depsHash !== depsHash || slim.depsHash !== depsHash) continue;
+      if (base.status !== "ready" || slim.status !== "ready") continue;
+      const fullShared = typeof base.sharedFileName === "string" ? base.sharedFileName : null;
+      const slimShared = typeof slim.sharedFileName === "string" ? slim.sharedFileName : null;
+      if (!fullShared || !slimShared) continue;
+      const fullPath = import_path31.default.join(depsRoot, fullShared);
+      const slimPath = import_path31.default.join(depsRoot, slimShared);
+      if (!import_fs29.default.existsSync(fullPath) || !import_fs29.default.existsSync(slimPath)) continue;
+      const fullBytes = import_fs29.default.statSync(fullPath).size;
+      const slimBytes = import_fs29.default.statSync(slimPath).size;
+      if (fullBytes > 0 && slimBytes > 0 && slimBytes <= fullBytes) {
+        totalFull += fullBytes;
+        totalSlim += slimBytes;
+      }
+    } catch {
+    }
+  }
+  if (totalFull <= 0 || totalSlim <= 0) return null;
+  const saved = totalFull - totalSlim;
+  if (saved <= 0) return 0;
+  return Math.round(saved * 100 / totalFull);
+}
+function computeBuildVendorPackRequestsSavedPercent(depsRoot, depsHash) {
+  const indexPath = import_path31.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!import_fs29.default.existsSync(indexPath)) return null;
+  try {
+    const raw = JSON.parse(import_fs29.default.readFileSync(indexPath, "utf8"));
+    if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return null;
+    const fileMap = raw.fileNameToPackFile;
+    if (!fileMap || typeof fileMap !== "object") return null;
+    const memberFiles = Object.keys(fileMap).filter((k) => typeof k === "string" && k.endsWith(".js"));
+    const baseline = memberFiles.length;
+    if (baseline === 0) return null;
+    const packFiles = /* @__PURE__ */ new Set();
+    for (const fileName of memberFiles) {
+      const packFile = fileMap[fileName];
+      if (typeof packFile === "string" && packFile.endsWith(".js")) {
+        packFiles.add(packFile);
+      }
+    }
+    const chunkMap = raw.packFileToChunkFiles ?? null;
+    const sharedMap = raw.packFileToSharedFile ?? null;
+    const chunks = /* @__PURE__ */ new Set();
+    for (const packFile of Array.from(packFiles)) {
+      const list = chunkMap && typeof chunkMap === "object" ? chunkMap[packFile] : null;
+      if (Array.isArray(list)) {
+        for (const entry of list) {
+          if (typeof entry === "string" && entry.endsWith(".js")) chunks.add(entry);
+        }
+      } else if (sharedMap && typeof sharedMap === "object") {
+        const shared = sharedMap[packFile];
+        if (typeof shared === "string" && shared.endsWith(".js")) chunks.add(shared);
+      }
+    }
+    const withPack = packFiles.size + chunks.size;
+    if (withPack <= 0) return null;
+    const saved = baseline - withPack;
+    if (saved <= 0) return 0;
+    return Math.round(saved * 100 / baseline);
+  } catch {
+    return null;
+  }
+}
+function normalizeManualPackGroup(raw) {
+  const base = String(raw ?? "").trim().toLowerCase();
+  if (!base) return null;
+  const normalized = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+  return normalized || null;
+}
+function normalizeMatchSubpath(subpath) {
+  if (!subpath) return null;
+  const cleaned = String(subpath).trim().replace(/^\.\//, "").replace(/^\/+/, "");
+  if (!cleaned || cleaned === "." || cleaned === "index") return null;
+  return cleaned;
+}
+function escapeRegExp2(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function compileManualPackMatchers(patterns) {
+  const matchers = [];
+  for (const rawPattern of patterns) {
+    const pattern = String(rawPattern ?? "").trim();
+    if (!pattern) continue;
+    if (pattern.includes("*")) {
+      const source = `^${escapeRegExp2(pattern).replace(/\\\*/g, ".*")}$`;
+      let re = null;
+      try {
+        re = new RegExp(source);
+      } catch {
+        re = null;
+      }
+      if (!re) continue;
+      matchers.push({
+        raw: pattern,
+        test: (pkgName, subpath) => {
+          const pkg = String(pkgName ?? "");
+          if (re.test(pkg)) return true;
+          const sp = normalizeMatchSubpath(subpath);
+          if (!sp) return false;
+          return re.test(`${pkg}/${sp}`);
+        }
+      });
+      continue;
+    }
+    matchers.push({
+      raw: pattern,
+      test: (pkgName, subpath) => {
+        const pkg = String(pkgName ?? "");
+        if (pkg === pattern) return true;
+        const sp = normalizeMatchSubpath(subpath);
+        if (!sp) return false;
+        return `${pkg}/${sp}` === pattern;
+      }
+    });
+  }
+  return matchers;
+}
+function compileManualPackDefs(vendorPacksManualRaw, optimizeExclude) {
+  const defsByGroup = /* @__PURE__ */ new Map();
+  const defs = [];
+  for (const [rawGroup, rawPatterns] of Object.entries(vendorPacksManualRaw)) {
+    const group = normalizeManualPackGroup(rawGroup);
+    if (!group) continue;
+    const patterns = Array.isArray(rawPatterns) ? rawPatterns : [];
+    const matchers = compileManualPackMatchers(
+      patterns.map((v) => String(v ?? "").trim()).filter(Boolean).filter((spec) => !optimizeExclude?.has(spec))
+    );
+    if (matchers.length === 0) continue;
+    const existing = defsByGroup.get(group);
+    if (existing) {
+      existing.matchers.push(...matchers);
+      continue;
+    }
+    const def = { group, matchers };
+    defsByGroup.set(group, def);
+    defs.push(def);
+  }
+  return defs;
+}
+function classifyManualPackGroup(defs, pkgName, subpath, optimizeExclude) {
+  if (!pkgName) return null;
+  const pkg = String(pkgName);
+  const sp = normalizeMatchSubpath(subpath);
+  if (optimizeExclude?.has(pkg)) return null;
+  if (sp && optimizeExclude?.has(`${pkg}/${sp}`)) return null;
+  for (const def of defs) {
+    for (const matcher of def.matchers) {
+      try {
+        if (matcher.test(pkg, sp)) return def.group;
+      } catch {
+      }
+    }
+  }
+  return null;
+}
+function formatDepLabel2(pkgName, subpath) {
+  const sp = normalizeMatchSubpath(subpath);
+  return sp ? `${pkgName}/${sp}` : pkgName;
+}
+function loadDepUsageIndexFromDisk(depsRoot, depsHash) {
+  const depUsagePath = import_path31.default.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsagePath = import_path31.default.join(depsRoot, "deps-usage.v1.json");
+  const raw = readJsonFile5(depUsagePath) ?? readJsonFile5(legacyDepUsagePath);
+  if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
+  const out = /* @__PURE__ */ new Map();
+  const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
+  for (const [fileName, value] of Object.entries(deps)) {
+    const item = value;
+    if (!item || typeof item !== "object") continue;
+    if (typeof item.entryPath !== "string" || typeof item.packageName !== "string") continue;
+    if (typeof item.packageVersion !== "string" || !Array.isArray(item.usedExports)) continue;
+    const usedExports = item.usedExports.map((v) => typeof v === "string" ? v : "").filter(Boolean).slice().sort();
+    const unique = [];
+    for (const name of usedExports) {
+      if (unique.length === 0 || unique[unique.length - 1] !== name) unique.push(name);
+    }
+    out.set(fileName, {
+      fileName,
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
+      usedExports: unique,
+      hasNamespace: item.hasNamespace === true,
+      hasExportStar: item.hasExportStar === true,
+      importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.map((v) => typeof v === "string" ? v : "").filter(Boolean) : [],
+      entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.map((v) => typeof v === "string" ? v : "").filter(Boolean) : []
+    });
+  }
+  return out;
+}
+function saveDepUsageIndexToDisk(depsRoot, depsHash, index) {
+  const depUsagePath = import_path31.default.join(depsRoot, "deps-usage.v2.json");
+  const depsObj = {};
+  const keys = Array.from(index.keys()).sort();
+  for (const fileName of keys) {
+    const item = index.get(fileName);
+    if (!item) continue;
+    depsObj[fileName] = {
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
+      usedExports: item.usedExports.slice(),
+      hasNamespace: item.hasNamespace,
+      hasExportStar: item.hasExportStar,
+      importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.slice() : [],
+      entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : []
+    };
+  }
+  writeJsonFile5(depUsagePath, {
+    version: 2,
+    depsHash,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    deps: depsObj
+  });
+}
+async function resolveUsageEntries(rootDir, resolvedEntries) {
+  const usageEntries = [];
+  if (Array.isArray(resolvedEntries) && resolvedEntries.length > 0) {
+    usageEntries.push(...resolvedEntries);
+    return usageEntries;
+  }
+  for (const candidate of [
+    import_path31.default.join(rootDir, "src", "main.tsx"),
+    import_path31.default.join(rootDir, "src", "main.ts"),
+    import_path31.default.join(rootDir, "src", "index.tsx"),
+    import_path31.default.join(rootDir, "src", "index.ts")
+  ]) {
+    if (import_fs29.default.existsSync(candidate)) usageEntries.push(candidate);
+  }
+  return usageEntries;
+}
+function isReadyManualPackState(raw, depsRoot, depsHash, group) {
+  if (!raw || typeof raw !== "object") return false;
+  if (raw.version !== 1 || raw.depsHash !== depsHash || raw.group !== group) return false;
+  if (raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION2) return false;
+  if (raw.status !== "ready") return false;
+  if (typeof raw.chunkGroupId !== "string" || raw.chunkGroupId.length === 0) return false;
+  if (typeof raw.sharedFileName !== "string" || raw.sharedFileName.length === 0) return false;
+  if (!Array.isArray(raw.entries) || raw.entries.length === 0) return false;
+  if (!import_fs29.default.existsSync(import_path31.default.join(depsRoot, raw.sharedFileName))) return false;
+  return raw.entries.every((e) => e?.fileName && import_fs29.default.existsSync(import_path31.default.join(depsRoot, String(e.fileName))));
+}
+function isReadyManualSlimState(raw, depsRoot, depsHash, group) {
+  if (!raw || typeof raw !== "object") return false;
+  if (raw.version !== 1 || raw.depsHash !== depsHash || raw.group !== group) return false;
+  if (raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION2) return false;
+  if (raw.status !== "ready") return false;
+  if (typeof raw.chunkGroupId !== "string" || raw.chunkGroupId.length === 0) return false;
+  if (typeof raw.sharedFileName !== "string" || raw.sharedFileName.length === 0) return false;
+  if (!Array.isArray(raw.entries) || raw.entries.length === 0) return false;
+  if (!import_fs29.default.existsSync(import_path31.default.join(depsRoot, raw.sharedFileName))) return false;
+  return raw.entries.every((e) => e?.wrapperFileName && import_fs29.default.existsSync(import_path31.default.join(depsRoot, String(e.wrapperFileName))));
+}
+async function prepareProductionAutoCorePack(options) {
+  const { rootDir, ionifyDir, depsHash, depsRoot, config } = options;
+  const optimizeDeps = config?.optimizeDeps ?? {};
+  const vendorPacksRaw = optimizeDeps.vendorPacks ?? false;
+  if (vendorPacksRaw !== "auto") return { enabled: false, didWork: false };
+  const depsSourcemapEnabled = optimizeDeps.sourcemap === true;
+  const depsBundleEsmEnabled = optimizeDeps.bundleEsm !== false;
+  const depsSharedChunksRaw = optimizeDeps.sharedChunks;
+  const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+  const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
+  const autoEnabled = depsSharedChunksEnabled && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled;
+  if (!autoEnabled) {
+    const reasons = [];
+    if (!depsSharedChunksEnabled) reasons.push("sharedChunks=0");
+    if (depsSourcemapEnabled) reasons.push("sourcemap=1");
+    if (!depsBundleEsmEnabled) reasons.push("bundleEsm=0");
+    if (!native?.optimizeDependenciesChunked) reasons.push("nativeChunked=0");
+    return { enabled: true, didWork: false, reasons };
+  }
+  const optimizeExclude = Array.isArray(optimizeDeps.exclude) ? new Set(optimizeDeps.exclude.map((s) => String(s))) : null;
+  const pkgJson = readProjectPackageJson3(rootDir);
+  const vendorSpecifiers = detectVendorSpecifiers2(pkgJson).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => !optimizeExclude?.has(s));
+  if (!native?.resolveModule) {
+    logWarn("[deps] vendorPacks:auto enabled but native.resolveModule is unavailable; skipping production pack prep.");
+    return { enabled: true, didWork: false };
+  }
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const spec of vendorSpecifiers) {
+    try {
+      const resolved = native.resolveModule(spec, rootDir);
+      const kind = resolved?.kind;
+      if (!kind || kind === "Builtin" || kind === "Virtual" || kind === "NotFound") continue;
+      const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
+      const pkg = resolved?.pkg ?? null;
+      const packageName = typeof pkg?.name === "string" ? pkg.name : spec;
+      const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+      const subpath = computeSubpathFromEntryPath(fsPath);
+      const dep = registerDepEntry({
+        entryPath: fsPath,
+        packageName,
+        packageVersion,
+        subpath
+      });
+      if (!dep?.fileName || seen.has(dep.fileName)) continue;
+      seen.add(dep.fileName);
+      entries.push({ entryPath: fsPath, fileName: dep.fileName, packageLabel: spec });
+    } catch {
+    }
+  }
+  if (entries.length <= 1) return { enabled: true, didWork: false };
+  entries.sort((a, b) => a.packageLabel.localeCompare(b.packageLabel));
+  const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
+  const sharedFileName = `shared.${chunkGroupId}.js`;
+  const sharedPath = import_path31.default.join(depsRoot, sharedFileName);
+  const statePath = import_path31.default.join(depsRoot, "vendor-pack.feature.core.json");
+  const existingState = readJsonFile5(statePath);
+  const currentNodeEnv = process.env.NODE_ENV ?? "development";
+  const alreadyReady = import_fs29.default.existsSync(sharedPath) && entries.every((e) => import_fs29.default.existsSync(import_path31.default.join(depsRoot, e.fileName))) && // nodeEnv guard: empty/absent means pre-T17 pack — allow as cache hit on first run,
+  // the pack will be re-stamped with nodeEnv on next re-optimization cycle.
+  (!existingState?.nodeEnv || existingState.nodeEnv.toLowerCase() === currentNodeEnv.toLowerCase());
+  const vendorPackV2 = new VendorPackV2IndexManager({
+    depsRoot,
+    depsHash,
+    outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+    allowPackFilePrefix: "vendor-pack.feature.",
+    log: { info: logInfo, warn: logWarn }
+  });
+  vendorPackV2.loadFromDisk();
+  if (alreadyReady) {
+    writeJsonFile5(statePath, {
+      version: 1,
+      depsHash,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+      nodeEnv: process.env.NODE_ENV,
+      group: "core",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      status: "ready",
+      chunkGroupId,
+      sharedFileName,
+      entries
+    });
+    vendorPackV2.ensurePackModuleFromEntries({
+      label: "feature/core",
+      packFileName: `vendor-pack.feature.core.${chunkGroupId}.js`,
+      sharedFileName,
+      entries,
+      prunePackPrefix: "vendor-pack.feature.core."
+    });
+    return { enabled: true, didWork: false };
+  }
+  writeJsonFile5(statePath, {
+    version: 1,
+    depsHash,
+    outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+    nodeEnv: currentNodeEnv,
+    group: "core",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    status: "building",
+    chunkGroupId,
+    sharedFileName,
+    entries
+  });
+  let didWork = false;
+  try {
+    const chunked = native?.optimizeDependenciesChunked;
+    if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+    didWork = true;
+    const result = chunked(entries.map((e) => ({ entryPath: e.entryPath, depsHash })), ionifyDir);
+    const groupId = result?.chunk_group ?? result?.chunkGroup ?? chunkGroupId;
+    const sharedFileName2 = `shared.${groupId}.js`;
+    const sharedOut = import_path31.default.join(depsRoot, sharedFileName2);
+    const ok = import_fs29.default.existsSync(sharedOut) && entries.every((e) => import_fs29.default.existsSync(import_path31.default.join(depsRoot, e.fileName)));
+    if (!ok) throw new Error("Auto core pack optimizer did not produce expected outputs");
+    writeJsonFile5(statePath, {
+      version: 1,
+      depsHash,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+      nodeEnv: currentNodeEnv,
+      group: "core",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      status: "ready",
+      chunkGroupId: groupId,
+      sharedFileName: sharedFileName2,
+      entries
+    });
+    vendorPackV2.ensurePackModuleFromEntries({
+      label: "feature/core",
+      packFileName: `vendor-pack.feature.core.${groupId}.js`,
+      sharedFileName: sharedFileName2,
+      entries,
+      prunePackPrefix: "vendor-pack.feature.core."
+    });
+  } catch (err) {
+    writeJsonFile5(statePath, {
+      version: 1,
+      depsHash,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+      nodeEnv: currentNodeEnv,
+      group: "core",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      status: "failed",
+      chunkGroupId,
+      sharedFileName,
+      entries,
+      error: String(err)
+    });
+    logWarn(`[deps] WARN: Auto core production pack build failed: ${String(err)}`);
+  }
+  return { enabled: true, didWork };
+}
+async function prepareProductionManualPacks(options) {
+  const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots, depsManifestIndex } = options;
+  const optimizeDeps = config?.optimizeDeps ?? {};
+  const vendorPacksRaw = optimizeDeps.vendorPacks ?? false;
+  const vendorPacksManualRaw = vendorPacksRaw && typeof vendorPacksRaw === "object" && !Array.isArray(vendorPacksRaw) && vendorPacksRaw !== true ? vendorPacksRaw : null;
+  if (!vendorPacksManualRaw) return { enabled: false, didWork: false };
+  const depsSourcemapEnabled = optimizeDeps.sourcemap === true;
+  const depsBundleEsmEnabled = optimizeDeps.bundleEsm !== false;
+  const depsSharedChunksRaw = optimizeDeps.sharedChunks;
+  const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+  const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
+  const manualPacksEnabled = depsSharedChunksEnabled && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled;
+  if (!manualPacksEnabled) {
+    const reasons = [];
+    if (!depsSharedChunksEnabled) reasons.push("sharedChunks=0");
+    if (depsSourcemapEnabled) reasons.push("sourcemap=1");
+    if (!depsBundleEsmEnabled) reasons.push("bundleEsm=0");
+    if (!native?.optimizeDependenciesChunked) reasons.push("nativeChunked=0");
+    return { enabled: true, didWork: false, reasons };
+  }
+  const packSlimmingRaw = optimizeDeps.packSlimming ?? "auto";
+  const packSlimmingEnabled = packSlimmingRaw === true || packSlimmingRaw === "auto" || packSlimmingRaw === void 0;
+  const optimizeExclude = Array.isArray(optimizeDeps.exclude) ? new Set(optimizeDeps.exclude.map((s) => String(s))) : null;
+  const defs = compileManualPackDefs(vendorPacksManualRaw, optimizeExclude);
+  if (defs.length === 0) return { enabled: false, didWork: false };
+  const vendorPackMaxBytes = typeof optimizeDeps.vendorPackMaxBytes === "number" && optimizeDeps.vendorPackMaxBytes > 0 ? Math.floor(optimizeDeps.vendorPackMaxBytes) : 600 * 1024;
+  const vendorPackMaxMembers = typeof optimizeDeps.vendorPackMaxMembers === "number" && optimizeDeps.vendorPackMaxMembers > 0 ? Math.floor(optimizeDeps.vendorPackMaxMembers) : 25;
+  const vendorPackV2 = new VendorPackV2IndexManager({
+    depsRoot,
+    depsHash,
+    outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+    allowPackFilePrefix: "vendor-pack.manual.",
+    log: { info: logInfo, warn: logWarn }
+  });
+  vendorPackV2.loadFromDisk();
+  const depsManifestCanonicalFileNames = buildCanonicalDepFileNameIndex(
+    Array.from(depsManifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath }))
+  );
+  const usageEntries = await resolveUsageEntries(rootDir, resolvedEntries);
+  let depUsageIndex = loadDepUsageIndexFromDisk(depsRoot, depsHash);
+  if (!native?.resolveModule) {
+    if (!depUsageIndex) {
+      logWarn(
+        "[deps] vendorPacks manual enabled but native.resolveModule is unavailable; skipping production pack prep."
+      );
+      return { enabled: true, didWork: false };
+    }
+  } else if (usageEntries.length === 0) {
+    if (!depUsageIndex) {
+      logWarn("[deps] vendorPacks manual enabled but no entry files were detected; skipping production pack prep.");
+      return { enabled: true, didWork: false };
+    }
+  } else {
+    try {
+      const index = canonicalizeDepUsageIndex(
+        await scanDepUsage({ rootDir, entries: usageEntries, allowedRoots }),
+        depsManifestCanonicalFileNames
+      );
+      depUsageIndex = index;
+      saveDepUsageIndexToDisk(depsRoot, depsHash, index);
+    } catch (err) {
+      logWarn(`[deps] WARN: Usage scan failed during production pack prep: ${String(err)}`);
+      if (!depUsageIndex) {
+        return { enabled: true, didWork: false };
+      }
+    }
+  }
+  if (!depUsageIndex) return { enabled: true, didWork: false };
+  depUsageIndex = canonicalizeDepUsageIndex(depUsageIndex, depsManifestCanonicalFileNames);
+  const manualObserved = /* @__PURE__ */ new Map();
+  for (const def of defs) manualObserved.set(def.group, /* @__PURE__ */ new Map());
+  for (const usage of depUsageIndex.values()) {
+    if (!usage.fileName || !usage.entryPath || !usage.packageName) continue;
+    const reg = getDepEntry(usage.fileName);
+    const computedSubpath = computeSubpathFromEntryPath(usage.entryPath);
+    const subpath = typeof reg?.subpath === "string" ? reg.subpath : computedSubpath ? computedSubpath : null;
+    const group = classifyManualPackGroup(defs, usage.packageName, subpath, optimizeExclude);
+    if (!group) continue;
+    const groupMap = manualObserved.get(group);
+    if (!groupMap) continue;
+    if (!import_fs29.default.existsSync(usage.entryPath)) continue;
+    const fileName = canonicalizeDepFileName(usage.fileName, usage.entryPath, depsManifestCanonicalFileNames);
+    groupMap.set(fileName, {
+      entryPath: usage.entryPath,
+      fileName,
+      packageLabel: formatDepLabel2(usage.packageName, subpath)
+    });
+  }
+  const planManualPackEntries = (group) => {
+    const entries = reconcilePackEntries(
+      Array.from(manualObserved.get(group)?.values() ?? []),
+      (fileName, entryPath) => canonicalizeDepFileName(fileName, entryPath, depsManifestCanonicalFileNames)
+    );
+    const selected = [];
+    const seen = /* @__PURE__ */ new Set();
+    let totalBytes = 0;
+    for (const entry of entries) {
+      if (selected.length >= vendorPackMaxMembers) break;
+      if (seen.has(entry.fileName)) continue;
+      if (!entry.entryPath || !import_fs29.default.existsSync(entry.entryPath)) continue;
+      const sizeBytes = depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0;
+      if (totalBytes + sizeBytes > vendorPackMaxBytes) continue;
+      seen.add(entry.fileName);
+      totalBytes += sizeBytes;
+      selected.push(entry);
+    }
+    return selected;
+  };
+  const manualPackStatePathFor = (group) => import_path31.default.join(depsRoot, `vendor-pack.manual.${group}.json`);
+  const manualPackSlimStatePathFor = (group) => import_path31.default.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
+  let didWork = false;
+  const chunked = native?.optimizeDependenciesChunked;
+  for (const def of defs) {
+    const group = def.group;
+    const entries = planManualPackEntries(group);
+    if (entries.length === 0) continue;
+    const plannedChunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
+    const plannedSharedFileName = `shared.${plannedChunkGroupId}.js`;
+    const statePath = manualPackStatePathFor(group);
+    const existing = readJsonFile5(statePath);
+    const isCached = isReadyManualPackState(existing, depsRoot, depsHash, group);
+    const sharedOk = isCached && existing.entries.every(
+      (entry) => entry?.entryPath && canonicalizeDepFileName(entry.fileName, entry.entryPath, depsManifestCanonicalFileNames) === entry.fileName
+    ) && existing.sharedFileName === plannedSharedFileName && import_fs29.default.existsSync(import_path31.default.join(depsRoot, plannedSharedFileName));
+    let baseState = null;
+    if (sharedOk) {
+      baseState = existing;
+    } else {
+      didWork = true;
+      writeJsonFile5(statePath, {
+        version: 1,
+        depsHash,
+        outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+        group,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        status: "building",
+        chunkGroupId: plannedChunkGroupId,
+        sharedFileName: plannedSharedFileName,
+        entries
+      });
+      try {
+        if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+        const result = chunked(entries.map((e) => ({ entryPath: e.entryPath, depsHash })), ionifyDir);
+        const groupId = result?.chunk_group ?? result?.chunkGroup ?? plannedChunkGroupId;
+        const resolvedEntries2 = resolveChunkedPackEntries(
+          entries,
+          Array.isArray(result?.entries) ? result.entries.map((item) => ({
+            entryPath: item?.entry_path ?? item?.entryPath ?? null,
+            outPath: item?.out_path ?? item?.outPath ?? null
+          })) : []
+        );
+        const sharedFileName = `shared.${groupId}.js`;
+        const sharedOut = import_path31.default.join(depsRoot, sharedFileName);
+        const ok = import_fs29.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs29.default.existsSync(import_path31.default.join(depsRoot, entry.fileName)));
+        if (!ok) throw new Error("Manual pack optimizer did not produce expected outputs");
+        const readyState = {
+          version: 1,
+          depsHash,
+          outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+          group,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          status: "ready",
+          chunkGroupId: groupId,
+          sharedFileName,
+          entries: resolvedEntries2
+        };
+        writeJsonFile5(statePath, readyState);
+        baseState = readyState;
+      } catch (err) {
+        writeJsonFile5(statePath, {
+          version: 1,
+          depsHash,
+          outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+          group,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          status: "failed",
+          chunkGroupId: plannedChunkGroupId,
+          sharedFileName: plannedSharedFileName,
+          entries,
+          error: String(err)
+        });
+        logWarn(`[deps] WARN: Manual production pack build failed (${group}): ${String(err)}`);
+      }
+    }
+    if (!isReadyManualPackState(baseState, depsRoot, depsHash, group)) continue;
+    const baseEntries = Array.isArray(baseState.entries) ? baseState.entries : [];
+    if (baseEntries.length === 0) continue;
+    if (packSlimmingEnabled && group !== "core") {
+      const usedByBase = /* @__PURE__ */ new Map();
+      for (const entry of baseEntries) {
+        const u = depUsageIndex.get(entry.fileName);
+        if (!u) continue;
+        if (u.hasNamespace || u.hasExportStar) continue;
+        if (!Array.isArray(u.usedExports) || u.usedExports.length === 0) continue;
+        usedByBase.set(entry.fileName, u.usedExports.slice());
+      }
+      if (usedByBase.size > 0) {
+        const slimPath = manualPackSlimStatePathFor(group);
+        const existingSlim = readJsonFile5(slimPath);
+        if (isReadyManualSlimState(existingSlim, depsRoot, depsHash, group) && existingSlim.entries.every(
+          (entry) => entry?.entryPath && canonicalizeDepFileName(entry.baseFileName, entry.entryPath, depsManifestCanonicalFileNames) === entry.baseFileName
+        )) {
+          const sharedPath = import_path31.default.join(depsRoot, existingSlim.sharedFileName);
+          const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
+          const baseSet = new Set(baseEntries.map((e) => e.fileName));
+          const inputsMatch = import_fs29.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+            const entry = byBase.get(base.fileName);
+            if (!entry) return false;
+            if (entry.entryPath !== base.entryPath) return false;
+            if (!import_fs29.default.existsSync(import_path31.default.join(depsRoot, entry.wrapperFileName))) return false;
+            const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
+            const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
+            if (expected.length !== actual.length) return false;
+            for (let i = 0; i < expected.length; i++) {
+              if (expected[i] !== actual[i]) return false;
+            }
+            return true;
+          });
+          if (inputsMatch) {
+            const ok = vendorPackV2.ensurePackModuleFromWrappers({
+              label: `manual/${group}/slim`,
+              packFileName: `vendor-pack.manual.${group}.${existingSlim.chunkGroupId}.js`,
+              sharedFileName: existingSlim.sharedFileName,
+              members: existingSlim.entries.map((e) => ({
+                baseFileName: e.baseFileName,
+                wrapperFileName: e.wrapperFileName,
+                packageLabel: e.packageLabel
+              })),
+              prunePackPrefix: `vendor-pack.manual.${group}.`
+            });
+            if (ok) continue;
+          }
+        }
+        didWork = true;
+        writeJsonFile5(slimPath, {
+          version: 1,
+          depsHash,
+          outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+          group,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          status: "building",
+          chunkGroupId: null,
+          sharedFileName: null,
+          entries: baseEntries.map((e) => ({
+            baseFileName: e.fileName,
+            wrapperFileName: e.fileName,
+            entryPath: e.entryPath,
+            packageLabel: e.packageLabel,
+            usedExports: usedByBase.get(e.fileName) ?? []
+          }))
+        });
+        try {
+          if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+          const result = chunked(
+            baseEntries.map((e) => {
+              const usedExports = usedByBase.get(e.fileName);
+              return usedExports && usedExports.length > 0 ? { entryPath: e.entryPath, depsHash, usedExports } : { entryPath: e.entryPath, depsHash };
+            }),
+            ionifyDir
+          );
+          const groupId = result?.chunk_group ?? result?.chunkGroup ?? null;
+          if (!groupId || typeof groupId !== "string") throw new Error("Missing chunkGroupId");
+          const sharedFileName = `shared.${groupId}.js`;
+          const sharedOut = import_path31.default.join(depsRoot, sharedFileName);
+          if (!import_fs29.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+          const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
+          const outByEntryPath = /* @__PURE__ */ new Map();
+          for (const item of resultsArr) {
+            const entryPath = item?.entry_path ?? item?.entryPath ?? null;
+            const outPath = item?.out_path ?? item?.outPath ?? null;
+            if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
+            const canonicalEntryPath = (() => {
+              try {
+                return import_fs29.default.realpathSync(entryPath);
+              } catch {
+                return entryPath;
+              }
+            })();
+            outByEntryPath.set(canonicalEntryPath, import_path31.default.basename(outPath));
+          }
+          const slimMembers = [];
+          const slimEntries = [];
+          for (const base of baseEntries) {
+            const canonicalBaseEntryPath = (() => {
+              try {
+                return import_fs29.default.realpathSync(base.entryPath);
+              } catch {
+                return base.entryPath;
+              }
+            })();
+            const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
+            if (!import_fs29.default.existsSync(import_path31.default.join(depsRoot, wrapperFileName))) {
+              throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
+            }
+            slimMembers.push({
+              baseFileName: base.fileName,
+              wrapperFileName,
+              packageLabel: base.packageLabel
+            });
+            slimEntries.push({
+              baseFileName: base.fileName,
+              wrapperFileName,
+              entryPath: base.entryPath,
+              packageLabel: base.packageLabel,
+              usedExports: usedByBase.get(base.fileName) ?? []
+            });
+          }
+          const ok = vendorPackV2.ensurePackModuleFromWrappers({
+            label: `manual/${group}/slim`,
+            packFileName: `vendor-pack.manual.${group}.${groupId}.js`,
+            sharedFileName,
+            members: slimMembers,
+            prunePackPrefix: `vendor-pack.manual.${group}.`
+          });
+          writeJsonFile5(slimPath, {
+            version: 1,
+            depsHash,
+            outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+            group,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            status: "ready",
+            chunkGroupId: groupId,
+            sharedFileName,
+            entries: slimEntries
+          });
+          if (ok) continue;
+        } catch (err) {
+          writeJsonFile5(slimPath, {
+            version: 1,
+            depsHash,
+            outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+            group,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            status: "failed",
+            chunkGroupId: null,
+            sharedFileName: null,
+            entries: readJsonFile5(slimPath)?.entries ?? [],
+            error: String(err)
+          });
+          logWarn(`[deps] WARN: Manual production pack slimming failed (${group}): ${String(err)}`);
+        }
+      }
+    }
+    vendorPackV2.ensurePackModuleFromEntries({
+      label: `manual/${group}`,
+      packFileName: `vendor-pack.manual.${group}.${baseState.chunkGroupId}.js`,
+      sharedFileName: baseState.sharedFileName,
+      entries: baseState.entries,
+      prunePackPrefix: `vendor-pack.manual.${group}.`
+    });
+  }
+  return { enabled: true, didWork };
+}
+async function runBuildCommand(options = {}) {
+  try {
+    const buildStart = Date.now();
+    const buildMode = options.mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? (options.depsOnly ? process.env.NODE_ENV ?? "development" : "production");
+    if (!options.depsOnly) {
+      process.env.NODE_ENV = "production";
+    } else if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "production") {
+      process.env.NODE_ENV = "development";
+    }
+    process.env.MODE = buildMode;
+    process.env.IONIFY_MODE = buildMode;
+    const config = await loadIonifyConfig(process.cwd(), buildMode);
+    const projectRootOverride = config?.root ? import_path31.default.resolve(config.root) : null;
+    const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
+      projectRootOverride
+    });
+    const rootDir = workspace.projectRoot;
+    const ionifyDir = workspace.ionifyDir;
+    const publicDirAbs = resolvePublicDir2(rootDir, config?.publicDir);
+    import_fs29.default.mkdirSync(ionifyDir, { recursive: true });
+    process.env.IONIFY_PROJECT_ROOT = rootDir;
+    process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
+    process.env.IONIFY_STATE_DIR = ionifyDir;
+    process.env.IONIFY_WORKSPACE_ID = workspace.workspaceId;
+    process.env.IONIFY_PROJECT_ID = workspace.projectId;
+    try {
+      const preOpts = config?.css?.preprocessorOptions;
+      process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = preOpts ? JSON.stringify(preOpts) : "";
+    } catch {
+      process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = "";
+    }
+    process.env.MODE = buildMode;
+    const envFromFiles = loadEnv(process.env.MODE, rootDir);
+    if (!options.depsOnly) {
+      process.env.NODE_ENV = "production";
+    }
+    const envValues = {
+      ...envFromFiles,
+      NODE_ENV: process.env.NODE_ENV,
+      MODE: process.env.MODE
+    };
+    const envPrefix = config?.envPrefix || ["VITE_", "IONIFY_"];
+    const defineConfig = buildDefineConfig(config?.define, envValues, envPrefix);
+    logInfo(`[define] ${Object.keys(defineConfig).length} replacements configured`);
+    const optLevel = resolveOptimizationLevel(config?.optimizationLevel, {
+      cliLevel: options.level,
+      envLevel: process.env.IONIFY_OPTIMIZATION_LEVEL
+    });
+    let minifier;
+    const parserMode = resolveParser(config, { envMode: process.env.IONIFY_PARSER });
+    let treeshake;
+    let scopeHoist;
+    if (optLevel !== null) {
+      const preset = getOptimizationPreset(optLevel);
+      minifier = preset.minifier;
+      treeshake = preset.treeshake;
+      scopeHoist = preset.scopeHoist;
+      logInfo(`Using optimization level ${optLevel} (preset)`);
+    } else {
+      minifier = resolveMinifier(config, { envVar: process.env.IONIFY_MINIFIER });
+      treeshake = resolveTreeshake(config?.treeshake, {
+        envMode: process.env.IONIFY_TREESHAKE,
+        includeEnv: process.env.IONIFY_TREESHAKE_INCLUDE,
+        excludeEnv: process.env.IONIFY_TREESHAKE_EXCLUDE
+      });
+      scopeHoist = resolveScopeHoist(config?.scopeHoist, {
+        envMode: process.env.IONIFY_SCOPE_HOIST,
+        inlineEnv: process.env.IONIFY_SCOPE_HOIST_INLINE,
+        constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
+        combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
+      });
+    }
+    applyParserEnv(parserMode);
+    const resolvedBuildEntries = resolveProductionBuildEntries(config, rootDir, (message) => logWarn(message));
+    let entries = resolvedBuildEntries.entries;
+    if (entries?.length && resolvedBuildEntries.source === "config") {
+      logInfo(`Build entries: ${entries.join(", ")}`);
+    } else if (entries?.length && resolvedBuildEntries.source === "html") {
+      logInfo(`Build entries inferred from index.html: ${entries.join(", ")}`);
+    } else {
+      logInfo(`No entries in config or index.html, planner will infer from graph`);
+    }
+    const rawVersionInputs = createProductionGraphVersionInputs({
+      config,
+      parserMode,
+      minifier,
+      treeshake,
+      scopeHoist,
+      entries
+    });
+    const configHash = computeGraphVersion(rawVersionInputs);
+    logInfo(`[Build] Version hash: ${configHash}`);
+    process.env.IONIFY_CONFIG_HASH = configHash;
+    const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
+    const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
+    const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false;
+    const depsSharedChunksRaw = config?.optimizeDeps?.sharedChunks;
+    const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+    const depsHash = computeDepsHash(configHash, lockfile, {
+      nodeEnv: process.env.NODE_ENV,
+      sourcemap: depsSourcemapEnabled,
+      bundleEsm: depsBundleEsmEnabled,
+      sharedChunks: depsSharedChunksMode,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2
+    });
+    process.env.IONIFY_DEPS_HASH = depsHash;
+    const depsRoot = import_path31.default.join(ionifyDir, "deps", depsHash);
+    process.env.IONIFY_DEPS_ROOT = depsRoot;
+    import_fs29.default.mkdirSync(depsRoot, { recursive: true });
+    const buildExternalSpecifiers = collectConfiguredExternalSpecifiers(config);
+    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "production") {
+      process.env.IONIFY_NODE_ENV = process.env.NODE_ENV;
+    }
+    if (native?.initAstCache) {
+      const versionHash = JSON.stringify(rawVersionInputs);
+      native.initAstCache(versionHash);
+      logInfo(`AST cache initialized with version hash`);
+    }
+    const vendorPacksRaw = config?.optimizeDeps?.vendorPacks ?? false;
+    const vendorPacksManualConfigured = vendorPacksRaw && typeof vendorPacksRaw === "object" && !Array.isArray(vendorPacksRaw) && Object.keys(vendorPacksRaw).length > 0;
+    const vendorPacksAutoConfigured = vendorPacksRaw === "auto";
+    if (vendorPacksAutoConfigured) {
+      const packsStart = Date.now();
+      const vendorExclude = resolveAutoVendorEntryFsPaths(rootDir, config);
+      if (vendorExclude !== null && vendorExclude.size > 1 && native?.optimizeDepsParallelSplit) {
+        const sentinelPath = import_path31.default.join(depsRoot, ".verified");
+        if (import_fs29.default.existsSync(sentinelPath)) {
+          logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
+        } else if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+          try {
+            import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+          } catch {
+          }
+          logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+        } else {
+          if (native?.depsPromoteArtifacts) {
+            const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
+            if (prevRoot) {
+              try {
+                const r = native.depsPromoteArtifacts(prevRoot, depsRoot, depsHash, DEPS_OPTIMIZER_OUTPUT_VERSION2);
+                if (r.promoted > 0) logInfo(`[deps] Promoted ${r.promoted} artifacts from previous deps dir (${r.skipped} need re-optimization)`);
+              } catch {
+              }
+            }
+          }
+          const batchEntryPaths = await (async () => {
+            const out = /* @__PURE__ */ new Set();
+            if (!native?.resolveModule) return out;
+            const pkgJson = readProjectPackageJson3(rootDir);
+            const optimizeExclude = Array.isArray(config?.optimizeDeps?.exclude) ? new Set(config.optimizeDeps.exclude.map((s) => String(s))) : null;
+            const depSpecifiers = Object.keys(pkgJson?.dependencies ?? {});
+            const includeSpecifiers = Array.isArray(config?.optimizeDeps?.include) ? config.optimizeDeps.include.map((s) => String(s)) : [];
+            const vendorMode = config?.optimizeDeps?.vendor ?? "auto";
+            const vendorSpecifiers = vendorMode === false ? [] : Array.isArray(vendorMode) ? vendorMode.map((s) => String(s)) : vendorMode === "auto" ? detectVendorSpecifiers2(pkgJson) : [];
+            const allSpecs = Array.from(new Set([...vendorSpecifiers, ...includeSpecifiers, ...depSpecifiers].map((s) => s.trim()).filter(Boolean))).filter((s) => !optimizeExclude?.has(s));
+            for (const spec of allSpecs) {
+              try {
+                const r = native.resolveModule(spec, rootDir);
+                const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+                if (!fsPath || typeof fsPath !== "string" || !fsPath.includes("node_modules")) continue;
+                if (!isOptimizableDepEntryPath(fsPath)) continue;
+                if (!vendorExclude.has(fsPath)) out.add(fsPath);
+              } catch {
+              }
+            }
+            const usageEntries = await resolveUsageEntries(rootDir, entries);
+            if (usageEntries.length > 0) {
+              try {
+                const scanned = await scanDepEntryPaths({ rootDir, entries: usageEntries, allowedRoots: workspace.allowedRoots });
+                for (const e of scanned) {
+                  if (optimizeExclude?.has(e.packageName)) continue;
+                  if (!isOptimizableDepEntryPath(e.entryPath)) continue;
+                  if (!vendorExclude.has(e.entryPath)) out.add(e.entryPath);
+                }
+              } catch {
+              }
+            }
+            return out;
+          })();
+          if (batchEntryPaths.size > 0 || vendorExclude.size > 0) {
+            import_fs29.default.mkdirSync(depsRoot, { recursive: true });
+            const batchEntries = Array.from(batchEntryPaths).map((entryPath) => ({ entryPath, depsHash }));
+            const chunkedEntries = Array.from(vendorExclude).map((entryPath) => ({ entryPath, depsHash }));
+            let splitHadErrors = false;
+            try {
+              const splitResult = native.optimizeDepsParallelSplit(batchEntries, chunkedEntries, ionifyDir);
+              for (const err of splitResult.errors ?? []) {
+                logWarn(`[deps] WARN (parallel split): ${err}`);
+                splitHadErrors = true;
+              }
+            } catch (err) {
+              logWarn(`[deps] WARN: Parallel split failed, falling back: ${String(err)}`);
+              await ensureOptimizedDeps({
+                rootDir,
+                ionifyDir,
+                depsHash,
+                depsRoot,
+                config,
+                resolvedEntries: entries,
+                allowedRoots: workspace.allowedRoots,
+                excludeEntryPaths: vendorExclude
+              });
+            }
+            if (!splitHadErrors) {
+              try {
+                import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+              } catch {
+              }
+              writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+            }
+          } else {
+            try {
+              import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+            } catch {
+            }
+            writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+          }
+        }
+        try {
+          const packs = await prepareProductionAutoCorePack({ rootDir, ionifyDir, depsHash, depsRoot, config });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (CAS-first, rust-parallel)`);
+          } else {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (cached)`);
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+      } else {
+        await ensureOptimizedDeps({
+          rootDir,
+          ionifyDir,
+          depsHash,
+          depsRoot,
+          config,
+          resolvedEntries: entries,
+          allowedRoots: workspace.allowedRoots,
+          excludeEntryPaths: vendorExclude ?? void 0
+        });
+        const packsStart2 = Date.now();
+        try {
+          const packs = await prepareProductionAutoCorePack({
+            rootDir,
+            ionifyDir,
+            depsHash,
+            depsRoot,
+            config
+          });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart2}ms (CAS-first)`);
+          } else {
+            logInfo("Production packs ready (cached)");
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+      }
+    } else {
+      await ensureOptimizedDeps({
+        rootDir,
+        ionifyDir,
+        depsHash,
+        depsRoot,
+        config,
+        resolvedEntries: entries,
+        allowedRoots: workspace.allowedRoots
+      });
+      if (vendorPacksManualConfigured) {
+        const depsManifestIndexForPacks = loadDepsManifestIndex3(depsRoot);
+        const packsStart = Date.now();
+        try {
+          const packs = await prepareProductionManualPacks({
+            rootDir,
+            ionifyDir,
+            depsHash,
+            depsRoot,
+            config,
+            resolvedEntries: entries,
+            allowedRoots: workspace.allowedRoots,
+            depsManifestIndex: depsManifestIndexForPacks
+          });
+          if (packs.reasons && packs.reasons.length) {
+            logWarn(`[deps] Production packs unavailable (${packs.reasons.join(", ")}). Skipping.`);
+          } else if (packs.didWork) {
+            logInfo(`Production packs ready in ${Date.now() - packsStart}ms (CAS-first)`);
+          } else {
+            logInfo("Production packs ready (cached)");
+          }
+        } catch (err) {
+          logWarn(`[deps] WARN: Production pack prep failed: ${String(err)}`);
+        }
+      }
+    }
+    const depsManifestIndex = loadDepsManifestIndex3(depsRoot);
+    const depStops = loadDepStopsFromManifest(depsRoot);
+    if (options.depsOnly) {
+      logInfo(
+        `[deps] optimize-all: snapshot ready at .ionify/deps/${depsHash}/ (skipping bundler, no dist/ output).`
+      );
+      void depsManifestIndex;
+      void depStops;
+      return;
+    }
+    const federationExposeEntries = collectFederationExposeEntryPaths(config, rootDir);
+    const buildEntries = Array.from(
+      /* @__PURE__ */ new Set([...entries ?? [], ...federationExposeEntries])
+    );
+    logInfo("Building...");
+    const planStart = Date.now();
+    const publishedPlan = readProductionPublicationPlan(ionifyDir, {
+      mode: buildMode,
+      nodeEnv: "production",
+      configHash,
+      depsHash,
+      depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2,
+      entries: entries ?? [],
+      entrySource: resolvedBuildEntries.source
+    });
+    const plan = publishedPlan ? publishedPlan : await generateBuildPlan(
+      buildEntries.length > 0 ? buildEntries : void 0,
+      rawVersionInputs,
+      depStops,
+      buildExternalSpecifiers
+    );
+    logBuildProfile("generateBuildPlan", planStart);
+    if (publishedPlan) {
+      logInfo(`[Build] Using published Production Plan (${plan.chunks.length} chunk(s), identity verified)`);
+    }
+    const totalPlannedModules = plan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
+    logInfo(
+      `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`
+    );
+    const federationGraph = new Graph(rawVersionInputs, { ionifyDir });
+    const federationRemoteBindings = collectFederationRemoteImportBindings(config, rootDir);
+    if (config?.federation) {
+      syncFederationGraphNodes2(federationGraph, buildFederationConfigGraphNodes(config, rootDir));
+      for (const chunk of plan.chunks) {
+        for (const mod of chunk.modules) {
+          if (mod.kind !== "js") continue;
+          let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+          if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+            fsPath = fromWsModuleId(mod.id, workspace.workspaceRoot);
+          }
+          const existingNode = fsPath ? federationGraph.getNode(fsPath) : void 0;
+          let nextStaticDeps = existingNode?.deps ?? mod.deps ?? [];
+          let nextDynamicDeps = existingNode?.dynamicDeps ?? mod.dynamicDeps ?? [];
+          if (fsPath && import_path31.default.isAbsolute(fsPath) && import_fs29.default.existsSync(fsPath)) {
+            try {
+              const code = import_fs29.default.readFileSync(fsPath, "utf8");
+              const specs = native?.parseModuleIr ? (native.parseModuleIr(fsPath, code)?.dependencies ?? []).map((dep) => dep.specifier) : extractImports(code, fsPath);
+              const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+                specs,
+                fsPath,
+                buildExternalSpecifiers
+              );
+              nextStaticDeps = [...localDeps, ...externalDeps];
+              nextDynamicDeps = [];
+            } catch {
+            }
+          }
+          const deps = rewriteFederationGraphEdgeIds(nextStaticDeps, federationRemoteBindings);
+          const dynamicDeps = rewriteFederationGraphEdgeIds(
+            nextDynamicDeps,
+            federationRemoteBindings
+          );
+          if (JSON.stringify(deps) === JSON.stringify(nextStaticDeps) && JSON.stringify(dynamicDeps) === JSON.stringify(nextDynamicDeps)) {
+            continue;
+          }
+          if (fsPath && import_path31.default.isAbsolute(fsPath)) {
+            federationGraph.recordFile(fsPath, mod.hash ?? existingNode?.hash ?? getCacheKey(mod.id), deps, dynamicDeps, mod.kind);
+          } else {
+            federationGraph.recordNodeById(mod.id, mod.hash ?? null, deps, dynamicDeps, mod.kind);
+          }
+        }
+      }
+    }
+    {
+      const rerouteStart = Date.now();
+      const casRoot2 = import_path31.default.join(ionifyDir, "cas");
+      const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
+        plan,
+        depsRoot,
+        casRoot: casRoot2,
+        configHash,
+        workspaceRoot: workspace.workspaceRoot
+      });
+      if (rerouted > 0 || pruned > 0) {
+        logInfo(
+          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted (${idRewritten} ids \u2192 artifact identity), ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`
+        );
+      }
+      logBuildProfile("depsReroute", rerouteStart);
+    }
+    const outDir = options.outDir || "dist";
+    const defineSignature = computeDefineSignature(defineConfig);
+    const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
+    const moduleRefsById = /* @__PURE__ */ new Map();
+    const moduleMetaById = /* @__PURE__ */ new Map();
+    const moduleIndexStart = Date.now();
+    for (const chunk of plan.chunks) {
+      for (const mod of chunk.modules) {
+        if (mod.kind !== "js" && mod.kind !== "css") continue;
+        let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+        if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+          fsPath = fromWsModuleId(mod.id, workspace.workspaceRoot);
+        }
+        if (!fsPath && typeof mod.id === "string" && import_path31.default.isAbsolute(mod.id)) {
+          fsPath = mod.id;
+        }
+        if (!fsPath || !import_path31.default.isAbsolute(fsPath)) continue;
+        mod.fsPath = fsPath;
+        const existing = moduleMetaById.get(mod.id);
+        if (!existing) {
+          moduleMetaById.set(mod.id, {
+            fsPath,
+            kind: mod.kind,
+            hash: typeof mod.hash === "string" && mod.hash.length > 0 ? mod.hash : null
+          });
+        }
+        const bucket = moduleRefsById.get(mod.id);
+        if (bucket) bucket.push(mod);
+        else moduleRefsById.set(mod.id, [mod]);
+      }
+    }
+    logBuildProfile("moduleIndex", moduleIndexStart);
+    const moduleOutputs = /* @__PURE__ */ new Map();
+    const modulesInPlan = moduleMetaById.size;
+    const casRoot = import_path31.default.join(ionifyDir, "cas");
+    let casHits = 0;
+    {
+      const freshnessStart = Date.now();
+      const freshnessCacheFile = import_path31.default.join(ionifyDir, "source-freshness.v1.json");
+      let freshnessCache = {};
+      try {
+        const parsed = JSON.parse(import_fs29.default.readFileSync(freshnessCacheFile, "utf8"));
+        if (parsed && typeof parsed === "object") {
+          freshnessCache = parsed;
+        }
+      } catch {
+      }
+      let staleCount = 0;
+      const nextFreshnessCache = {};
+      for (const [id, meta] of moduleMetaById.entries()) {
+        if (!meta.hash || !meta.fsPath) continue;
+        const fp = meta.fsPath;
+        if (fp.includes("node_modules") || fp.includes("/.ionify/")) continue;
+        if (meta.kind !== "js" && meta.kind !== "css") continue;
+        try {
+          const st = import_fs29.default.statSync(fp);
+          const cacheKey = `${id}
+${fp}`;
+          const cached = freshnessCache[cacheKey];
+          const diskHash = cached && cached.fsPath === fp && cached.dev === st.dev && cached.ino === st.ino && cached.mtimeMs === st.mtimeMs && cached.ctimeMs === st.ctimeMs && cached.size === st.size && typeof cached.hash === "string" && cached.hash.length > 0 ? cached.hash : getCacheKey(import_fs29.default.readFileSync(fp));
+          nextFreshnessCache[cacheKey] = {
+            fsPath: fp,
+            dev: st.dev,
+            ino: st.ino,
+            mtimeMs: st.mtimeMs,
+            ctimeMs: st.ctimeMs,
+            size: st.size,
+            hash: diskHash
+          };
+          if (diskHash !== meta.hash) {
+            meta.hash = diskHash;
+            const refs = moduleRefsById.get(id) ?? [];
+            for (const ref of refs) ref.hash = diskHash;
+            staleCount++;
+            if (native?.graphRecord) {
+              const firstRef = refs[0];
+              const deps = Array.isArray(firstRef?.deps) ? firstRef.deps : [];
+              const dynDeps = Array.isArray(firstRef?.dynamicDeps) ? firstRef.dynamicDeps : [];
+              try {
+                native.graphRecord(id, diskHash, deps, dynDeps, meta.kind, null);
+              } catch {
+              }
+            }
+          }
+        } catch {
+        }
+      }
+      if (staleCount > 0) {
+        logInfo(`[Build] ${staleCount} source module(s) changed since last graph update \u2014 CAS keys refreshed`);
+      }
+      try {
+        import_fs29.default.mkdirSync(ionifyDir, { recursive: true });
+        const tmpFreshness = `${freshnessCacheFile}.${process.pid}.${Date.now()}.tmp`;
+        import_fs29.default.writeFileSync(tmpFreshness, `${JSON.stringify(nextFreshnessCache)}
+`, "utf8");
+        import_fs29.default.renameSync(tmpFreshness, freshnessCacheFile);
+      } catch {
+      }
+      logBuildProfile("freshnessScan", freshnessStart);
+    }
+    const defineJobs = [];
+    const cssDerivedArtifactHashById = /* @__PURE__ */ new Map();
+    const jobs = [];
+    const getArtifactHash = (baseHash, kind) => {
+      if (kind !== "js") return baseHash;
+      if (!defineHash) return baseHash;
+      return getCacheKey(`${baseHash}|define:${defineHash}`);
+    };
+    const jsCasFileById = /* @__PURE__ */ new Map();
+    for (const [id, meta] of moduleMetaById.entries()) {
+      if (meta.kind !== "css" && meta.hash) {
+        const ah = getArtifactHash(meta.hash, meta.kind);
+        jsCasFileById.set(id, import_path31.default.join(getCasArtifactPath(casRoot, configHash, ah), "transformed.js"));
+      }
+    }
+    const casExistsMap = /* @__PURE__ */ new Map();
+    if (jsCasFileById.size > 0) {
+      const batchPaths = Array.from(jsCasFileById.values());
+      const casBatchStart = Date.now();
+      const batchExists = native.casBatchCheck(batchPaths);
+      logBuildProfile("casBatchCheck", casBatchStart);
+      for (let i = 0; i < batchPaths.length; i++) {
+        casExistsMap.set(batchPaths[i], batchExists[i]);
+      }
+    }
+    const hydrationStart = Date.now();
+    for (const [id, meta] of moduleMetaById.entries()) {
+      const refs = moduleRefsById.get(id) ?? [];
+      const baseHashFromPlan = meta.hash;
+      const cssNeedsJsWrapper = meta.kind === "css" && isCssModuleFile(meta.fsPath);
+      let artifactHashFromPlan = baseHashFromPlan ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
+      if (meta.kind === "css" && baseHashFromPlan) {
+        const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
+        const cssMeta = readJsonFile5(import_path31.default.join(baseDir, "meta.json"));
+        if (cssMeta && cssMeta.version === 1 && cssMeta.baseHash === baseHashFromPlan && typeof cssMeta.pipelineHash === "string" && cssMeta.pipelineHash.length > 0) {
+          const depsAbs = Array.from(
+            new Set(
+              [...cssMeta.deps ?? [], ...cssMeta.urlDeps ?? []].filter(
+                (p) => typeof p === "string" && p.length > 0
+              )
+            )
+          );
+          const depsStampHash = computeDepsContentStampHash(
+            depsAbs,
+            moduleMetaById,
+            workspace.workspaceRoot
+          );
+          artifactHashFromPlan = getCacheKey(
+            `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`
+          );
+        }
+      }
+      if (artifactHashFromPlan) {
+        for (const ref of refs) ref.hash = artifactHashFromPlan;
+      }
+      const casDir = artifactHashFromPlan ? getCasArtifactPath(casRoot, configHash, artifactHashFromPlan) : null;
+      const casCssFile = casDir ? import_path31.default.join(casDir, "transformed.css") : null;
+      const casJsFile = casDir ? import_path31.default.join(casDir, "transformed.js") : null;
+      if (meta.kind === "css") {
+        if (casCssFile && import_fs29.default.existsSync(casCssFile)) {
+          try {
+            const css = import_fs29.default.readFileSync(casCssFile, "utf8");
+            moduleOutputs.set(id, { code: css, type: "css" });
+            casHits += 1;
+            if (cssNeedsJsWrapper && casJsFile && !import_fs29.default.existsSync(casJsFile)) {
+              const tokensFile = import_path31.default.join(casDir, "tokens.json");
+              const storedTokens = readJsonFile5(tokensFile);
+              if (storedTokens) {
+                try {
+                  import_fs29.default.mkdirSync(casDir, { recursive: true });
+                  import_fs29.default.writeFileSync(casJsFile, renderCssTokensModule(storedTokens), "utf8");
+                } catch {
+                }
+              }
+            }
+            continue;
+          } catch {
+          }
+        }
+        if (baseHashFromPlan && casDir && casCssFile) {
+          const baseCasDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
+          if (baseCasDir !== casDir) {
+            const baseCssArtifact = import_path31.default.join(baseCasDir, "transformed.css");
+            if (import_fs29.default.existsSync(baseCssArtifact)) {
+              try {
+                const css = import_fs29.default.readFileSync(baseCssArtifact, "utf8");
+                import_fs29.default.mkdirSync(casDir, { recursive: true });
+                import_fs29.default.writeFileSync(casCssFile, css, "utf8");
+                moduleOutputs.set(id, { code: css, type: "css" });
+                casHits += 1;
+                if (cssNeedsJsWrapper && casJsFile) {
+                  const baseTokFile = import_path31.default.join(baseCasDir, "tokens.json");
+                  const storedTokens = readJsonFile5(baseTokFile);
+                  if (storedTokens) {
+                    import_fs29.default.writeFileSync(casJsFile, renderCssTokensModule(storedTokens), "utf8");
+                    try {
+                      import_fs29.default.writeFileSync(import_path31.default.join(casDir, "tokens.json"), JSON.stringify(storedTokens), "utf8");
+                    } catch {
+                    }
+                  }
+                }
+                continue;
+              } catch {
+              }
+            }
+          }
+        }
+      } else {
+        const casFileName = "transformed.js";
+        const casFile = casDir ? import_path31.default.join(casDir, casFileName) : null;
+        if (casFile && (casExistsMap.get(casFile) ?? import_fs29.default.existsSync(casFile))) {
+          casHits += 1;
+          continue;
+        }
+      }
+      if (meta.kind === "js" && baseHashFromPlan) {
+        const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
+        const baseFile = import_path31.default.join(baseDir, "transformed.js");
+        if (import_fs29.default.existsSync(baseFile)) {
+          try {
+            const baseCode = import_fs29.default.readFileSync(baseFile, "utf8");
+            const artifactHash2 = getArtifactHash(baseHashFromPlan, "js");
+            for (const ref of refs) ref.hash = artifactHash2;
+            defineJobs.push({ id, artifactHash: artifactHash2, baseCode });
+            casHits += 1;
+            continue;
+          } catch {
+          }
+        }
+      }
+      const filePath = meta.fsPath;
+      if (!import_fs29.default.existsSync(filePath)) {
+        throw new Error(`Module missing on disk: ${filePath}`);
+      }
+      const code = import_fs29.default.readFileSync(filePath, "utf8");
+      const baseHash = baseHashFromPlan ?? getCacheKey(code);
+      const artifactHash = meta.kind === "css" ? artifactHashFromPlan ?? baseHash : getArtifactHash(baseHash, meta.kind);
+      if (meta.kind !== "css") {
+        for (const ref of refs) ref.hash = artifactHash;
+      }
+      if (meta.kind === "js" && defineHash) {
+        const baseDir = getCasArtifactPath(casRoot, configHash, baseHash);
+        const baseFile = import_path31.default.join(baseDir, "transformed.js");
+        if (import_fs29.default.existsSync(baseFile)) {
+          try {
+            const baseCode = import_fs29.default.readFileSync(baseFile, "utf8");
+            defineJobs.push({ id, artifactHash, baseCode });
+            casHits += 1;
+            continue;
+          } catch {
+          }
+        }
+      }
+      jobs.push({
+        id,
+        filePath,
+        ext: import_path31.default.extname(filePath),
+        code,
+        kind: meta.kind,
+        baseHash,
+        artifactHash,
+        cssNeedsJsWrapper: meta.kind === "css" ? cssNeedsJsWrapper : void 0
+      });
+    }
+    logBuildProfile("casHydration", hydrationStart);
+    const transformsNeeded = jobs.length;
+    const percentHits = modulesInPlan > 0 ? Math.round(casHits * 100 / modulesInPlan) : 100;
+    const defineStart = Date.now();
+    for (const job of defineJobs) {
+      const cacheDir2 = getCasArtifactPath(casRoot, configHash, job.artifactHash);
+      try {
+        import_fs29.default.mkdirSync(cacheDir2, { recursive: true });
+        const finalCode = applyDefineReplacements(job.baseCode, defineConfig);
+        import_fs29.default.writeFileSync(import_path31.default.join(cacheDir2, "transformed.js"), finalCode, "utf8");
+      } catch {
+      }
+    }
+    if (defineJobs.length > 0) {
+      logBuildProfile("defineVariantDerive", defineStart);
+    }
+    if (jobs.length > 0) {
+      const transformStart = Date.now();
+      const transformResultsById = /* @__PURE__ */ new Map();
+      const nativeHandledIds = /* @__PURE__ */ new Set();
+      const jobById = new Map(jobs.map((job) => [job.id, job]));
+      const jsJobs = jobs.filter((job) => job.kind === "js");
+      if (typeof native?.nativeTransformBatch === "function" && jsJobs.length > 0) {
+        try {
+          const nativeResults = native.nativeTransformBatch(
+            jsJobs.map((job) => ({
+              id: job.id,
+              filePath: job.filePath,
+              ext: job.ext,
+              code: job.code
+            })),
+            parserMode
+          );
+          for (const result of nativeResults) {
+            const job = jobById.get(result.id);
+            if (!job) continue;
+            nativeHandledIds.add(result.id);
+            transformResultsById.set(result.id, {
+              id: result.id,
+              filePath: result.filePath ?? result.file_path ?? job.filePath,
+              code: result.code,
+              map: result.map ?? void 0,
+              type: result.type ?? result.kind ?? "js",
+              error: result.error ?? void 0
+            });
+          }
+          if (nativeHandledIds.size > 0) {
+            logInfo(`[Build] Native transform batch handled ${nativeHandledIds.size} JS module(s)`);
+          }
+        } catch (err) {
+          nativeHandledIds.clear();
+          logWarn(
+            `[Build] Native transform batch unavailable; falling back to worker transforms (${err instanceof Error ? err.message : String(err)})`
+          );
+        }
+      }
+      const workerJobs = jobs.filter((job) => job.kind !== "js" || !nativeHandledIds.has(job.id));
+      if (workerJobs.length > 0) {
+        const pool = new TransformWorkerPool();
+        try {
+          const results = await pool.runMany(
+            workerJobs.map((job) => ({
+              id: job.id,
+              filePath: job.filePath,
+              ext: job.ext,
+              code: job.code
+            }))
+          );
+          for (const result of results) {
+            transformResultsById.set(result.id, result);
+          }
+        } finally {
+          await pool.close();
+        }
+      }
+      for (const job of jobs) {
+        const result = transformResultsById.get(job.id);
+        if (!result) {
+          throw new Error(`Transform failed for ${job.filePath}: no transform result returned`);
+        }
+        if (result.error) {
+          throw new Error(`Transform failed for ${result.filePath}: ${result.error}`);
+        }
+        const isJs = (result.type ?? "js") === "js";
+        if (isJs) {
+          const baseDir = getCasArtifactPath(casRoot, configHash, job.baseHash);
+          const artifactDir = getCasArtifactPath(casRoot, configHash, job.artifactHash);
+          import_fs29.default.mkdirSync(baseDir, { recursive: true });
+          import_fs29.default.writeFileSync(import_path31.default.join(baseDir, "transformed.js"), result.code, "utf8");
+          if (result.map) {
+            import_fs29.default.writeFileSync(import_path31.default.join(baseDir, "transformed.js.map"), result.map, "utf8");
+          }
+          import_fs29.default.mkdirSync(artifactDir, { recursive: true });
+          const finalCode2 = applyDefineReplacements(result.code, defineConfig);
+          import_fs29.default.writeFileSync(import_path31.default.join(artifactDir, "transformed.js"), finalCode2, "utf8");
+          if (result.map && finalCode2 === result.code) {
+            import_fs29.default.writeFileSync(import_path31.default.join(artifactDir, "transformed.js.map"), result.map, "utf8");
+          }
+        } else {
+          const deps = Array.isArray(result.deps) ? result.deps.filter((p) => typeof p === "string" && p.length > 0) : [];
+          const urlDeps = Array.isArray(result.urlDeps) ? result.urlDeps.filter((p) => typeof p === "string" && p.length > 0) : [];
+          const pipelineHash = typeof result.pipelineHash === "string" && result.pipelineHash.length > 0 ? result.pipelineHash : "0";
+          const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => import_path31.default.resolve(p))));
+          recordStructuralGraphFiles(depsAbs, workspace.workspaceRoot, configHash);
+          const depsStampHash = computeDepsContentStampHash(
+            depsAbs,
+            moduleMetaById,
+            workspace.workspaceRoot
+          );
+          const cssNeedsJsWrapper = job.cssNeedsJsWrapper === true;
+          const artifactHash = getCacheKey(
+            `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`
+          );
+          cssDerivedArtifactHashById.set(job.id, artifactHash);
+          const baseDir = getCasArtifactPath(casRoot, configHash, job.baseHash);
+          import_fs29.default.mkdirSync(baseDir, { recursive: true });
+          const meta = {
+            version: 1,
+            baseHash: job.baseHash,
+            pipelineHash,
+            deps: depsAbs.sort(),
+            urlDeps: Array.from(new Set(urlDeps.map((p) => import_path31.default.resolve(p)))).sort(),
+            modules: cssNeedsJsWrapper,
+            generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          writeJsonFile5(import_path31.default.join(baseDir, "meta.json"), meta);
+          const artifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+          import_fs29.default.mkdirSync(artifactDir, { recursive: true });
+          import_fs29.default.writeFileSync(import_path31.default.join(artifactDir, "transformed.css"), result.code, "utf8");
+          if (cssNeedsJsWrapper) {
+            const tokens = result.tokens && typeof result.tokens === "object" ? result.tokens : {};
+            const js = renderCssTokensModule(tokens);
+            import_fs29.default.writeFileSync(import_path31.default.join(artifactDir, "transformed.js"), js, "utf8");
+            writeJsonFile5(import_path31.default.join(artifactDir, "tokens.json"), tokens);
+          }
+          const refs = moduleRefsById.get(job.id) ?? [];
+          for (const ref of refs) ref.hash = artifactHash;
+          job.artifactHash = artifactHash;
+        }
+        const finalCode = isJs ? applyDefineReplacements(result.code, defineConfig) : result.code;
+        moduleOutputs.set(job.id, { code: finalCode, type: result.type });
+      }
+      logBuildProfile("transformsAndCasWrites", transformStart);
+    }
+    if (cssDerivedArtifactHashById.size) {
+      for (const chunk of plan.chunks) {
+        for (const mod of chunk.modules) {
+          const derived = cssDerivedArtifactHashById.get(mod.id);
+          if (derived) mod.hash = derived;
+        }
+      }
+    }
+    const debugCss = process.env.IONIFY_DEBUG === "1" || process.env.IONIFY_DEBUG === "true";
+    if (debugCss && cssDerivedArtifactHashById.size) {
+      const sample = Array.from(cssDerivedArtifactHashById.entries()).slice(0, 5).map(([id, hash]) => `${id}:${hash.slice(0, 8)}`).join(", ");
+      logInfo(`[Build][css] derived artifacts: ${sample}`);
+      const missing = plan.chunks.flatMap((c) => c.modules).filter((m) => m.kind === "css" && isCssModuleFile(m.fsPath ?? "")).filter((m) => !m.hash || typeof m.hash !== "string" || m.hash.length === 0);
+      if (missing.length) {
+        logWarn(`[Build][css] WARN: missing hashes for ${missing.length} CSS module(s)`);
+      }
+    }
+    const absOutDir = import_path31.default.resolve(outDir);
+    const buildMinifyRaw = config?.build?.minify;
+    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
+    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
+    const mangleEnabled = minifyEnabled;
+    const nativeExternalModules = collectNativeExternalModules(plan, buildExternalSpecifiers);
+    const federationExposeEntryIds = collectFederationExposeEntryPaths(config, rootDir).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
+    const hostEntryIds = (entries ?? []).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
+    const emitStart = Date.now();
+    const reusedOutputs = transformsNeeded === 0 && defineJobs.length === 0 && !config?.federation ? tryReusePreviousBuildOutputs(absOutDir, plan) : null;
+    let emittedPlan = plan;
+    let artifacts;
+    let combinedStats;
+    if (reusedOutputs) {
+      artifacts = reusedOutputs.artifacts;
+      combinedStats = { ...reusedOutputs.stats };
+      logInfo(`[Build] Reused previous dist outputs (${artifacts.length} chunk(s), manifest+stats verified)`);
+      logBuildProfile("emitChunksAndFiles", emitStart);
+    } else {
+      logInfo(`[Build] Emitting chunks via native bundler`);
+      const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
+        casRoot,
+        versionHash: configHash,
+        nativeOptions: {
+          minifier,
+          minify: minifyEnabled,
+          mangle: mangleEnabled,
+          treeshake,
+          scopeHoist,
+          externalModules: nativeExternalModules,
+          federationExposeEntries: federationExposeEntryIds
+        }
+      });
+      artifacts = baseArtifacts;
+      combinedStats = { ...baseStats };
+      logBuildProfile("emitChunksAndFiles", emitStart);
+    }
+    let federationManifest = buildFederationBuildManifest({
+      config,
+      rootDir,
+      workspaceRoot: workspace.workspaceRoot,
+      outDir: absOutDir,
+      plan: emittedPlan,
+      artifacts,
+      hostEntryIds
+    });
+    if (federationManifest?.container?.entry) {
+      const containerSpec = buildFederationContainerBuildSpec(federationManifest, absOutDir);
+      if (containerSpec) {
+        const containerPlan = {
+          entries: [containerSpec.moduleId],
+          chunks: [
+            {
+              id: containerSpec.chunkId,
+              entry: true,
+              shared: false,
+              consumers: [containerSpec.moduleId],
+              css: [],
+              assets: [],
+              modules: [
+                {
+                  id: containerSpec.moduleId,
+                  fsPath: containerSpec.moduleId,
+                  hash: containerSpec.contractHash,
+                  kind: "js",
+                  deps: [],
+                  dynamicDeps: []
+                }
+              ]
+            }
+          ]
+        };
+        const { artifacts: containerArtifacts, stats: containerStats } = await emitChunks(
+          absOutDir,
+          containerPlan,
+          /* @__PURE__ */ new Map([[containerSpec.moduleId, { code: containerSpec.source, type: "js" }]]),
+          {
+            casRoot,
+            versionHash: configHash,
+            nativeOptions: {
+              minifier,
+              minify: minifyEnabled,
+              mangle: mangleEnabled,
+              treeshake,
+              scopeHoist,
+              virtualModuleIds: [containerSpec.moduleId],
+              virtualModuleSources: [containerSpec.source]
+            }
+          }
+        );
+        emittedPlan = {
+          entries: plan.entries.slice(),
+          chunks: [...plan.chunks, ...containerPlan.chunks]
+        };
+        artifacts = [...artifacts, ...containerArtifacts];
+        combinedStats = { ...combinedStats, ...containerStats };
+        federationManifest = buildFederationBuildManifest({
+          config,
+          rootDir,
+          workspaceRoot: workspace.workspaceRoot,
+          outDir: absOutDir,
+          plan: emittedPlan,
+          artifacts,
+          hostEntryIds
+        });
+      }
+    }
+    if (config?.federation) {
+      syncFederationGraphNodes2(
+        federationGraph,
+        mergeFederationGraphNodes(
+          buildFederationConfigGraphNodes(config, rootDir),
+          buildFederationManifestGraphNodes(federationManifest)
+        )
+      );
+      federationGraph.flush();
+    }
+    const manifestStart = Date.now();
+    const outputHashHints = collectOutputHashHints(combinedStats);
+    recordOutputHashHint(
+      outputHashHints,
+      await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
+        federation: federationManifest
+      })
+    );
+    recordOutputHashHint(outputHashHints, await writeAssetsManifest(absOutDir, artifacts));
+    recordOutputHashHint(outputHashHints, await emitIndexHtml({
+      rootDir,
+      outDir: absOutDir,
+      entries: entries ?? [],
+      hostEntryIds,
+      plan: emittedPlan,
+      artifacts,
+      envValues,
+      envPrefix
+    }));
+    const copiedPublicAssets = await copyPublicDirToOutDir(publicDirAbs, absOutDir);
+    if (copiedPublicAssets.length > 0) {
+      combinedStats.publicAssets = copiedPublicAssets;
+      for (const asset of copiedPublicAssets) {
+        outputHashHints.set(asset.file, asset.hash);
+      }
+    }
+    const statsJson = JSON.stringify(combinedStats, null, 2);
+    await writeTextFileIfChanged2(import_path31.default.join(absOutDir, "build.stats.json"), statsJson);
+    outputHashHints.set("build.stats.json", getCacheKey(statsJson));
+    logBuildProfile("manifestAssetsStats", manifestStart);
+    const coreBuildElapsed = Date.now() - buildStart;
+    logInfo(`Build plan generated \u2192 ${import_path31.default.join(absOutDir, "manifest.json")}`);
+    logInfo(`Entries: ${plan.entries.length}, Chunks: ${plan.chunks.length}`);
+    logInfo(`Modules in plan: ${modulesInPlan}`);
+    logInfo(`CAS hits: ${casHits} (${percentHits}%) \u2022 transforms needed: ${transformsNeeded}`);
+    logInfo(`Build complete in ${coreBuildElapsed}ms`);
+    logInfo(`[Build] Time-to-deploy-ready: ${coreBuildElapsed}ms`);
+    const precompressRaw = config?.build?.precompress;
+    const precompressEnabled = precompressRaw !== false;
+    const precompressConfig = precompressRaw && typeof precompressRaw === "object" && !Array.isArray(precompressRaw) ? precompressRaw : null;
+    if (precompressEnabled) {
+      const thresholdRaw = precompressConfig?.thresholdBytes;
+      const thresholdBytes = typeof thresholdRaw === "number" && Number.isFinite(thresholdRaw) ? Math.max(0, Math.floor(thresholdRaw)) : 1024;
+      const gzipLevelRaw = precompressConfig?.gzipLevel;
+      const gzipLevel = typeof gzipLevelRaw === "number" && Number.isFinite(gzipLevelRaw) ? Math.max(0, Math.min(9, Math.floor(gzipLevelRaw))) : 9;
+      const brotliQualityRaw = precompressConfig?.brotliQuality;
+      const brotliQuality = typeof brotliQualityRaw === "number" && Number.isFinite(brotliQualityRaw) ? Math.max(0, Math.min(11, Math.floor(brotliQualityRaw))) : 11;
+      const concurrency = resolvePrecompressConcurrency(precompressConfig?.concurrency);
+      const emitManifest = precompressConfig?.manifest === false ? false : true;
+      const nativeCompressBatchFn = native?.compressBatch?.bind(native);
+      const nativeCompressor = nativeCompressBatchFn ? (items) => nativeCompressBatchFn(
+        items.map((it) => ({
+          id: it.id,
+          bytes: it.bytes,
+          brotliQuality: it.brotliQuality,
+          gzipLevel: it.gzipLevel
+        }))
+      ) : void 0;
+      const compressStart = Date.now();
+      const report = await precompressBuildOutputs(absOutDir, {
+        casRoot,
+        thresholdBytes,
+        gzipLevel,
+        brotliQuality,
+        emitManifest,
+        concurrency,
+        outputHashHints,
+        nativeCompressor
+      });
+      const elapsed = Date.now() - compressStart;
+      const backendNote = native?.compressBatch ? " [js-chunks=rust]" : "";
+      logInfo(
+        `[Build][compress]${backendNote} ${report.totals.filesWithSidecars}/${report.totals.filesEligible} files precompressed in ${elapsed}ms (parallel=${report.concurrency}, current=${report.totals.filesAlreadyCurrent}, touched=${report.totals.filesTouched}, cas ${report.totals.casHits} hit/${report.totals.casMisses} miss, copied=${report.totals.sidecarsCopiedFromCas}, compressed=${report.totals.sidecarsCompressed}, br ${formatByteDelta(
+          report.totals.brotliOriginalBytes
+        )}\u2192${formatByteDelta(report.totals.brotliBytes)}, gzip ${formatByteDelta(
+          report.totals.gzipOriginalBytes
+        )}\u2192${formatByteDelta(report.totals.gzipBytes)})`
+      );
+      logInfo(`Build total in ${Date.now() - buildStart}ms`);
+    }
+    const slimmingSaved = computeBuildSlimmingSavedPercent(depsRoot, depsHash);
+    const vendorPacksSaved = computeBuildVendorPackRequestsSavedPercent(depsRoot, depsHash);
+    logInfo(`Slimming saved: ${typeof slimmingSaved === "number" ? `${slimmingSaved}%` : "0%"}`);
+    logInfo(`Vendor packs saved: ${typeof vendorPacksSaved === "number" ? `${vendorPacksSaved}%` : "0%"} requests`);
+  } catch (err) {
+    logError("ionify build failed", err);
+    throw err;
+  }
+}
+function readProjectPackageJson3(rootDir) {
+  const pkgPath = import_path31.default.join(rootDir, "package.json");
+  if (!import_fs29.default.existsSync(pkgPath)) return null;
+  try {
+    return JSON.parse(import_fs29.default.readFileSync(pkgPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function detectVendorSpecifiers2(pkgJson) {
+  if (!pkgJson || typeof pkgJson !== "object") return [];
+  const deps = {
+    ...pkgJson.dependencies || {},
+    ...pkgJson.devDependencies || {},
+    ...pkgJson.peerDependencies || {}
+  };
+  const has = (name) => Object.prototype.hasOwnProperty.call(deps, name);
+  if (has("react") || has("react-dom")) {
+    return [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "scheduler",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime"
+    ];
+  }
+  if (has("vue")) {
+    return ["vue", "@vue/runtime-dom", "@vue/runtime-core"];
+  }
+  if (has("svelte")) {
+    return ["svelte", "svelte/internal"];
+  }
+  return [];
+}
+function isOptimizableDepEntryPath(entryPath) {
+  return OPTIMIZABLE_DEP_ENTRY_EXTS.has(import_path31.default.extname(entryPath).toLowerCase());
+}
+function resolveAutoVendorEntryFsPaths(rootDir, config) {
+  if (!native?.resolveModule) return null;
+  const optimizeDeps = config?.optimizeDeps ?? {};
+  const optimizeExclude = Array.isArray(optimizeDeps.exclude) ? new Set(optimizeDeps.exclude.map((s) => String(s))) : null;
+  const pkgJson = readProjectPackageJson3(rootDir);
+  const vendorSpecifiers = detectVendorSpecifiers2(pkgJson).filter((s) => !optimizeExclude?.has(s));
+  if (vendorSpecifiers.length === 0) return /* @__PURE__ */ new Set();
+  const result = /* @__PURE__ */ new Set();
+  for (const spec of vendorSpecifiers) {
+    try {
+      const r = native.resolveModule(spec, rootDir);
+      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
+      result.add(fsPath);
+    } catch {
+    }
+  }
+  return result;
+}
+async function ensureOptimizedDeps(options) {
+  const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots, excludeEntryPaths } = options;
+  const sentinelPath = import_path31.default.join(depsRoot, ".verified");
+  if (import_fs29.default.existsSync(sentinelPath)) {
+    logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
+    return;
+  }
+  if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+    try {
+      import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+    } catch {
+    }
+    logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+    return;
+  }
+  if (native?.depsPromoteArtifacts) {
+    const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
+    if (prevRoot) {
+      try {
+        const result = native.depsPromoteArtifacts(
+          prevRoot,
+          depsRoot,
+          depsHash,
+          DEPS_OPTIMIZER_OUTPUT_VERSION2
+        );
+        if (result.promoted > 0) {
+          logInfo(
+            `[deps] Promoted ${result.promoted} artifacts from previous deps dir (${result.skipped} need re-optimization)`
+          );
+        }
+      } catch {
+      }
+    }
+  }
+  if (!native?.resolveModule) return;
+  if (!native?.optimizeDependenciesChunked && !native?.optimizeDependenciesBatch && !native?.optimizeDependency) {
+    return;
+  }
+  const pkgJson = readProjectPackageJson3(rootDir);
+  const optimizeExclude = Array.isArray(config?.optimizeDeps?.exclude) ? new Set(config.optimizeDeps.exclude.map((s) => String(s))) : null;
+  const depSpecifiers = Object.keys(pkgJson?.dependencies ?? {});
+  const includeSpecifiers = Array.isArray(config?.optimizeDeps?.include) ? config.optimizeDeps.include.map((s) => String(s)) : [];
+  const vendorMode = config?.optimizeDeps?.vendor ?? "auto";
+  const vendorSpecifiers = vendorMode === false ? [] : Array.isArray(vendorMode) ? vendorMode.map((s) => String(s)) : vendorMode === "auto" ? detectVendorSpecifiers2(pkgJson) : [];
+  const allSpecifiers = Array.from(
+    new Set([...vendorSpecifiers, ...includeSpecifiers, ...depSpecifiers].map((s) => s.trim()).filter(Boolean))
+  ).filter((s) => !optimizeExclude?.has(s));
+  const entryPaths = /* @__PURE__ */ new Set();
+  for (const spec of allSpecifiers) {
+    try {
+      const r = native.resolveModule(spec, rootDir);
+      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      if (!fsPath.includes("node_modules")) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
+      entryPaths.add(fsPath);
+    } catch {
+    }
+  }
+  const usageEntries = await resolveUsageEntries(rootDir, resolvedEntries);
+  if (usageEntries.length > 0) {
+    try {
+      const scannedEntryPaths = await scanDepEntryPaths({ rootDir, entries: usageEntries, allowedRoots });
+      for (const entry of scannedEntryPaths) {
+        if (optimizeExclude?.has(entry.packageName)) continue;
+        if (!isOptimizableDepEntryPath(entry.entryPath)) continue;
+        entryPaths.add(entry.entryPath);
+      }
+    } catch {
+    }
+  }
+  if (entryPaths.size === 0) return;
+  if (excludeEntryPaths && excludeEntryPaths.size > 0) {
+    for (const p of excludeEntryPaths) entryPaths.delete(p);
+  }
+  if (entryPaths.size === 0) return;
+  import_fs29.default.mkdirSync(depsRoot, { recursive: true });
+  const entries = Array.from(entryPaths).map((entryPath) => ({ entryPath, depsHash }));
+  const depsSharedChunksRaw = config?.optimizeDeps?.sharedChunks;
+  const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+  const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
+  const vendorPacks = config?.optimizeDeps?.vendorPacks;
+  const vendorPackV2Enabled = vendorPacks === "auto" || !!vendorPacks && typeof vendorPacks === "object" && !Array.isArray(vendorPacks);
+  const avoidGlobalChunked = vendorPackV2Enabled;
+  if (depsSharedChunksEnabled && !avoidGlobalChunked && native?.optimizeDependenciesChunked) {
+    try {
+      native.optimizeDependenciesChunked(entries, ionifyDir);
+      try {
+        import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+      } catch {
+      }
+      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+      return;
+    } catch {
+    }
+  }
+  if (native?.optimizeDependenciesBatch) {
+    try {
+      native.optimizeDependenciesBatch(entries, ionifyDir);
+      try {
+        import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+      } catch {
+      }
+      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+      return;
+    } catch {
+    }
+  }
+  if (native?.optimizeDependency) {
+    for (const entry of entries) {
+      try {
+        native.optimizeDependency(entry.entryPath, depsHash, false, true, ionifyDir);
+      } catch {
+      }
+    }
+  }
+  try {
+    import_fs29.default.writeFileSync(sentinelPath, String(Date.now()));
+  } catch {
+  }
+  writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+}
+function toPosixPath2(value) {
+  return value.split(import_path31.default.sep).join("/");
+}
+function getGlobalDepCacheDir(depsHash) {
+  return import_path31.default.join(import_os3.default.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION, depsHash);
+}
+function restoreDepArtifactsFromGlobalCache(depsHash, localDepsRoot) {
+  const globalDir = getGlobalDepCacheDir(depsHash);
+  const globalSentinel = import_path31.default.join(globalDir, ".verified");
+  if (!import_fs29.default.existsSync(globalSentinel)) return false;
+  try {
+    const entries = import_fs29.default.readdirSync(globalDir);
+    for (const entry of entries) {
+      const src = import_path31.default.join(globalDir, entry);
+      const dst = import_path31.default.join(localDepsRoot, entry);
+      if (import_fs29.default.existsSync(dst)) continue;
+      try {
+        import_fs29.default.linkSync(src, dst);
+      } catch {
+        import_fs29.default.copyFileSync(src, dst);
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function writeDepArtifactsToGlobalCache(depsHash, localDepsRoot) {
+  try {
+    const globalDir = getGlobalDepCacheDir(depsHash);
+    import_fs29.default.mkdirSync(globalDir, { recursive: true });
+    const entries = import_fs29.default.readdirSync(localDepsRoot);
+    for (const entry of entries) {
+      const src = import_path31.default.join(localDepsRoot, entry);
+      const dst = import_path31.default.join(globalDir, entry);
+      if (import_fs29.default.existsSync(dst)) continue;
+      try {
+        import_fs29.default.linkSync(src, dst);
+      } catch {
+        import_fs29.default.copyFileSync(src, dst);
+      }
+    }
+  } catch {
+  }
+}
+function findPreviousDepsRoot(ionifyDir, currentDepsRoot) {
+  const depsDir = import_path31.default.join(ionifyDir, "deps");
+  if (!import_fs29.default.existsSync(depsDir)) return null;
+  try {
+    const entries = import_fs29.default.readdirSync(depsDir, { withFileTypes: true });
+    let best = null;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dirPath = import_path31.default.join(depsDir, entry.name);
+      if (dirPath === currentDepsRoot) continue;
+      if (!import_fs29.default.existsSync(import_path31.default.join(dirPath, ".verified"))) continue;
+      if (!import_fs29.default.existsSync(import_path31.default.join(dirPath, "manifest.json"))) continue;
+      try {
+        const mtime = import_fs29.default.statSync(import_path31.default.join(dirPath, ".verified")).mtimeMs;
+        if (!best || mtime > best.mtime) best = { mtime, dirPath };
+      } catch {
+      }
+    }
+    return best?.dirPath ?? null;
+  } catch {
+    return null;
+  }
+}
+function normalizePlanChunkForReuse(chunk) {
+  return {
+    id: chunk.id,
+    entry: chunk.entry,
+    shared: chunk.shared,
+    consumers: [...chunk.consumers ?? []],
+    modules: chunk.modules.map((mod) => ({
+      id: mod.id,
+      kind: mod.kind,
+      deps: [...mod.deps ?? []],
+      dynamicDeps: [...mod.dynamicDeps ?? []],
+      artifactHash: mod.hash ?? void 0
+    }))
+  };
+}
+function tryReusePreviousBuildOutputs(outDir, plan) {
+  const manifestPath = import_path31.default.join(outDir, "manifest.json");
+  const statsPath = import_path31.default.join(outDir, "build.stats.json");
+  let manifestStat;
+  let statsStat;
+  let manifest;
+  let stats;
+  try {
+    manifestStat = import_fs29.default.statSync(manifestPath);
+    statsStat = import_fs29.default.statSync(statsPath);
+    if (!manifestStat.isFile() || !statsStat.isFile()) return null;
+    manifest = JSON.parse(import_fs29.default.readFileSync(manifestPath, "utf8"));
+    stats = JSON.parse(import_fs29.default.readFileSync(statsPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (JSON.stringify(manifest?.entries ?? []) !== JSON.stringify(plan.entries)) return null;
+  const previousChunks = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+  if (previousChunks.length !== plan.chunks.length) return null;
+  const currentById = new Map(plan.chunks.map((chunk) => [chunk.id, normalizePlanChunkForReuse(chunk)]));
+  const artifacts = [];
+  const allFiles = /* @__PURE__ */ new Set();
+  for (const previous of previousChunks) {
+    const current = currentById.get(previous?.id);
+    if (!current) return null;
+    const comparablePrevious = {
+      id: previous.id,
+      entry: previous.entry,
+      shared: previous.shared,
+      consumers: previous.consumers ?? [],
+      modules: (previous.modules ?? []).map((mod) => ({
+        id: mod.id,
+        kind: mod.kind,
+        deps: mod.deps ?? [],
+        dynamicDeps: mod.dynamicDeps ?? [],
+        artifactHash: mod.artifactHash
+      }))
+    };
+    if (JSON.stringify(comparablePrevious) !== JSON.stringify(current)) return null;
+    const files = {
+      js: Array.isArray(previous.files?.js) ? previous.files.js : [],
+      css: Array.isArray(previous.files?.css) ? previous.files.css : [],
+      assets: Array.isArray(previous.files?.assets) ? previous.files.assets : []
+    };
+    artifacts.push({ id: previous.id, files });
+    for (const rel of [...files.js, ...files.css, ...files.assets]) {
+      if (typeof rel === "string" && rel.length > 0) allFiles.add(toPosixPath2(rel));
+    }
+  }
+  for (const rel of allFiles) {
+    const meta = stats?.[rel];
+    if (!meta || typeof meta !== "object") return null;
+    if (typeof meta.bytes !== "number" || !Number.isFinite(meta.bytes)) return null;
+    if (typeof meta.hash !== "string" || meta.hash.length === 0) return null;
+    try {
+      const fileStat = import_fs29.default.statSync(import_path31.default.join(outDir, rel));
+      if (!fileStat.isFile()) return null;
+      if (fileStat.size !== meta.bytes) return null;
+      if (fileStat.mtimeMs > statsStat.mtimeMs + 1) return null;
+    } catch {
+      return null;
+    }
+  }
+  return { artifacts, stats };
+}
+function collectOutputHashHints(stats) {
+  const hints = /* @__PURE__ */ new Map();
+  for (const [file, meta] of Object.entries(stats)) {
+    if (!meta || typeof meta !== "object" || file.startsWith("__")) continue;
+    const hash = typeof meta.hash === "string" && meta.hash.length > 0 ? meta.hash : null;
+    if (!hash) continue;
+    hints.set(toPosixPath2(file), hash);
+  }
+  return hints;
+}
+function recordOutputHashHint(hints, info) {
+  if (!info || typeof info.file !== "string" || info.file.length === 0) return;
+  if (typeof info.hash !== "string" || info.hash.length === 0) return;
+  hints.set(toPosixPath2(info.file), info.hash);
+}
+function formatByteDelta(bytes) {
+  const value = Math.max(0, Math.floor(bytes));
+  if (value < 1024) return `${value}B`;
+  const kb = value / 1024;
+  if (kb < 1024) return `${Math.round(kb)}KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)}MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)}GB`;
+}
+async function collectFilesRecursive(rootDir) {
+  const out = [];
+  const walk = async (dir) => {
+    let entries;
+    try {
+      entries = await import_fs29.default.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries.map(async (ent) => {
+        const full = import_path31.default.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          await walk(full);
+          return;
+        }
+        if (ent.isFile()) out.push(full);
+      })
+    );
+  };
+  await walk(rootDir);
+  return out;
+}
+function resolvePrecompressConcurrency(value) {
+  const defaultParallelism = typeof import_os3.default.availableParallelism === "function" ? import_os3.default.availableParallelism() : import_os3.default.cpus().length;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.floor(value));
+  }
+  return Math.max(1, defaultParallelism);
+}
+async function mapWithConcurrency(items, concurrency, worker) {
+  if (!items.length) return [];
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const current = nextIndex++;
+      if (current >= items.length) break;
+      results[current] = await worker(items[current], current);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+function brotliCompressAsync(input, quality) {
+  return new Promise((resolve, reject) => {
+    import_zlib2.default.brotliCompress(
+      input,
+      {
+        params: {
+          [import_zlib2.default.constants.BROTLI_PARAM_QUALITY]: quality,
+          [import_zlib2.default.constants.BROTLI_PARAM_MODE]: import_zlib2.default.constants.BROTLI_MODE_TEXT
+        }
+      },
+      (err, result) => {
+        if (err || !result) {
+          reject(err ?? new Error("brotli compression failed"));
+          return;
+        }
+        resolve(result);
+      }
+    );
+  });
+}
+function gzipCompressAsync(input, level) {
+  return new Promise((resolve, reject) => {
+    import_zlib2.default.gzip(input, { level, mtime: 0 }, (err, result) => {
+      if (err || !result) {
+        reject(err ?? new Error("gzip compression failed"));
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+function shouldPrecompressPath(filePath) {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".br") || lower.endsWith(".gz")) return false;
+  if (import_path31.default.basename(lower) === "manifest.compression.json") return false;
+  const ext = import_path31.default.extname(lower);
+  return ext === ".js" || ext === ".mjs" || ext === ".cjs" || ext === ".css" || ext === ".html" || ext === ".json" || ext === ".svg" || ext === ".xml" || ext === ".txt" || ext === ".map";
+}
+function isJsChunkFile(relPosixPath) {
+  return relPosixPath.startsWith("chunks/") && (relPosixPath.endsWith(".js") || relPosixPath.endsWith(".mjs"));
+}
+async function precompressBuildOutputs(outDir, opts) {
+  const files = await collectFilesRecursive(outDir);
+  const candidates = [];
+  const report = {
+    version: 1,
+    compressionCasVersion: COMPRESSION_CAS_VERSION,
+    thresholdBytes: opts.thresholdBytes,
+    gzipLevel: opts.gzipLevel,
+    brotliQuality: opts.brotliQuality,
+    concurrency: opts.concurrency,
+    totals: {
+      filesScanned: files.length,
+      filesEligible: 0,
+      filesWithSidecars: 0,
+      filesAlreadyCurrent: 0,
+      filesTouched: 0,
+      casHits: 0,
+      casMisses: 0,
+      sidecarsCopiedFromCas: 0,
+      sidecarsCompressed: 0,
+      brotliFiles: 0,
+      gzipFiles: 0,
+      brotliOriginalBytes: 0,
+      brotliBytes: 0,
+      gzipOriginalBytes: 0,
+      gzipBytes: 0,
+      brotliSavedBytes: 0,
+      gzipSavedBytes: 0
+    },
+    entries: []
+  };
+  for (const absPath of files) {
+    if (!shouldPrecompressPath(absPath)) continue;
+    let stat;
+    try {
+      stat = await import_fs29.default.promises.stat(absPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    if (stat.size < opts.thresholdBytes) continue;
+    candidates.push({
+      absPath,
+      rel: toPosixPath2(import_path31.default.relative(outDir, absPath)),
+      stat
+    });
+  }
+  report.totals.filesEligible = candidates.length;
+  const readUsableSidecar = async (sidecarPath, originalBytes) => {
+    try {
+      const stat = await import_fs29.default.promises.stat(sidecarPath);
+      if (!stat.isFile()) return null;
+      if (stat.size <= 0 || stat.size >= originalBytes) return null;
+      return { size: stat.size, mtimeMs: stat.mtimeMs };
+    } catch {
+      return null;
+    }
+  };
+  const results = await mapWithConcurrency(candidates, opts.concurrency, async (candidate) => {
+    const { absPath, rel, stat } = candidate;
+    const originalBytes = stat.size;
+    const hintedOutputHash = opts.outputHashHints.get(rel) ?? null;
+    let outputHash = null;
+    if (hintedOutputHash) outputHash = hintedOutputHash;
+    let body = null;
+    let bodyPromise = null;
+    let outputHashPromise = outputHash ? Promise.resolve(outputHash) : null;
+    let brotliBytes = null;
+    let gzipBytes = null;
+    let brotliSidecar = null;
+    let gzipSidecar = null;
+    let brotliSource = null;
+    let gzipSource = null;
+    let filesAlreadyCurrent = 0;
+    let filesTouched = 0;
+    let casHits = 0;
+    let casMisses = 0;
+    let sidecarsCopiedFromCas = 0;
+    let sidecarsCompressed = 0;
+    const brPath = `${absPath}.br`;
+    const gzPath = `${absPath}.gz`;
+    const ensureBody = async () => {
+      if (body) return body;
+      if (!bodyPromise) {
+        bodyPromise = import_fs29.default.promises.readFile(absPath).then((loaded) => {
+          body = loaded;
+          if (!outputHash) outputHash = getCacheKey(loaded);
+          return loaded;
+        });
+      }
+      body = await bodyPromise;
+      return body;
+    };
+    const ensureOutputHash = async () => {
+      if (outputHash) return outputHash;
+      if (!outputHashPromise) {
+        outputHashPromise = ensureBody().then((loaded) => {
+          if (!outputHash) outputHash = getCacheKey(loaded);
+          return outputHash;
+        });
+      }
+      outputHash = await outputHashPromise;
+      return outputHash;
+    };
+    const tryRestoreFromCompressionCas = async (sidecarKind, sidecarPath) => {
+      const finalOutputHash = await ensureOutputHash();
+      const compressionCasDir = getCompressionCasArtifactPath(opts.casRoot, finalOutputHash, {
+        brotliQuality: opts.brotliQuality,
+        gzipLevel: opts.gzipLevel
+      });
+      const sourceFile = import_path31.default.join(compressionCasDir, sidecarKind === "br" ? "sidecar.br" : "sidecar.gz");
+      const cached = await readUsableSidecar(sourceFile, originalBytes);
+      if (!cached) {
+        casMisses += 1;
+        return { restored: false, size: null };
+      }
+      try {
+        await import_fs29.default.promises.mkdir(import_path31.default.dirname(sidecarPath), { recursive: true });
+        await import_fs29.default.promises.copyFile(sourceFile, sidecarPath);
+        filesTouched += 1;
+        casHits += 1;
+        sidecarsCopiedFromCas += 1;
+        return { restored: true, size: cached.size };
+      } catch {
+        casMisses += 1;
+        return { restored: false, size: null };
+      }
+    };
+    const persistCompressionCasSidecar = async (sidecarKind, finalOutputHash, data) => {
+      const compressionCasDir = getCompressionCasArtifactPath(opts.casRoot, finalOutputHash, {
+        brotliQuality: opts.brotliQuality,
+        gzipLevel: opts.gzipLevel
+      });
+      const targetFile = import_path31.default.join(compressionCasDir, sidecarKind === "br" ? "sidecar.br" : "sidecar.gz");
+      try {
+        if (!data || data.length <= 0 || data.length >= originalBytes) {
+          await import_fs29.default.promises.unlink(targetFile).catch(() => {
+          });
+          return;
+        }
+        await import_fs29.default.promises.mkdir(compressionCasDir, { recursive: true });
+        await import_fs29.default.promises.writeFile(targetFile, data);
+      } catch {
+      }
+    };
+    try {
+      const currentBr = await readUsableSidecar(brPath, originalBytes);
+      const currentGz = await readUsableSidecar(gzPath, originalBytes);
+      const skipBr = !!currentBr && currentBr.mtimeMs >= stat.mtimeMs;
+      const skipGz = !!currentGz && currentGz.mtimeMs >= stat.mtimeMs;
+      if (skipBr && currentBr) {
+        brotliBytes = currentBr.size;
+        brotliSidecar = toPosixPath2(import_path31.default.relative(outDir, brPath));
+        brotliSource = "current";
+      }
+      if (skipGz && currentGz) {
+        gzipBytes = currentGz.size;
+        gzipSidecar = toPosixPath2(import_path31.default.relative(outDir, gzPath));
+        gzipSource = "current";
+      }
+      if (skipBr && skipGz) filesAlreadyCurrent = 1;
+      const [restoredBr, restoredGz] = await Promise.all([
+        skipBr ? Promise.resolve({ restored: false, size: null }) : tryRestoreFromCompressionCas("br", brPath),
+        skipGz ? Promise.resolve({ restored: false, size: null }) : tryRestoreFromCompressionCas("gz", gzPath)
+      ]);
+      if (restoredBr.restored) {
+        brotliBytes = restoredBr.size;
+        brotliSidecar = toPosixPath2(import_path31.default.relative(outDir, brPath));
+        brotliSource = "cas";
+      }
+      if (restoredGz.restored) {
+        gzipBytes = restoredGz.size;
+        gzipSidecar = toPosixPath2(import_path31.default.relative(outDir, gzPath));
+        gzipSource = "cas";
+      }
+      const needsBrCompression = !skipBr && brotliSource === null;
+      const needsGzCompression = !skipGz && gzipSource === null;
+      const loadedBody = needsBrCompression || needsGzCompression ? await ensureBody() : null;
+      let br = null;
+      let gz = null;
+      if ((needsBrCompression || needsGzCompression) && loadedBody) {
+        const useNative = !!opts.nativeCompressor && isJsChunkFile(rel);
+        if (useNative && opts.nativeCompressor) {
+          const results2 = opts.nativeCompressor([
+            { id: rel, bytes: loadedBody, brotliQuality: opts.brotliQuality, gzipLevel: opts.gzipLevel }
+          ]);
+          const result = results2[0];
+          if (result) {
+            br = needsBrCompression ? result.br ?? null : null;
+            gz = needsGzCompression ? result.gz ?? null : null;
+          }
+        } else {
+          [br, gz] = await Promise.all([
+            needsBrCompression ? brotliCompressAsync(loadedBody, opts.brotliQuality) : Promise.resolve(null),
+            needsGzCompression ? gzipCompressAsync(loadedBody, opts.gzipLevel) : Promise.resolve(null)
+          ]);
+        }
+      }
+      if (needsBrCompression && loadedBody) {
+        if (br && br.length < loadedBody.length) {
+          await import_fs29.default.promises.writeFile(brPath, br);
+          filesTouched += 1;
+          sidecarsCompressed += 1;
+          brotliBytes = br.length;
+          brotliSidecar = toPosixPath2(import_path31.default.relative(outDir, brPath));
+          brotliSource = "compressed";
+        } else {
+          try {
+            await import_fs29.default.promises.unlink(brPath);
+            filesTouched += 1;
+          } catch {
+          }
+        }
+        await persistCompressionCasSidecar("br", await ensureOutputHash(), br);
+      }
+      if (brotliBytes === null) {
+        const resolved = await readUsableSidecar(brPath, originalBytes);
+        if (resolved) {
+          brotliBytes = resolved.size;
+          brotliSidecar = toPosixPath2(import_path31.default.relative(outDir, brPath));
+        }
+      }
+      if (needsGzCompression && loadedBody) {
+        if (gz && gz.length < loadedBody.length) {
+          await import_fs29.default.promises.writeFile(gzPath, gz);
+          filesTouched += 1;
+          sidecarsCompressed += 1;
+          gzipBytes = gz.length;
+          gzipSidecar = toPosixPath2(import_path31.default.relative(outDir, gzPath));
+          gzipSource = "compressed";
+        } else {
+          try {
+            await import_fs29.default.promises.unlink(gzPath);
+            filesTouched += 1;
+          } catch {
+          }
+        }
+        await persistCompressionCasSidecar("gz", await ensureOutputHash(), gz);
+      }
+      if (gzipBytes === null) {
+        const resolved = await readUsableSidecar(gzPath, originalBytes);
+        if (resolved) {
+          gzipBytes = resolved.size;
+          gzipSidecar = toPosixPath2(import_path31.default.relative(outDir, gzPath));
+        }
+      }
+    } catch (err) {
+      logWarn(`[Build][compress] WARN: failed to precompress ${rel}: ${String(err)}`);
+      return {
+        entry: {
+          file: rel,
+          outputHash,
+          originalBytes,
+          brotliBytes,
+          gzipBytes,
+          brotliSidecar,
+          gzipSidecar,
+          brotliSource,
+          gzipSource
+        },
+        filesAlreadyCurrent,
+        filesTouched,
+        casHits,
+        casMisses,
+        sidecarsCopiedFromCas,
+        sidecarsCompressed
+      };
+    }
+    return {
+      entry: {
+        file: rel,
+        outputHash,
+        originalBytes,
+        brotliBytes,
+        gzipBytes,
+        brotliSidecar,
+        gzipSidecar,
+        brotliSource,
+        gzipSource
+      },
+      filesAlreadyCurrent,
+      filesTouched,
+      casHits,
+      casMisses,
+      sidecarsCopiedFromCas,
+      sidecarsCompressed
+    };
+  });
+  for (const result of results) {
+    report.totals.filesAlreadyCurrent += result.filesAlreadyCurrent;
+    report.totals.filesTouched += result.filesTouched;
+    report.totals.casHits += result.casHits;
+    report.totals.casMisses += result.casMisses;
+    report.totals.sidecarsCopiedFromCas += result.sidecarsCopiedFromCas;
+    report.totals.sidecarsCompressed += result.sidecarsCompressed;
+    if (result.entry.brotliBytes !== null) {
+      report.totals.brotliFiles += 1;
+      report.totals.brotliOriginalBytes += result.entry.originalBytes;
+      report.totals.brotliBytes += result.entry.brotliBytes;
+      report.totals.brotliSavedBytes += Math.max(0, result.entry.originalBytes - result.entry.brotliBytes);
+    }
+    if (result.entry.gzipBytes !== null) {
+      report.totals.gzipFiles += 1;
+      report.totals.gzipOriginalBytes += result.entry.originalBytes;
+      report.totals.gzipBytes += result.entry.gzipBytes;
+      report.totals.gzipSavedBytes += Math.max(0, result.entry.originalBytes - result.entry.gzipBytes);
+    }
+    if (result.entry.brotliBytes !== null || result.entry.gzipBytes !== null) {
+      report.totals.filesWithSidecars += 1;
+    }
+    report.entries.push(result.entry);
+  }
+  report.entries.sort((a, b) => a.file.localeCompare(b.file));
+  if (opts.emitManifest) {
+    writeJsonFile5(import_path31.default.join(outDir, "manifest.compression.json"), report);
+  }
+  return report;
+}
+function pickPrimaryJs(files) {
+  if (!files?.length) return null;
+  for (const file of files) {
+    if (typeof file !== "string") continue;
+    if (!file.endsWith(".js")) continue;
+    if (file.endsWith(".js.map")) continue;
+    return file.startsWith("/") ? file : `/${file}`;
+  }
+  return null;
+}
+function pickPrimaryEntryCss(files) {
+  if (!files?.length) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (file) => {
+    const href = file.startsWith("/") ? file : `/${file}`;
+    if (seen.has(href)) return;
+    seen.add(href);
+    out.push(href);
+  };
+  for (const file of files) {
+    if (typeof file !== "string") continue;
+    if (!file.endsWith(".css")) continue;
+    if (file.endsWith(".css.map")) continue;
+    if (file.endsWith(".native.css")) continue;
+    if (!file.startsWith("assets/") && !file.startsWith("/assets/")) continue;
+    add(file);
+  }
+  if (!out.length) {
+    for (const file of files) {
+      if (typeof file !== "string") continue;
+      if (!file.endsWith(".css")) continue;
+      if (file.endsWith(".css.map")) continue;
+      if (file.endsWith(".native.css")) continue;
+      add(file);
+    }
+  }
+  return out;
+}
+async function emitIndexHtml(options) {
+  const { rootDir, outDir, entries, hostEntryIds, plan, artifacts, envValues, envPrefix } = options;
+  const htmlInput = import_path31.default.join(rootDir, "index.html");
+  if (!import_fs29.default.existsSync(htmlInput)) {
+    return null;
+  }
+  const hostEntryIdSet = new Set(hostEntryIds);
+  const entryChunks = plan.chunks.filter(
+    (chunk) => chunk.entry && chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer))
+  );
+  const entryScripts = entryChunks.map((chunk) => {
+    const artifact = artifacts.find((a) => a.id === chunk.id);
+    return pickPrimaryJs(artifact?.files?.js);
+  }).filter((x) => typeof x === "string" && x.length > 0);
+  const entryCss = entryChunks.flatMap((chunk) => {
+    const artifact = artifacts.find((a) => a.id === chunk.id);
+    return pickPrimaryEntryCss(artifact?.files?.css);
+  }).filter((x) => typeof x === "string" && x.length > 0);
+  if (!entryScripts.length) {
+    return null;
+  }
+  const candidateSrcs = /* @__PURE__ */ new Set();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "string") continue;
+    const rel = toPosixPath2(import_path31.default.relative(rootDir, entry));
+    if (rel && rel !== ".") {
+      candidateSrcs.add(`/${rel}`);
+      candidateSrcs.add(rel);
+    }
+  }
+  let html = await import_fs29.default.promises.readFile(htmlInput, "utf8");
+  html = substituteEnvPlaceholders(html, envValues, envPrefix);
+  if (entryCss.length) {
+    const unique = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const href of entryCss) {
+      if (seen.has(href)) continue;
+      seen.add(href);
+      const hrefRe = new RegExp(`href=["']${escapeRegExp2(href)}["']`, "i");
+      if (hrefRe.test(html)) continue;
+      unique.push(href);
+    }
+    if (unique.length) {
+      const injected = unique.map((href) => `  <link rel="stylesheet" href="${href}">`).join("\n");
+      const headClose = html.match(/<\/head>/i);
+      if (headClose?.index !== void 0) {
+        const idx = headClose.index;
+        html = `${html.slice(0, idx)}${injected}
+${html.slice(idx)}`;
+      } else {
+        html = `${injected}
+${html}`;
+      }
+    }
+  }
+  const entryIds = new Set(hostEntryIds);
+  const sharedPreloads = plan.chunks.filter((chunk) => !chunk.entry && chunk.shared && Array.isArray(chunk.consumers) && chunk.consumers.some((c) => entryIds.has(c))).map((chunk) => {
+    const artifact = artifacts.find((a) => a.id === chunk.id);
+    return pickPrimaryJs(artifact?.files?.js);
+  }).filter((x) => typeof x === "string" && x.length > 0).sort((a, b) => a.localeCompare(b));
+  if (sharedPreloads.length) {
+    const unique = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const href of sharedPreloads) {
+      if (seen.has(href)) continue;
+      seen.add(href);
+      const hrefRe = new RegExp(`href=["']${escapeRegExp2(href)}["']`, "i");
+      if (hrefRe.test(html)) continue;
+      unique.push(href);
+    }
+    if (unique.length) {
+      const injected = unique.map((href) => `  <link rel="modulepreload" href="${href}">`).join("\n");
+      const headClose = html.match(/<\/head>/i);
+      if (headClose?.index !== void 0) {
+        const idx = headClose.index;
+        html = `${html.slice(0, idx)}${injected}
+${html.slice(idx)}`;
+      } else {
+        html = `${injected}
+${html}`;
+      }
+    }
+  }
+  const moduleScriptRe = /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>/gi;
+  let scriptIndex = 0;
+  let replacedAny = false;
+  html = html.replace(moduleScriptRe, (full, srcRaw) => {
+    if (scriptIndex >= entryScripts.length) return full;
+    const src = typeof srcRaw === "string" ? srcRaw.trim() : "";
+    if (!src) return full;
+    if (candidateSrcs.size > 0 && !candidateSrcs.has(src)) {
+      return full;
+    }
+    replacedAny = true;
+    const next = entryScripts[scriptIndex++];
+    return `<script type="module" src="${next}"></script>`;
+  });
+  if (!replacedAny) {
+    const injected = entryScripts.map((s) => `  <script type="module" src="${s}"></script>`).join("\n");
+    const bodyClose = html.match(/<\/body>/i);
+    if (bodyClose?.index !== void 0) {
+      const idx = bodyClose.index;
+      html = `${html.slice(0, idx)}${injected}
+${html.slice(idx)}`;
+    } else {
+      html = `${html}
+${injected}
+`;
+    }
+  }
+  await import_fs29.default.promises.mkdir(outDir, { recursive: true });
+  const outputFile = import_path31.default.join(outDir, "index.html");
+  await writeTextFileIfChanged2(outputFile, html);
+  return {
+    file: "index.html",
+    bytes: Buffer.byteLength(html, "utf8"),
+    hash: getCacheKey(html)
+  };
+}
+var import_fs29, import_os3, import_path31, import_crypto10, import_zlib2, DEPS_OPTIMIZER_OUTPUT_VERSION2, OPTIMIZABLE_DEP_ENTRY_EXTS, GLOBAL_DEP_CACHE_VERSION;
+var init_build = __esm({
+  "src/cli/commands/build.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs29 = __toESM(require("fs"), 1);
+    import_os3 = __toESM(require("os"), 1);
+    import_path31 = __toESM(require("path"), 1);
+    import_crypto10 = __toESM(require("crypto"), 1);
+    import_zlib2 = __toESM(require("zlib"), 1);
+    init_logger();
+    init_config();
+    init_lockfile();
+    init_minifier();
+    init_treeshake();
+    init_native();
+    init_cas();
+    init_css_ext();
+    init_scope_hoist();
+    init_optimization_level();
+    init_parser();
+    init_bundler();
+    init_pool();
+    init_cache();
+    init_workspace();
+    init_env();
+    init_define();
+    init_define_signature();
+    init_module_id();
+    init_vendor_pack_utils();
+    init_dep_stops();
+    init_feature_pack_planner();
+    init_usage();
+    init_registry();
+    init_vendor_pack_v2();
+    init_css();
+    init_public_path();
+    init_deps_hash();
+    init_production_artifact_publishing();
+    init_external_policy();
+    init_resolver();
+    init_federation();
+    init_graph();
+    init_graph_kind();
+    init_build_entry_inference();
+    init_production_build_identity();
+    DEPS_OPTIMIZER_OUTPUT_VERSION2 = getDepsOptimizerOutputVersion();
+    OPTIMIZABLE_DEP_ENTRY_EXTS = /* @__PURE__ */ new Set([
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".mts",
+      ".cts",
+      ".json"
+    ]);
+    GLOBAL_DEP_CACHE_VERSION = "v1";
+  }
+});
+
+// src/cli/utils/cloud-auth.ts
+function resolveCloudToken(profile = "default") {
+  const fromEnv = process.env.IONIFY_CLOUD_TOKEN;
+  if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
+  const creds = readCredentialsFile();
+  return creds?.[profile]?.token ?? null;
+}
+function resolveCloudProfile(profile = "default") {
+  const creds = readCredentialsFile();
+  const entry = creds?.[profile];
+  if (!entry?.token) return null;
+  return entry;
+}
+function readCredentialsFile() {
+  if (!import_fs33.default.existsSync(CREDENTIALS_FILE)) return null;
+  try {
+    const raw = import_fs33.default.readFileSync(CREDENTIALS_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function writeCredentials(entry, profile = "default") {
+  const dir = import_path35.default.dirname(CREDENTIALS_FILE);
+  import_fs33.default.mkdirSync(dir, { recursive: true });
+  const existing = readCredentialsFile() ?? {};
+  existing[profile] = entry;
+  import_fs33.default.writeFileSync(CREDENTIALS_FILE, JSON.stringify(existing, null, 2) + "\n", {
+    encoding: "utf8",
+    mode: 384
+  });
+}
+function removeCredentials(profile = "default") {
+  const creds = readCredentialsFile();
+  if (!creds || !(profile in creds)) return;
+  delete creds[profile];
+  if (Object.keys(creds).length === 0) {
+    import_fs33.default.rmSync(CREDENTIALS_FILE, { force: true });
+  } else {
+    import_fs33.default.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 384
+    });
+  }
+}
+var import_fs33, import_os4, import_path35, CREDENTIALS_FILE;
+var init_cloud_auth = __esm({
+  "src/cli/utils/cloud-auth.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs33 = __toESM(require("fs"), 1);
+    import_os4 = __toESM(require("os"), 1);
+    import_path35 = __toESM(require("path"), 1);
+    CREDENTIALS_FILE = import_path35.default.join(import_os4.default.homedir(), ".ionify", "credentials.json");
+  }
+});
+
+// src/cli/utils/prompt.ts
+async function selectMenu(opts) {
+  const { title, subtitle, options } = opts;
+  const stdin = process.stdin;
+  const stdout = process.stdout;
+  if (!stdin.isTTY || !stdout.isTTY) {
+    return null;
+  }
+  let idx = Math.max(0, Math.min(opts.initial ?? 0, options.length - 1));
+  const wasRaw = stdin.isRaw === true;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+  import_readline.default.emitKeypressEvents(stdin);
+  let renderedLines = 0;
+  const render = () => {
+    if (renderedLines > 0) {
+      stdout.write(`\x1B[${renderedLines}A`);
+    }
+    let lines = 0;
+    const write = (s) => {
+      stdout.write(s + "\x1B[K\n");
+      lines++;
+    };
+    write("");
+    write(`${import_chalk3.default.bold.cyan("?")}  ${import_chalk3.default.bold(title)}`);
+    if (subtitle) write(`   ${import_chalk3.default.dim(subtitle)}`);
+    write("");
+    for (let i = 0; i < options.length; i++) {
+      const o = options[i];
+      const active = i === idx;
+      const num = import_chalk3.default.dim(`${i + 1}.`);
+      const pointer = active ? import_chalk3.default.cyanBright("\u276F") : " ";
+      const label = active ? import_chalk3.default.cyanBright.bold(o.label) : import_chalk3.default.white(o.label);
+      const tag = o.recommended ? "  " + import_chalk3.default.green("(recommended)") : "";
+      write(`  ${pointer} ${num} ${label}${tag}`);
+      if (o.description) {
+        write(`       ${active ? import_chalk3.default.cyan(o.description) : import_chalk3.default.dim(o.description)}`);
+      }
+    }
+    write("");
+    write(
+      import_chalk3.default.dim("  \u2191/\u2193 move   1-9 jump   \u23CE select   esc cancel")
+    );
+    renderedLines = lines;
+  };
+  return new Promise((resolve) => {
+    let resolved = false;
+    const cleanup = (val) => {
+      if (resolved) return;
+      resolved = true;
+      stdin.removeListener("keypress", onKey);
+      try {
+        stdin.setRawMode(wasRaw);
+      } catch {
+      }
+      stdin.pause();
+      stdout.write("\n");
+      resolve(val);
+    };
+    const onKey = (_, key) => {
+      if (!key) return;
+      if (key.ctrl && key.name === "c") return cleanup(null);
+      if (key.name === "escape") return cleanup(null);
+      if (key.name === "up" || key.name === "k") {
+        idx = (idx - 1 + options.length) % options.length;
+        render();
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        idx = (idx + 1) % options.length;
+        render();
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        cleanup(options[idx].value);
+        return;
+      }
+      const seq = key.sequence ?? "";
+      if (/^[1-9]$/.test(seq)) {
+        const n = parseInt(seq, 10) - 1;
+        if (n >= 0 && n < options.length) {
+          idx = n;
+          render();
+          cleanup(options[idx].value);
+        }
+      }
+    };
+    stdin.on("keypress", onKey);
+    render();
+  });
+}
+var import_readline, import_chalk3;
+var init_prompt = __esm({
+  "src/cli/utils/prompt.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_readline = __toESM(require("readline"), 1);
+    import_chalk3 = __toESM(require("chalk"), 1);
+  }
+});
+
+// src/cli/commands/login.ts
+var login_exports = {};
+__export(login_exports, {
+  runLoginCommand: () => runLoginCommand,
+  runLogoutCommand: () => runLogoutCommand,
+  runWhoamiCommand: () => runWhoamiCommand
+});
+async function runLoginCommand(options = {}) {
+  const prompt = (q) => new Promise((resolve) => {
+    const rl = import_readline2.default.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(q, (ans) => {
+      rl.close();
+      resolve(ans.trim());
+    });
+  });
+  logInfo("ionify login \u2014 connect to Ionify Cloud");
+  logInfo("Login authenticates this machine. Use `ionify bind` to link a folder to a cloud project.\n");
+  try {
+    const existing = readCredentialsFile()?.default;
+    const fallbackApiUrl = existing?.apiUrl?.trim() || "https://api.ionify.cloud";
+    const apiUrl = options.apiUrl?.trim() || await prompt(`API URL [${fallbackApiUrl}]: `) || fallbackApiUrl;
+    const token = options.token?.trim() || await promptForExistingToken(prompt);
+    if (existing?.token && process.stdin.isTTY === true && process.stdout.isTTY === true && existing.apiUrl !== apiUrl) {
+      const choice = await selectMenu({
+        title: "Default login already exists",
+        subtitle: `Current default API: ${existing.apiUrl ?? "unknown API"}.
+New login API: ${apiUrl}`,
+        options: [
+          {
+            value: "replace",
+            label: "Replace default login",
+            description: "Use the new token and API URL for future Ionify commands.",
+            recommended: true
+          },
+          {
+            value: "cancel",
+            label: "Cancel",
+            description: "Keep the current default login unchanged."
+          }
+        ],
+        initial: 0
+      });
+      if (choice !== "replace") {
+        logInfo("Login cancelled. Existing default credentials were kept.");
+        return;
+      }
+    }
+    writeCredentials({
+      token,
+      apiUrl
+    });
+    logInfo(`
+\u2713 Logged in. Credentials saved to ~/.ionify/credentials.json`);
+    logInfo(`  api_url    : ${apiUrl}`);
+    logInfo("  next       : run `ionify bind --project <project-id>` from your project root");
+  } finally {
+  }
+}
+async function promptForExistingToken(prompt) {
+  const token = await prompt("Token (ionify_pat_...): ");
+  if (!token) {
+    logError("login: token is required.");
+    process.exit(1);
+  }
+  return token;
+}
+function runLogoutCommand() {
+  removeCredentials();
+  logInfo("\u2713 Logged out. Credentials removed from ~/.ionify/credentials.json");
+}
+async function runWhoamiCommand() {
+  const token = resolveCloudToken();
+  const source = process.env.IONIFY_CLOUD_TOKEN ? "IONIFY_CLOUD_TOKEN env" : "~/.ionify/credentials.json";
+  if (!token) {
+    logInfo("Not logged in. Run `ionify login` or set IONIFY_CLOUD_TOKEN.");
+    return;
+  }
+  const creds = readCredentialsFile();
+  const profile = creds?.default;
+  logInfo("ionify whoami:");
+  logInfo(`  token source : ${source}`);
+  if (profile?.apiUrl) logInfo(`  api_url      : ${profile.apiUrl}`);
+  logInfo(`  token        : ${token.slice(0, 12)}\u2026`);
+}
+var import_readline2;
+var init_login = __esm({
+  "src/cli/commands/login.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_readline2 = __toESM(require("readline"), 1);
+    init_cloud_auth();
+    init_logger();
+    init_prompt();
+  }
+});
+
+// src/cli/commands/optimize-all.ts
+var optimize_all_exports = {};
+__export(optimize_all_exports, {
+  runOptimizeAllCommand: () => runOptimizeAllCommand
+});
+async function runOptimizeAllCommand(options = {}) {
+  const requestedEnv = options.env ?? (process.env.NODE_ENV === "production" ? "production" : "development");
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = requestedEnv;
+  const previousIonifyNodeEnv = process.env.IONIFY_NODE_ENV;
+  process.env.IONIFY_NODE_ENV = requestedEnv;
+  try {
+    logInfo(`[optimize-all] Optimizing every dep for env=${requestedEnv}\u2026`);
+    const { runBuildCommand: runBuildCommand2 } = await Promise.resolve().then(() => (init_build(), build_exports));
+    await runBuildCommand2({ depsOnly: true });
+    logInfo(`[optimize-all] Done. .verified snapshot written for env=${requestedEnv}.`);
+  } catch (err) {
+    logError("[optimize-all] Failed", err);
+    throw err;
+  } finally {
+    if (previousNodeEnv === void 0) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousIonifyNodeEnv === void 0) delete process.env.IONIFY_NODE_ENV;
+    else process.env.IONIFY_NODE_ENV = previousIonifyNodeEnv;
+  }
+}
+var init_optimize_all = __esm({
+  "src/cli/commands/optimize-all.ts"() {
+    "use strict";
+    init_cjs_shims();
+    init_logger();
+  }
+});
+
+// src/cli/index.ts
+init_cjs_shims();
+var import_commander = require("commander");
+init_logger();
+
+// src/cli/commands/dev.ts
+init_cjs_shims();
+var import_http = __toESM(require("http"), 1);
+var import_https = __toESM(require("https"), 1);
+var import_url6 = __toESM(require("url"), 1);
+var import_child_process = require("child_process");
+var import_fs23 = __toESM(require("fs"), 1);
+var import_path25 = __toESM(require("path"), 1);
+var import_url7 = require("url");
+var import_module4 = require("module");
+var import_selfsigned = __toESM(require("selfsigned"), 1);
+init_logger();
+init_cache();
+init_feature_pack_planner();
+
+// src/core/deps/dep-coupling.ts
+init_cjs_shims();
+var import_fs4 = __toESM(require("fs"), 1);
+var import_path4 = __toESM(require("path"), 1);
+var NULL_PKG_INFO = { name: "", peerDeps: [] };
+function isRealPackageName(name) {
+  if (!name) return false;
+  if (name.startsWith("@")) {
+    const slashCount = (name.match(/\//g) ?? []).length;
+    return slashCount === 1;
+  }
+  return !name.includes("/");
+}
+function readPackageJsonForEntry(entryPath, cache) {
+  let dir = import_path4.default.dirname(entryPath);
+  for (let depth = 0; depth < 12; depth += 1) {
+    const cached = cache.get(dir);
+    if (cached) return cached;
+    const pkgPath = import_path4.default.join(dir, "package.json");
+    if (import_fs4.default.existsSync(pkgPath)) {
+      try {
+        const text = import_fs4.default.readFileSync(pkgPath, "utf8");
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object") {
+          const name = typeof parsed.name === "string" ? parsed.name : "";
+          if (isRealPackageName(name)) {
+            const peerObj = parsed.peerDependencies;
+            const peerDeps = peerObj && typeof peerObj === "object" && !Array.isArray(peerObj) ? Object.keys(peerObj).filter((k) => typeof k === "string" && k.length > 0) : [];
+            const info = { name, peerDeps };
+            cache.set(dir, info);
+            return info;
+          }
+        }
+      } catch {
+      }
+    }
+    const parent = import_path4.default.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  cache.set(import_path4.default.dirname(entryPath), NULL_PKG_INFO);
+  return NULL_PKG_INFO;
+}
+var UnionFind = class {
+  parent = /* @__PURE__ */ new Map();
+  add(x) {
+    if (!this.parent.has(x)) this.parent.set(x, x);
+  }
+  find(x) {
+    let cur = this.parent.get(x);
+    if (cur === void 0) {
+      this.parent.set(x, x);
+      return x;
+    }
+    while (cur !== this.parent.get(cur)) {
+      const next = this.parent.get(cur);
+      this.parent.set(cur, this.parent.get(next));
+      cur = this.parent.get(cur);
+    }
+    return cur;
+  }
+  union(a, b) {
+    const ra = this.find(a);
+    const rb = this.find(b);
+    if (ra !== rb) this.parent.set(ra, rb);
+  }
+};
+function extractDepCouplingGroups(candidates) {
+  if (!candidates || candidates.length === 0) return [];
+  const pkgCache = /* @__PURE__ */ new Map();
+  const packageToFiles = /* @__PURE__ */ new Map();
+  const fileToInfo = /* @__PURE__ */ new Map();
+  for (const candidate of candidates) {
+    if (!candidate?.fileName || !candidate?.entryPath) continue;
+    const info = readPackageJsonForEntry(candidate.entryPath, pkgCache);
+    if (!info.name) continue;
+    fileToInfo.set(candidate.fileName, info);
+    let bucket = packageToFiles.get(info.name);
+    if (!bucket) {
+      bucket = /* @__PURE__ */ new Set();
+      packageToFiles.set(info.name, bucket);
+    }
+    bucket.add(candidate.fileName);
+  }
+  if (fileToInfo.size === 0) return [];
+  const uf = new UnionFind();
+  for (const fileName of fileToInfo.keys()) uf.add(fileName);
+  for (const [fileName, info] of fileToInfo.entries()) {
+    const sameNameFiles = packageToFiles.get(info.name);
+    if (sameNameFiles && sameNameFiles.size > 1) {
+      for (const peerFile of sameNameFiles) {
+        if (peerFile === fileName) continue;
+        uf.union(fileName, peerFile);
+      }
+    }
+    if (info.peerDeps.length === 0) continue;
+    for (const peerName of info.peerDeps) {
+      const peerFiles = packageToFiles.get(peerName);
+      if (!peerFiles || peerFiles.size === 0) continue;
+      for (const peerFile of peerFiles) {
+        if (peerFile === fileName) continue;
+        uf.union(fileName, peerFile);
+      }
+    }
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (const fileName of fileToInfo.keys()) {
+    const root = uf.find(fileName);
+    let bucket = groups.get(root);
+    if (!bucket) {
+      bucket = /* @__PURE__ */ new Set();
+      groups.set(root, bucket);
+    }
+    bucket.add(fileName);
+  }
+  return Array.from(groups.values()).filter((g) => g.size >= 2);
+}
+
+// src/cli/commands/dev.ts
+init_vendor_pack_utils();
+
+// src/core/deps/routing-hash.ts
+init_cjs_shims();
+init_cache();
+function isObject(value) {
+  return !!value && typeof value === "object";
+}
+function hashFeaturePackRoutingIndex(index, depsHash, outputVersion) {
+  if (!isObject(index)) return null;
+  const parsed = index;
+  if (parsed.version !== 1 || parsed.depsHash !== depsHash || parsed.outputVersion !== outputVersion) {
+    return null;
+  }
+  const mapping = parsed.fileNameToChunkGroupId;
+  const entries = [];
+  if (isObject(mapping)) {
+    for (const [fileName, chunkGroupId] of Object.entries(mapping)) {
+      if (typeof fileName !== "string" || typeof chunkGroupId !== "string") continue;
+      entries.push([fileName, chunkGroupId]);
+    }
+  }
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  let body = `feature-pack-index:v1:${depsHash}
+`;
+  for (const [fileName, chunkGroupId] of entries) {
+    body += `${fileName}=${chunkGroupId}
+`;
+  }
+  return getCacheKey(body);
+}
+function hashVendorPackV2RoutingIndex(index, depsHash, outputVersion) {
+  if (!isObject(index)) return null;
+  const parsed = index;
+  if (parsed.version !== 1 || parsed.depsHash !== depsHash || parsed.outputVersion !== outputVersion) {
+    return null;
+  }
+  const packShared = isObject(parsed.packFileToSharedFile) ? parsed.packFileToSharedFile : {};
+  const packKey = isObject(parsed.packFileToKey) ? parsed.packFileToKey : {};
+  const packChunks = isObject(parsed.packFileToChunkFiles) ? parsed.packFileToChunkFiles : {};
+  const routing = isObject(parsed.fileNameToPackFile) ? parsed.fileNameToPackFile : {};
+  const sharedEntries = [];
+  for (const [packFile, sharedFile] of Object.entries(packShared)) {
+    if (typeof packFile !== "string" || typeof sharedFile !== "string") continue;
+    sharedEntries.push([packFile, sharedFile]);
+  }
+  sharedEntries.sort((a, b) => a[0].localeCompare(b[0]));
+  const keyEntries = [];
+  for (const [packFile, key] of Object.entries(packKey)) {
+    if (typeof packFile !== "string" || typeof key !== "string") continue;
+    keyEntries.push([packFile, key.trim().toLowerCase()]);
+  }
+  keyEntries.sort((a, b) => a[0].localeCompare(b[0]));
+  const chunkEntries = [];
+  for (const [packFile, chunkFiles] of Object.entries(packChunks)) {
+    if (typeof packFile !== "string" || !Array.isArray(chunkFiles)) continue;
+    const normalized = chunkFiles.map((v) => typeof v === "string" ? v : "").filter(Boolean).slice().sort();
+    const unique = [];
+    for (const file of normalized) {
+      if (unique.length === 0 || unique[unique.length - 1] !== file) unique.push(file);
+    }
+    chunkEntries.push([packFile, unique]);
+  }
+  chunkEntries.sort((a, b) => a[0].localeCompare(b[0]));
+  const routeEntries = [];
+  for (const [fileName, packFile] of Object.entries(routing)) {
+    if (typeof fileName !== "string" || typeof packFile !== "string") continue;
+    routeEntries.push([fileName, packFile]);
+  }
+  routeEntries.sort((a, b) => a[0].localeCompare(b[0]));
+  let body = `vendor-pack-v2-index:v1:${depsHash}
+`;
+  for (const [packFile, sharedFile] of sharedEntries) {
+    body += `shared:${packFile}=${sharedFile}
+`;
+  }
+  for (const [packFile, key] of keyEntries) {
+    body += `key:${packFile}=${key}
+`;
+  }
+  for (const [packFile, files] of chunkEntries) {
+    body += `chunks:${packFile}=${files.join(",")}
+`;
+  }
+  for (const [fileName, packFile] of routeEntries) {
+    body += `route:${fileName}=${packFile}
+`;
+  }
+  return getCacheKey(body);
+}
+
+// src/cli/commands/dev.ts
+init_vendor_pack_v2();
+
+// src/core/deps/preload-routing.ts
+init_cjs_shims();
+function uniqueStrings(values) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+function getCurrentPackFiles(packFileToChunkFiles, packFileToSharedFile) {
+  return /* @__PURE__ */ new Set([
+    ...packFileToChunkFiles.keys(),
+    ...packFileToSharedFile.keys()
+  ]);
+}
+function findOwningPackFiles(fileName, packFileToChunkFiles, packFileToSharedFile) {
+  const owners = [];
+  for (const [packFile, chunkFiles] of packFileToChunkFiles.entries()) {
+    if (chunkFiles.includes(fileName)) owners.push(packFile);
+  }
+  for (const [packFile, sharedFileName] of packFileToSharedFile.entries()) {
+    if (sharedFileName === fileName) owners.push(packFile);
+  }
+  return uniqueStrings(owners);
+}
+function isCurrentSharedFile(fileName, packFileToChunkFiles, packFileToSharedFile, currentStableSharedFileNames) {
+  if (currentStableSharedFileNames.includes(fileName)) return true;
+  for (const chunkFiles of packFileToChunkFiles.values()) {
+    if (chunkFiles.includes(fileName)) return true;
+  }
+  for (const sharedFileName of packFileToSharedFile.values()) {
+    if (sharedFileName === fileName) return true;
+  }
+  return false;
+}
+function resolveAuthoritativeDepPreloadFiles(options) {
+  const { fileName, fileExists: fileExists2, fileNameToPackFile, packFileToChunkFiles, packFileToSharedFile } = options;
+  if (!fileName || !fileName.endsWith(".js")) return [];
+  const currentStableSharedFileNames = Array.isArray(options.currentStableSharedFileNames) ? options.currentStableSharedFileNames.filter((value) => typeof value === "string" && value.endsWith(".js")) : [];
+  const routedPackFile = fileNameToPackFile.get(fileName) ?? null;
+  if (routedPackFile) {
+    const chunkFiles = packFileToChunkFiles.get(routedPackFile) ?? (() => {
+      const shared = packFileToSharedFile.get(routedPackFile) ?? null;
+      return shared ? [shared] : [];
+    })();
+    return uniqueStrings([...chunkFiles.filter(fileExists2), routedPackFile].filter(fileExists2));
+  }
+  const currentPackFiles = getCurrentPackFiles(packFileToChunkFiles, packFileToSharedFile);
+  if (fileName.startsWith("vendor-pack.")) {
+    if (!currentPackFiles.has(fileName)) return [];
+  }
+  if (currentPackFiles.has(fileName)) {
+    const chunkFiles = packFileToChunkFiles.get(fileName) ?? (() => {
+      const shared = packFileToSharedFile.get(fileName) ?? null;
+      return shared ? [shared] : [];
+    })();
+    return uniqueStrings([...chunkFiles.filter(fileExists2), fileName].filter(fileExists2));
+  }
+  if (fileName.startsWith("shared.")) {
+    if (!isCurrentSharedFile(fileName, packFileToChunkFiles, packFileToSharedFile, currentStableSharedFileNames)) {
+      return [];
+    }
+    if (!fileExists2(fileName)) return [];
+    const owningPackFiles = findOwningPackFiles(fileName, packFileToChunkFiles, packFileToSharedFile).filter(fileExists2);
+    return uniqueStrings([fileName, ...owningPackFiles]);
+  }
+  return fileExists2(fileName) ? [fileName] : [];
+}
+
+// src/cli/commands/dev.ts
+init_graph();
+
+// src/core/route-hints.ts
+init_cjs_shims();
+var import_fs10 = __toESM(require("fs"), 1);
+var ROUTE_HINT_STATE_VERSION = 1;
+var CLIENT_CONTEXT_TTL_MS = 3e4;
+var MAX_TRACKED_ROUTES = 64;
+var MAX_TRACKED_ASSETS_PER_ROUTE = 256;
+function toIsoString(value) {
+  const safe = Number.isFinite(value) ? value : Date.now();
+  return new Date(safe).toISOString();
+}
+function parseTimestamp(value) {
+  if (typeof value !== "string" || value.length === 0) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function normalizeHintUrl(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed, "http://ionify.local");
+    if (!parsed.pathname.startsWith("/")) return null;
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+function normalizeDocumentRouteKey(value) {
+  const normalized = normalizeHintUrl(value) ?? "/";
+  const queryIndex = normalized.indexOf("?");
+  let pathname = queryIndex === -1 ? normalized : normalized.slice(0, queryIndex);
+  if (!pathname.startsWith("/")) pathname = `/${pathname}`;
+  pathname = pathname.replace(/\/index\.html$/i, "/");
+  if (pathname.endsWith(".html") && pathname.length > ".html".length) {
+    pathname = pathname.slice(0, -".html".length);
+  }
+  if (pathname.length > 1) pathname = pathname.replace(/\/+$/, "");
+  return pathname || "/";
+}
+function readJsonFile2(filePath) {
+  if (!import_fs10.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs10.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile2(filePath, data) {
+  try {
+    import_fs10.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  } catch {
+  }
+}
+var RouteHintIndex = class {
+  statePath;
+  routes = /* @__PURE__ */ new Map();
+  requestRouteContext = /* @__PURE__ */ new Map();
+  clientRouteContext = /* @__PURE__ */ new Map();
+  dirty = false;
+  saveTimer = null;
+  constructor(statePath) {
+    this.statePath = statePath;
+    this.loadFromDisk();
+  }
+  loadFromDisk() {
+    const raw = readJsonFile2(this.statePath);
+    if (!raw || raw.version !== ROUTE_HINT_STATE_VERSION || typeof raw.routes !== "object" || !raw.routes) {
+      return;
+    }
+    for (const [routeKeyRaw, routeRaw] of Object.entries(raw.routes)) {
+      const routeKey = normalizeDocumentRouteKey(routeKeyRaw);
+      const documents = typeof routeRaw?.documents === "number" && Number.isFinite(routeRaw.documents) && routeRaw.documents > 0 ? Math.floor(routeRaw.documents) : 0;
+      const updatedAtMs = parseTimestamp(routeRaw?.updatedAt);
+      const assets = /* @__PURE__ */ new Map();
+      const rawAssets = routeRaw?.assets && typeof routeRaw.assets === "object" ? routeRaw.assets : {};
+      for (const [url2, assetRaw] of Object.entries(rawAssets)) {
+        const normalizedUrl = normalizeHintUrl(url2);
+        if (!normalizedUrl) continue;
+        if (assetRaw?.kind !== "dep" && assetRaw?.kind !== "source") continue;
+        const requestCount = typeof assetRaw?.requestCount === "number" && Number.isFinite(assetRaw.requestCount) && assetRaw.requestCount > 0 ? Math.floor(assetRaw.requestCount) : 0;
+        if (requestCount <= 0) continue;
+        const minDepth = typeof assetRaw?.minDepth === "number" && Number.isFinite(assetRaw.minDepth) && assetRaw.minDepth >= 0 ? Math.floor(assetRaw.minDepth) : 0;
+        assets.set(normalizedUrl, {
+          kind: assetRaw.kind,
+          requestCount,
+          minDepth,
+          lastSeenAtMs: parseTimestamp(assetRaw.lastSeenAt)
+        });
+      }
+      if (documents <= 0 && assets.size === 0) continue;
+      this.routes.set(routeKey, {
+        documents,
+        updatedAtMs,
+        assets
+      });
+    }
+    this.prunePersistedState();
+  }
+  queueSave() {
+    this.dirty = true;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => this.flush(), 250);
+  }
+  pruneEphemeralContexts(nowMs) {
+    for (const [key, value] of this.requestRouteContext) {
+      if (nowMs - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
+        this.requestRouteContext.delete(key);
+      }
+    }
+    for (const [key, value] of this.clientRouteContext) {
+      if (nowMs - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
+        this.clientRouteContext.delete(key);
+      }
+    }
+  }
+  prunePersistedState() {
+    const sortedRoutes = Array.from(this.routes.entries()).sort((a, b) => {
+      const updatedDelta = b[1].updatedAtMs - a[1].updatedAtMs;
+      if (updatedDelta !== 0) return updatedDelta;
+      return a[0].localeCompare(b[0]);
+    });
+    for (const [, route] of sortedRoutes) {
+      const sortedAssets = Array.from(route.assets.entries()).sort((a, b) => {
+        const depthDelta = a[1].minDepth - b[1].minDepth;
+        if (depthDelta !== 0) return depthDelta;
+        const requestDelta = b[1].requestCount - a[1].requestCount;
+        if (requestDelta !== 0) return requestDelta;
+        return a[0].localeCompare(b[0]);
+      });
+      for (const [url2] of sortedAssets.slice(MAX_TRACKED_ASSETS_PER_ROUTE)) {
+        route.assets.delete(url2);
+      }
+    }
+    for (const [routeKey] of sortedRoutes.slice(MAX_TRACKED_ROUTES)) {
+      this.routes.delete(routeKey);
+    }
+  }
+  getOrCreateRoute(routeKey, observedAtMs) {
+    const normalized = normalizeDocumentRouteKey(routeKey);
+    const existing = this.routes.get(normalized);
+    if (existing) {
+      existing.updatedAtMs = Math.max(existing.updatedAtMs, observedAtMs);
+      return existing;
+    }
+    const created = {
+      documents: 0,
+      updatedAtMs: observedAtMs,
+      assets: /* @__PURE__ */ new Map()
+    };
+    this.routes.set(normalized, created);
+    return created;
+  }
+  beginDocument(options) {
+    const observedAtMs = options.observedAtMs ?? Date.now();
+    const routeKey = normalizeDocumentRouteKey(options.routeKey);
+    const documentUrl = normalizeHintUrl(options.documentUrl);
+    if (!documentUrl) return;
+    this.pruneEphemeralContexts(observedAtMs);
+    const route = this.getOrCreateRoute(routeKey, observedAtMs);
+    route.documents += 1;
+    route.updatedAtMs = observedAtMs;
+    this.requestRouteContext.set(documentUrl, {
+      routeKey,
+      depth: 0,
+      observedAtMs
+    });
+    const clientKey = typeof options.clientKey === "string" ? options.clientKey.trim() : "";
+    if (clientKey) {
+      this.clientRouteContext.set(clientKey, { routeKey, observedAtMs });
+    }
+    this.prunePersistedState();
+    this.queueSave();
+  }
+  resolveRouteContext(options) {
+    const refererUrl = normalizeHintUrl(options.refererUrl);
+    if (refererUrl) {
+      const routeContext = this.requestRouteContext.get(refererUrl);
+      if (routeContext) {
+        return {
+          routeKey: routeContext.routeKey,
+          depth: routeContext.depth + 1
+        };
+      }
+    }
+    const clientKey = typeof options.clientKey === "string" ? options.clientKey.trim() : "";
+    if (clientKey) {
+      const clientContext = this.clientRouteContext.get(clientKey);
+      if (clientContext && options.observedAtMs - clientContext.observedAtMs <= CLIENT_CONTEXT_TTL_MS) {
+        return {
+          routeKey: clientContext.routeKey,
+          depth: 1
+        };
+      }
+    }
+    return null;
+  }
+  noteRequest(options) {
+    const observedAtMs = options.observedAtMs ?? Date.now();
+    const url2 = normalizeHintUrl(options.url);
+    if (!url2) return false;
+    this.pruneEphemeralContexts(observedAtMs);
+    const resolved = this.resolveRouteContext({
+      refererUrl: options.refererUrl,
+      clientKey: options.clientKey,
+      observedAtMs
+    });
+    if (!resolved) return false;
+    const route = this.getOrCreateRoute(resolved.routeKey, observedAtMs);
+    const existing = route.assets.get(url2);
+    if (existing) {
+      existing.requestCount += 1;
+      existing.minDepth = Math.min(existing.minDepth, resolved.depth);
+      existing.lastSeenAtMs = observedAtMs;
+      if (existing.kind !== options.kind && existing.kind === "source") {
+        existing.kind = options.kind;
+      }
+    } else {
+      route.assets.set(url2, {
+        kind: options.kind,
+        requestCount: 1,
+        minDepth: resolved.depth,
+        lastSeenAtMs: observedAtMs
+      });
+    }
+    route.updatedAtMs = observedAtMs;
+    this.requestRouteContext.set(url2, {
+      routeKey: resolved.routeKey,
+      depth: resolved.depth,
+      observedAtMs
+    });
+    this.prunePersistedState();
+    this.queueSave();
+    return true;
+  }
+  getPrimaryRouteKey() {
+    const routes = Array.from(this.routes.entries()).sort((a, b) => {
+      const documentDelta = b[1].documents - a[1].documents;
+      if (documentDelta !== 0) return documentDelta;
+      const updatedDelta = b[1].updatedAtMs - a[1].updatedAtMs;
+      if (updatedDelta !== 0) return updatedDelta;
+      return a[0].localeCompare(b[0]);
+    });
+    return routes[0]?.[0] ?? null;
+  }
+  summarizeAssets(kind) {
+    const aggregated = /* @__PURE__ */ new Map();
+    for (const [routeKey, route] of this.routes) {
+      for (const [url2, asset] of route.assets) {
+        if (kind && asset.kind !== kind) continue;
+        const existing = aggregated.get(url2);
+        if (existing) {
+          existing.totalRequestCount += asset.requestCount;
+          existing.minDepth = Math.min(existing.minDepth, asset.minDepth);
+          existing.routeRequestCounts.set(routeKey, (existing.routeRequestCounts.get(routeKey) ?? 0) + asset.requestCount);
+          continue;
+        }
+        aggregated.set(url2, {
+          kind: asset.kind,
+          totalRequestCount: asset.requestCount,
+          minDepth: asset.minDepth,
+          routeRequestCounts: /* @__PURE__ */ new Map([[routeKey, asset.requestCount]])
+        });
+      }
+    }
+    return Array.from(aggregated.entries()).map(([url2, asset]) => {
+      const routeRequestCounts = {};
+      const routeKeys = Array.from(asset.routeRequestCounts.keys()).sort();
+      for (const routeKey of routeKeys) {
+        routeRequestCounts[routeKey] = asset.routeRequestCounts.get(routeKey) ?? 0;
+      }
+      return {
+        url: url2,
+        kind: asset.kind,
+        totalRequestCount: asset.totalRequestCount,
+        minDepth: asset.minDepth,
+        routeKeys,
+        routeRequestCounts
+      };
+    }).sort((a, b) => {
+      const requestDelta = b.totalRequestCount - a.totalRequestCount;
+      if (requestDelta !== 0) return requestDelta;
+      const depthDelta = a.minDepth - b.minDepth;
+      if (depthDelta !== 0) return depthDelta;
+      return a.url.localeCompare(b.url);
+    });
+  }
+  listRouteKeys() {
+    return Array.from(this.routes.keys()).sort();
+  }
+  getRouteAssetEntries(routeKey, kind) {
+    const normalizedRouteKey = normalizeDocumentRouteKey(routeKey || "/");
+    const route = this.routes.get(normalizedRouteKey);
+    if (!route) return [];
+    return Array.from(route.assets.entries()).map(([url2, asset]) => ({
+      url: url2,
+      kind: asset.kind,
+      requestCount: asset.requestCount,
+      minDepth: asset.minDepth,
+      lastSeenAtMs: asset.lastSeenAtMs
+    })).filter((entry) => !kind || entry.kind === kind).sort((a, b) => {
+      const requestDelta = b.requestCount - a.requestCount;
+      if (requestDelta !== 0) return requestDelta;
+      const depthDelta = a.minDepth - b.minDepth;
+      if (depthDelta !== 0) return depthDelta;
+      return a.url.localeCompare(b.url);
+    });
+  }
+  selectPreloads(routeKey, options) {
+    const normalizedRouteKey = normalizeDocumentRouteKey(routeKey || this.getPrimaryRouteKey() || "/");
+    const maxEntries = typeof options?.maxEntries === "number" && Number.isFinite(options.maxEntries) && options.maxEntries > 0 ? Math.floor(options.maxEntries) : 24;
+    const maxDepEntries = typeof options?.maxDepEntries === "number" && Number.isFinite(options.maxDepEntries) && options.maxDepEntries >= 0 ? Math.floor(options.maxDepEntries) : maxEntries;
+    const maxSourceEntries = typeof options?.maxSourceEntries === "number" && Number.isFinite(options.maxSourceEntries) && options.maxSourceEntries >= 0 ? Math.floor(options.maxSourceEntries) : maxEntries;
+    const minRequestCount = typeof options?.minRequestCount === "number" && Number.isFinite(options.minRequestCount) && options.minRequestCount > 0 ? Math.floor(options.minRequestCount) : 1;
+    const candidates = this.summarizeAssets().map((summary) => ({
+      ...summary,
+      routeRequestCount: summary.routeRequestCounts[normalizedRouteKey] ?? 0
+    })).filter((summary) => summary.totalRequestCount >= minRequestCount).filter((summary) => {
+      if (summary.routeKeys.length === 0) return true;
+      if (summary.routeRequestCount > 0) return true;
+      return summary.routeKeys.length === 1 && summary.routeKeys[0] === normalizedRouteKey;
+    }).sort((a, b) => {
+      const routeDelta = b.routeRequestCount - a.routeRequestCount;
+      if (routeDelta !== 0) return routeDelta;
+      const depthDelta = a.minDepth - b.minDepth;
+      if (depthDelta !== 0) return depthDelta;
+      const totalDelta = b.totalRequestCount - a.totalRequestCount;
+      if (totalDelta !== 0) return totalDelta;
+      if (a.kind !== b.kind) return a.kind === "dep" ? -1 : 1;
+      return a.url.localeCompare(b.url);
+    });
+    const selected = [];
+    let depCount = 0;
+    let sourceCount = 0;
+    for (const candidate of candidates) {
+      if (selected.length >= maxEntries) break;
+      if (candidate.kind === "dep") {
+        if (depCount >= maxDepEntries) continue;
+        depCount += 1;
+      } else {
+        if (sourceCount >= maxSourceEntries) continue;
+        sourceCount += 1;
+      }
+      selected.push({
+        url: candidate.url,
+        kind: candidate.kind,
+        routeRequestCount: candidate.routeRequestCount,
+        totalRequestCount: candidate.totalRequestCount,
+        minDepth: candidate.minDepth
+      });
+    }
+    return selected;
+  }
+  flush() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (!this.dirty) return;
+    const routeEntries = Array.from(this.routes.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const routes = {};
+    for (const [routeKey, route] of routeEntries) {
+      const assetEntries = Array.from(route.assets.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+      const assets = {};
+      for (const [url2, asset] of assetEntries) {
+        assets[url2] = {
+          kind: asset.kind,
+          requestCount: asset.requestCount,
+          minDepth: asset.minDepth,
+          lastSeenAt: toIsoString(asset.lastSeenAtMs)
+        };
+      }
+      routes[routeKey] = {
+        documents: route.documents,
+        updatedAt: toIsoString(route.updatedAtMs),
+        assets
+      };
+    }
+    writeJsonFile2(this.statePath, {
+      version: ROUTE_HINT_STATE_VERSION,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      routes
+    });
+    this.dirty = false;
+  }
+};
+
+// src/core/startup-policy.ts
+init_cjs_shims();
+var import_fs11 = __toESM(require("fs"), 1);
+var STARTUP_OBSERVATION_VERSION = 1;
+var STARTUP_POLICY_VERSION = 1;
+var MAX_EAGER_DEP_ASSETS = 10;
+var MAX_EAGER_SOURCE_ASSETS = 16;
+var DEFAULT_EAGER_BUDGET = {
+  minRouteDocuments: 1,
+  maxEagerDepAssets: MAX_EAGER_DEP_ASSETS,
+  maxEagerSourceAssets: MAX_EAGER_SOURCE_ASSETS,
+  maxEagerTotalAssets: MAX_EAGER_DEP_ASSETS + MAX_EAGER_SOURCE_ASSETS,
+  maxEagerDepBytes: Number.POSITIVE_INFINITY,
+  maxEagerSourceBytes: Number.POSITIVE_INFINITY,
+  maxEagerTotalBytes: Number.POSITIVE_INFINITY
+};
+function readJsonFile3(filePath) {
+  if (!import_fs11.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs11.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile3(filePath, data) {
+  try {
+    import_fs11.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  } catch {
+  }
+}
+function stableStringify2(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify2(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).sort((a, b) => a[0].localeCompare(b[0]));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify2(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function countObservationAssets(assets, kind) {
+  return Object.values(assets).reduce((sum, asset) => sum + (asset.kind === kind ? asset.count : 0), 0);
+}
+function finitePositiveOrDefault(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+function resolveEagerBudget(budget) {
+  return {
+    minRouteDocuments: finitePositiveOrDefault(budget?.minRouteDocuments, DEFAULT_EAGER_BUDGET.minRouteDocuments),
+    maxEagerDepAssets: finitePositiveOrDefault(budget?.maxEagerDepAssets, DEFAULT_EAGER_BUDGET.maxEagerDepAssets),
+    maxEagerSourceAssets: finitePositiveOrDefault(
+      budget?.maxEagerSourceAssets,
+      DEFAULT_EAGER_BUDGET.maxEagerSourceAssets
+    ),
+    maxEagerTotalAssets: finitePositiveOrDefault(
+      budget?.maxEagerTotalAssets,
+      DEFAULT_EAGER_BUDGET.maxEagerTotalAssets
+    ),
+    maxEagerDepBytes: finitePositiveOrDefault(budget?.maxEagerDepBytes, DEFAULT_EAGER_BUDGET.maxEagerDepBytes),
+    maxEagerSourceBytes: finitePositiveOrDefault(
+      budget?.maxEagerSourceBytes,
+      DEFAULT_EAGER_BUDGET.maxEagerSourceBytes
+    ),
+    maxEagerTotalBytes: finitePositiveOrDefault(
+      budget?.maxEagerTotalBytes,
+      DEFAULT_EAGER_BUDGET.maxEagerTotalBytes
+    )
+  };
+}
+function sumAssetBytes(assets) {
+  return assets.reduce((sum, asset) => sum + Math.max(0, asset.sizeBytes ?? 0), 0);
+}
+function selectBudgetedEagerAssets(assets, routeDocuments, rawBudget) {
+  const budget = resolveEagerBudget(rawBudget);
+  if (routeDocuments < budget.minRouteDocuments) return [];
+  const eagerCandidates = assets.filter((asset) => asset.classification === "entry-critical");
+  const eagerDepAssets = eagerCandidates.filter((asset) => asset.kind === "dep");
+  const eagerSourceAssets = eagerCandidates.filter((asset) => asset.kind === "source");
+  const depBytes = sumAssetBytes(eagerDepAssets);
+  const sourceBytes = sumAssetBytes(eagerSourceAssets);
+  const totalBytes = depBytes + sourceBytes;
+  const closureFits = eagerCandidates.length <= budget.maxEagerTotalAssets && eagerDepAssets.length <= budget.maxEagerDepAssets && eagerSourceAssets.length <= budget.maxEagerSourceAssets && depBytes <= budget.maxEagerDepBytes && sourceBytes <= budget.maxEagerSourceBytes && totalBytes <= budget.maxEagerTotalBytes;
+  if (!closureFits) return [];
+  return eagerCandidates.slice().sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "dep" ? -1 : 1;
+    const evalDelta = b.observedPreFcpEvaluatedCount - a.observedPreFcpEvaluatedCount;
+    if (evalDelta !== 0) return evalDelta;
+    const loadDelta = b.observedPreFcpLoadedCount - a.observedPreFcpLoadedCount;
+    if (loadDelta !== 0) return loadDelta;
+    const sizeDelta = Math.max(0, a.sizeBytes ?? 0) - Math.max(0, b.sizeBytes ?? 0);
+    if (sizeDelta !== 0) return sizeDelta;
+    return a.url.localeCompare(b.url);
+  });
+}
+var StartupObservationIndex = class {
+  statePath;
+  routes = /* @__PURE__ */ new Map();
+  constructor(statePath) {
+    this.statePath = statePath;
+    this.loadFromDisk();
+  }
+  loadFromDisk() {
+    const raw = readJsonFile3(this.statePath);
+    if (!raw || raw.version !== STARTUP_OBSERVATION_VERSION || typeof raw.routes !== "object" || !raw.routes) return;
+    for (const [routeKey, state] of Object.entries(raw.routes)) {
+      if (!routeKey || !state || typeof state !== "object") continue;
+      this.routes.set(routeKey, {
+        documents: Math.max(0, Math.floor(state.documents ?? 0)),
+        preFcpLoaded: { ...state.preFcpLoaded ?? {} },
+        preFcpEvaluated: { ...state.preFcpEvaluated ?? {} },
+        updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : (/* @__PURE__ */ new Date(0)).toISOString()
+      });
+    }
+  }
+  getOrCreateRoute(routeKey) {
+    const existing = this.routes.get(routeKey);
+    if (existing) return existing;
+    const created = {
+      documents: 0,
+      preFcpLoaded: {},
+      preFcpEvaluated: {},
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.routes.set(routeKey, created);
+    return created;
+  }
+  recordRouteObservation(options) {
+    const routeKey = String(options.routeKey || "/").trim() || "/";
+    const route = this.getOrCreateRoute(routeKey);
+    route.documents += 1;
+    route.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const apply = (target, urls) => {
+      for (const url2 of urls ?? []) {
+        if (typeof url2 !== "string" || !url2.startsWith("/")) continue;
+        const kind = url2.startsWith("/@deps/") ? "dep" : "source";
+        const existing = target[url2];
+        if (existing) {
+          existing.count += 1;
+        } else {
+          target[url2] = { count: 1, kind };
+        }
+      }
+    };
+    apply(route.preFcpLoaded, options.preFcpLoadedUrls);
+    apply(route.preFcpEvaluated, options.preFcpEvaluatedUrls);
+    this.flush();
+  }
+  getRoute(routeKey) {
+    return this.routes.get(routeKey) ?? null;
+  }
+  flush() {
+    const routes = {};
+    for (const routeKey of Array.from(this.routes.keys()).sort()) {
+      const route = this.routes.get(routeKey);
+      routes[routeKey] = {
+        documents: route.documents,
+        preFcpLoaded: Object.fromEntries(Object.entries(route.preFcpLoaded).sort((a, b) => a[0].localeCompare(b[0]))),
+        preFcpEvaluated: Object.fromEntries(
+          Object.entries(route.preFcpEvaluated).sort((a, b) => a[0].localeCompare(b[0]))
+        ),
+        updatedAt: route.updatedAt
+      };
+    }
+    writeJsonFile3(this.statePath, {
+      version: STARTUP_OBSERVATION_VERSION,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      routes
+    });
+  }
+};
+function buildStartupPolicySnapshot(options) {
+  const assetSummaryByUrl = new Map(options.assetSummaries.map((summary) => [summary.url, summary]));
+  const routes = {};
+  const normalizedRouteKeys = Array.from(new Set(options.routeKeys.filter(Boolean))).sort();
+  for (const routeKey of normalizedRouteKeys) {
+    const routeAssets = options.routeAssetsForRoute(routeKey).filter((asset) => options.isAssetValid?.(asset.url, asset.kind) ?? true);
+    const validRouteAssetUrls = new Set(routeAssets.map((asset) => asset.url));
+    const observation = options.observations.getRoute(routeKey);
+    const filterObservedAssets = (assets2) => {
+      const filtered = {};
+      for (const [assetUrl, asset] of Object.entries(assets2 ?? {})) {
+        if (!validRouteAssetUrls.has(assetUrl)) continue;
+        if (!(options.isAssetValid?.(assetUrl, asset.kind) ?? true)) continue;
+        filtered[assetUrl] = asset;
+      }
+      return filtered;
+    };
+    const preFcpLoaded = filterObservedAssets(observation?.preFcpLoaded);
+    const preFcpEvaluated = filterObservedAssets(observation?.preFcpEvaluated);
+    const assets = routeAssets.map((asset) => {
+      const summary = assetSummaryByUrl.get(asset.url);
+      const totalRequestCount = summary?.totalRequestCount ?? asset.requestCount;
+      const routeCount = summary?.routeKeys.length ?? 1;
+      const routeRequestCount = summary?.routeRequestCounts?.[routeKey] ?? asset.requestCount;
+      const observedPreFcpLoadedCount = preFcpLoaded[asset.url]?.count ?? 0;
+      const observedPreFcpEvaluatedCount = preFcpEvaluated[asset.url]?.count ?? 0;
+      const rawSizeBytes = options.assetSizeBytes?.(asset.url, asset.kind);
+      const sizeBytes = typeof rawSizeBytes === "number" && Number.isFinite(rawSizeBytes) && rawSizeBytes >= 0 ? Math.floor(rawSizeBytes) : null;
+      let classification;
+      let eagerReason;
+      if (observedPreFcpEvaluatedCount > 0) {
+        classification = "entry-critical";
+        eagerReason = "pre-fcp-evaluated";
+      } else if (observedPreFcpLoadedCount > 0) {
+        classification = "entry-critical";
+        eagerReason = "pre-fcp-loaded";
+      } else if (asset.kind === "source" && asset.minDepth <= 1) {
+        classification = "entry-critical";
+        eagerReason = "entry-shell-fallback";
+      } else if (asset.kind === "dep" && routeCount > 1) {
+        classification = "shared-later";
+        eagerReason = "shared-route-history";
+      } else if (asset.requestCount > 0) {
+        classification = "route-lazy";
+        eagerReason = "route-local-history";
+      } else {
+        classification = "background";
+        eagerReason = "background-history";
+      }
+      return {
+        url: asset.url,
+        kind: asset.kind,
+        classification,
+        sizeBytes,
+        requestCount: asset.requestCount,
+        totalRequestCount,
+        minDepth: asset.minDepth,
+        routeCount,
+        routeRequestCount,
+        observedPreFcpLoadedCount,
+        observedPreFcpEvaluatedCount,
+        eagerReason
+      };
+    }).sort((a, b) => {
+      const classOrder = (value) => value === "entry-critical" ? 0 : value === "shared-later" ? 1 : value === "route-lazy" ? 2 : 3;
+      const classDelta = classOrder(a.classification) - classOrder(b.classification);
+      if (classDelta !== 0) return classDelta;
+      const evalDelta = b.observedPreFcpEvaluatedCount - a.observedPreFcpEvaluatedCount;
+      if (evalDelta !== 0) return evalDelta;
+      const loadDelta = b.observedPreFcpLoadedCount - a.observedPreFcpLoadedCount;
+      if (loadDelta !== 0) return loadDelta;
+      const requestDelta = b.routeRequestCount - a.routeRequestCount;
+      if (requestDelta !== 0) return requestDelta;
+      const depthDelta = a.minDepth - b.minDepth;
+      if (depthDelta !== 0) return depthDelta;
+      return a.url.localeCompare(b.url);
+    });
+    const eagerAssets = selectBudgetedEagerAssets(assets, observation?.documents ?? 0, options.eagerBudget);
+    const routePayload = {
+      routeKey,
+      assets: assets.map((asset) => ({
+        url: asset.url,
+        classification: asset.classification,
+        kind: asset.kind,
+        requestCount: asset.requestCount,
+        totalRequestCount: asset.totalRequestCount,
+        minDepth: asset.minDepth,
+        routeCount: asset.routeCount,
+        routeRequestCount: asset.routeRequestCount,
+        sizeBytes: asset.sizeBytes,
+        observedPreFcpLoadedCount: asset.observedPreFcpLoadedCount,
+        observedPreFcpEvaluatedCount: asset.observedPreFcpEvaluatedCount,
+        eagerReason: asset.eagerReason
+      }))
+    };
+    const policyHash = stableStringify2(routePayload);
+    routes[routeKey] = {
+      routeKey,
+      policyHash,
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      assets,
+      eagerAssets,
+      stats: {
+        entryCritical: assets.filter((asset) => asset.classification === "entry-critical").length,
+        sharedLater: assets.filter((asset) => asset.classification === "shared-later").length,
+        routeLazy: assets.filter((asset) => asset.classification === "route-lazy").length,
+        background: assets.filter((asset) => asset.classification === "background").length,
+        preFcpLoadedModules: Object.keys(preFcpLoaded).length,
+        preFcpEvaluatedModules: Object.keys(preFcpEvaluated).length,
+        preFcpLoadedDepModules: countObservationAssets(preFcpLoaded, "dep"),
+        preFcpLoadedSourceModules: countObservationAssets(preFcpLoaded, "source"),
+        preFcpEvaluatedDepModules: countObservationAssets(preFcpEvaluated, "dep"),
+        preFcpEvaluatedSourceModules: countObservationAssets(preFcpEvaluated, "source")
+      }
+    };
+  }
+  const policyPayload = {
+    routes: Object.fromEntries(
+      Object.entries(routes).map(([routeKey, route]) => [
+        routeKey,
+        {
+          policyHash: route.policyHash,
+          eagerAssets: route.eagerAssets.map((asset) => `${asset.kind}:${asset.url}:${asset.classification}:${asset.eagerReason}`),
+          stats: route.stats
+        }
+      ])
+    )
+  };
+  return {
+    version: STARTUP_POLICY_VERSION,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    policyHash: stableStringify2(policyPayload),
+    routes
+  };
+}
+function loadStartupPolicySnapshot(filePath) {
+  const raw = readJsonFile3(filePath);
+  if (!raw || raw.version !== STARTUP_POLICY_VERSION || typeof raw.routes !== "object" || !raw.routes) return null;
+  return raw;
+}
+function persistStartupPolicySnapshot(filePath, snapshot) {
+  writeJsonFile3(filePath, snapshot);
+}
+function selectStartupPolicyPreloads(snapshot, routeKey) {
+  const route = snapshot?.routes?.[routeKey] ?? null;
+  if (!route) return [];
+  return route.eagerAssets.map((asset) => ({
+    url: asset.url,
+    kind: asset.kind,
+    routeRequestCount: asset.routeRequestCount,
+    totalRequestCount: asset.totalRequestCount,
+    minDepth: asset.minDepth
+  }));
+}
+
+// src/cli/commands/dev.ts
+init_resolver();
+
+// src/core/resolver/module-resolver.ts
+init_cjs_shims();
+var import_path12 = __toESM(require("path"), 1);
+var import_fs12 = __toESM(require("fs"), 1);
+init_native();
+var DEFAULT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".json", ".mjs"];
+var DEFAULT_CONDITIONS = ["import", "default"];
+var DEFAULT_MAIN_FIELDS = ["module", "main"];
+var ModuleResolver = class {
+  options;
+  rootDir;
+  metadataByPath = /* @__PURE__ */ new Map();
+  constructor(rootDir, options = {}) {
+    this.rootDir = rootDir;
+    this.options = {
+      baseUrl: options.baseUrl || ".",
+      paths: options.paths || {},
+      extensions: options.extensions || DEFAULT_EXTENSIONS,
+      alias: options.alias || {},
+      conditions: options.conditions || DEFAULT_CONDITIONS,
+      mainFields: options.mainFields || DEFAULT_MAIN_FIELDS
+    };
+  }
+  resolve(importSpecifier, importer) {
+    if (import_path12.default.isAbsolute(importSpecifier)) {
+      return this.tryResolveFile(importSpecifier);
+    }
+    const aliasResolved = this.resolveAlias(importSpecifier);
+    if (aliasResolved) {
+      return this.tryResolveFile(aliasResolved);
+    }
+    if (importSpecifier.startsWith(".")) {
+      const resolvedPath = import_path12.default.resolve(import_path12.default.dirname(importer), importSpecifier);
+      return this.tryResolveFile(resolvedPath);
+    }
+    return this.resolveBareModule(importSpecifier, importer);
+  }
+  getMetadata(resolvedPath) {
+    return this.metadataByPath.get(resolvedPath);
+  }
+  resolveAlias(specifier) {
+    for (const [alias, target] of Object.entries(this.options.alias)) {
+      if (specifier === alias || specifier.startsWith(`${alias}/`)) {
+        const relativePath = specifier.slice(alias.length);
+        const targets = Array.isArray(target) ? target : [target];
+        for (const t of targets) {
+          const resolved = import_path12.default.join(this.rootDir, t, relativePath);
+          if (import_fs12.default.existsSync(resolved)) {
+            return resolved;
+          }
+        }
+      }
+    }
+    for (const [pattern, targets] of Object.entries(this.options.paths)) {
+      const wildcardIndex = pattern.indexOf("*");
+      if (wildcardIndex === -1) {
+        if (specifier === pattern) {
+          return import_path12.default.join(this.rootDir, this.options.baseUrl, targets[0]);
+        }
+      } else {
+        const prefix = pattern.slice(0, wildcardIndex);
+        const suffix = pattern.slice(wildcardIndex + 1);
+        if (specifier.startsWith(prefix) && specifier.endsWith(suffix)) {
+          const matchedPortion = specifier.slice(prefix.length, -suffix.length || void 0);
+          for (const target of targets) {
+            const resolved = import_path12.default.join(
+              this.rootDir,
+              this.options.baseUrl,
+              target.replace("*", matchedPortion)
+            );
+            if (import_fs12.default.existsSync(resolved)) {
+              return resolved;
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+  resolveBareModule(specifier, importer) {
+    const nativeResolved = native?.resolveModule?.(specifier, importer);
+    if (nativeResolved?.kind) {
+      const fsPath = nativeResolved.fsPath ?? nativeResolved.fs_path ?? null;
+      const kind = normalizeResolveKind(nativeResolved.kind);
+      if (kind === "pkg_cjs") {
+        if (fsPath) {
+          this.metadataByPath.set(fsPath, {
+            format: "cjs",
+            needsInterop: true
+          });
+        }
+        if (process.env.IONIFY_DEBUG) {
+          const name = nativeResolved.pkg?.name ?? specifier;
+          console.log(`[resolver] CJS package detected: ${name} (conversion deferred)`);
+        }
+      }
+      if (kind === "pkg_esm" && fsPath) {
+        return fsPath;
+      }
+      if (kind === "pkg_cjs" && fsPath) {
+        return fsPath;
+      }
+      if (kind === "local" && fsPath) {
+        return fsPath;
+      }
+      return null;
+    }
+    const parts = specifier.split("/");
+    const packageName = parts[0].startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+    const subpath = parts.slice(packageName.startsWith("@") ? 2 : 1).join("/");
+    let dir = import_path12.default.dirname(importer);
+    while (dir !== "/") {
+      const nodeModulesPath = import_path12.default.join(dir, "node_modules", packageName);
+      if (import_fs12.default.existsSync(nodeModulesPath)) {
+        if (subpath) {
+          return this.tryResolveFile(import_path12.default.join(nodeModulesPath, subpath));
+        }
+        return this.resolvePackageMain(nodeModulesPath);
+      }
+      dir = import_path12.default.dirname(dir);
+    }
+    return null;
+  }
+  resolvePackageMain(packageDir) {
+    const pkgJsonPath = import_path12.default.join(packageDir, "package.json");
+    if (import_fs12.default.existsSync(pkgJsonPath)) {
+      try {
+        const pkg = JSON.parse(import_fs12.default.readFileSync(pkgJsonPath, "utf8"));
+        if (pkg.exports) {
+          const resolved = this.resolveExports(pkg.exports, packageDir);
+          if (resolved) return resolved;
+        }
+        for (const field of this.options.mainFields) {
+          if (pkg[field]) {
+            const resolved = this.tryResolveFile(import_path12.default.join(packageDir, pkg[field]));
+            if (resolved) return resolved;
+          }
+        }
+      } catch {
+      }
+    }
+    return this.tryResolveFile(import_path12.default.join(packageDir, "index"));
+  }
+  resolveExports(exports2, packageDir) {
+    if (typeof exports2 === "string") {
+      return this.tryResolveFile(import_path12.default.join(packageDir, exports2));
+    }
+    if (Array.isArray(exports2)) {
+      for (const exp of exports2) {
+        const resolved = this.resolveExports(exp, packageDir);
+        if (resolved) return resolved;
+      }
+      return null;
+    }
+    if (typeof exports2 === "object") {
+      for (const condition of this.options.conditions) {
+        if (condition in exports2) {
+          const resolved = this.resolveExports(exports2[condition], packageDir);
+          if (resolved) return resolved;
+        }
+      }
+      if ("default" in exports2) {
+        return this.resolveExports(exports2.default, packageDir);
+      }
+    }
+    return null;
+  }
+  tryResolveFile(filepath) {
+    if (import_fs12.default.existsSync(filepath) && import_fs12.default.statSync(filepath).isFile()) {
+      return filepath;
+    }
+    for (const ext of this.options.extensions) {
+      const withExt = `${filepath}${ext}`;
+      if (import_fs12.default.existsSync(withExt) && import_fs12.default.statSync(withExt).isFile()) {
+        return withExt;
+      }
+    }
+    if (import_fs12.default.existsSync(filepath) && import_fs12.default.statSync(filepath).isDirectory()) {
+      for (const ext of this.options.extensions) {
+        const indexFile = import_path12.default.join(filepath, `index${ext}`);
+        if (import_fs12.default.existsSync(indexFile) && import_fs12.default.statSync(indexFile).isFile()) {
+          return indexFile;
+        }
+      }
+    }
+    return null;
+  }
+};
+function normalizeResolveKind(kind) {
+  const mapping = {
+    PkgEsm: "pkg_esm",
+    PkgCjs: "pkg_cjs",
+    Builtin: "builtin",
+    Virtual: "virtual",
+    Local: "local"
+  };
+  if (kind in mapping) {
+    return mapping[kind];
+  }
+  return kind.toLowerCase();
+}
+
+// src/cli/commands/dev.ts
+init_external_policy();
+
+// src/core/watcher.ts
+init_cjs_shims();
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path13 = __toESM(require("path"), 1);
+var import_events = require("events");
+var IonifyWatcher = class extends import_events.EventEmitter {
+  constructor(rootDir) {
+    super();
+    this.rootDir = rootDir;
+  }
+  watchers = /* @__PURE__ */ new Map();
+  debounce = /* @__PURE__ */ new Map();
+  lastEmitted = /* @__PURE__ */ new Map();
+  polled = /* @__PURE__ */ new Set();
+  isWatched(filePath) {
+    const abs = import_path13.default.resolve(filePath);
+    return this.watchers.has(abs) || this.polled.has(abs);
+  }
+  watchFile(filePath) {
+    const abs = import_path13.default.resolve(filePath);
+    if (this.isWatched(abs)) return;
+    if (/(node_modules|\.git|\.ionify|dist)/.test(abs)) return;
+    if (!import_fs13.default.existsSync(abs)) return;
+    try {
+      const dir = import_path13.default.dirname(abs);
+      const watcher = import_fs13.default.watch(dir, (event, filename) => {
+        if (!filename) return;
+        const full = import_path13.default.join(dir, filename.toString());
+        if (full !== abs) return;
+        const exists = import_fs13.default.existsSync(abs);
+        const stat = exists ? import_fs13.default.statSync(abs) : null;
+        this.emitChange(abs, exists ? "changed" : "deleted", stat);
+      });
+      this.watchers.set(abs, watcher);
+      this.polled.add(abs);
+      import_fs13.default.watchFile(abs, { interval: 5e3 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) {
+          this.emitChange(abs, "changed", curr);
+        }
+      });
+    } catch {
+      this.polled.add(abs);
+      import_fs13.default.watchFile(abs, { interval: 8e3 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) {
+          this.emitChange(abs, "changed", curr);
+        }
+      });
+    }
+  }
+  emitChange(abs, status, stat) {
+    const now = Date.now();
+    const last = this.debounce.get(abs) || 0;
+    if (now - last < 100) return;
+    const fingerprint = status === "deleted" ? "deleted" : stat ? `${status}:${stat.mtimeMs}:${stat.size}` : `${status}:unknown`;
+    if (this.lastEmitted.get(abs) === fingerprint) return;
+    this.debounce.set(abs, now);
+    this.lastEmitted.set(abs, fingerprint);
+    this.emit("change", abs, status);
+  }
+  unwatchFile(filePath) {
+    const abs = import_path13.default.resolve(filePath);
+    const watcher = this.watchers.get(abs);
+    if (watcher) watcher.close();
+    import_fs13.default.unwatchFile(abs);
+    this.watchers.delete(abs);
+    this.polled.delete(abs);
+    this.debounce.delete(abs);
+    this.lastEmitted.delete(abs);
+  }
+  closeAll() {
+    for (const [abs, w] of this.watchers) {
+      w.close();
+      import_fs13.default.unwatchFile(abs);
+    }
+    this.watchers.clear();
+    for (const abs of this.polled) {
+      import_fs13.default.unwatchFile(abs);
+    }
+    this.polled.clear();
+    this.debounce.clear();
+    this.lastEmitted.clear();
+  }
+};
+
+// src/core/transform.ts
+init_cjs_shims();
+var TransformCache = class {
+  store = /* @__PURE__ */ new Map();
+  hits = 0;
+  misses = 0;
+  maxEntries;
+  constructor(maxEntries) {
+    const envMax = process.env.IONIFY_DEV_TRANSFORM_CACHE_MAX;
+    const parsedEnv = envMax ? parseInt(envMax, 10) : NaN;
+    this.maxEntries = Number.isFinite(parsedEnv) ? parsedEnv : maxEntries ?? 5e3;
+  }
+  setMaxEntries(maxEntries) {
+    this.maxEntries = maxEntries;
+    this.prune();
+  }
+  get(key) {
+    const entry = this.store.get(key);
+    if (entry) {
+      this.hits += 1;
+      entry.timestamp = Date.now();
+      return entry;
+    }
+    this.misses += 1;
+    return null;
+  }
+  set(key, entry) {
+    this.store.set(key, { ...entry, timestamp: Date.now() });
+    this.prune();
+  }
+  prune(maxEntries) {
+    const limit = maxEntries ?? this.maxEntries;
+    if (this.store.size <= limit) return;
+    const sorted = Array.from(this.store.entries()).sort(
+      (a, b) => a[1].timestamp - b[1].timestamp
+    );
+    const removeCount = this.store.size - limit;
+    for (let i = 0; i < removeCount; i++) {
+      this.store.delete(sorted[i][0]);
+    }
+  }
+  metrics() {
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      size: this.store.size,
+      max: this.maxEntries
+    };
+  }
+};
+var transformCache = new TransformCache();
+var TransformEngine = class {
+  loaders = [];
+  cacheEnabled;
+  // Bump when the on-disk transform output format or semantics change.
+  // Included in CAS paths so restarts never serve stale transformed output.
+  cacheVersion = "v3";
+  casRoot;
+  versionHash;
+  constructor(options) {
+    this.cacheEnabled = options?.cache ?? true;
+    this.casRoot = options?.casRoot;
+    this.versionHash = options?.versionHash;
+  }
+  useLoader(loader) {
+    this.loaders.push(loader);
+    this.loaders.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+  async run(ctx) {
+    const { getCacheKey: getCacheKey2 } = await Promise.resolve().then(() => (init_cache(), cache_exports));
+    const path43 = await import("path");
+    const fs39 = await import("fs");
+    const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
+    const loaderSig = `${this.cacheVersion}|${this.loaders.map((l) => l.name || "loader").join("|")}`;
+    const loaderHash = getCacheKey2(loaderSig);
+    const memKey = `${moduleHash}-${loaderHash}`;
+    const casDir = this.casRoot && this.versionHash ? path43.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash) : null;
+    const casFile = casDir ? path43.join(casDir, "transformed.js") : null;
+    const casMapFile = casDir ? path43.join(casDir, "transformed.js.map") : null;
+    const debug = process.env.IONIFY_DEV_TRANSFORM_CACHE_DEBUG === "1";
+    if (this.cacheEnabled) {
+      const memHit = transformCache.get(memKey);
+      if (memHit) {
+        if (debug) {
+          console.log(`[Dev Cache] HIT mem key=${memKey} size=${transformCache.metrics().size}`);
+        }
+        return { code: memHit.transformed, map: memHit.map };
+      }
+      if (casFile && fs39.existsSync(casFile)) {
+        try {
+          const code = fs39.readFileSync(casFile, "utf8");
+          const map = casMapFile && fs39.existsSync(casMapFile) ? fs39.readFileSync(casMapFile, "utf8") : void 0;
+          const parsed = { code, map };
+          transformCache.set(memKey, {
+            hash: moduleHash,
+            loaderHash,
+            transformed: parsed.code,
+            map: parsed.map,
+            timestamp: Date.now()
+          });
+          if (debug) {
+            console.log(`[Dev Cache] HIT cas key=${memKey} size=${transformCache.metrics().size}`);
+          }
+          return parsed;
+        } catch {
+        }
+      }
+    }
+    let working = { ...ctx };
+    let result = { code: ctx.code };
+    for (const loader of this.loaders) {
+      if (!loader.test(working)) continue;
+      const output = await loader.transform({ ...working, code: result.code });
+      if (output && output.code !== void 0) {
+        result = { ...result, ...output };
+        working = { ...working, code: result.code };
+      }
+    }
+    if (this.cacheEnabled) {
+      transformCache.set(memKey, {
+        hash: moduleHash,
+        loaderHash,
+        transformed: result.code,
+        map: result.map,
+        timestamp: Date.now()
+      });
+      if (casFile) {
+        try {
+          fs39.mkdirSync(path43.dirname(casFile), { recursive: true });
+          fs39.writeFileSync(casFile, result.code, "utf8");
+          if (result.map && casMapFile) {
+            fs39.writeFileSync(casMapFile, typeof result.map === "string" ? result.map : JSON.stringify(result.map), "utf8");
+          }
+        } catch {
+        }
+      }
+      if (debug) {
+        const m = transformCache.metrics();
+        console.log(`[Dev Cache] MISS stored key=${memKey} size=${m.size} hits=${m.hits} misses=${m.misses}`);
+      }
+    }
+    return result;
+  }
+};
+
+// src/cli/commands/dev.ts
+init_pool();
+
+// src/core/hmr.ts
+init_cjs_shims();
+var DEFAULT_PENDING_UPDATE_TTL_MS = 6e4;
+var HMRServer = class {
+  constructor(pendingUpdateTtlMs = DEFAULT_PENDING_UPDATE_TTL_MS) {
+    this.pendingUpdateTtlMs = pendingUpdateTtlMs;
+  }
+  clients = /* @__PURE__ */ new Set();
+  pending = /* @__PURE__ */ new Map();
+  retainedEvents = /* @__PURE__ */ new Map();
+  nextId = 1;
+  closed = false;
+  /** Handle an incoming SSE subscription request */
+  handleSSE(req, res) {
+    if (this.closed) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    res.write(`event: ready
+data: "ok"
+
+`);
+    for (const [event, payload] of this.retainedEvents.entries()) {
+      this.sendToClient(res, event, payload);
+    }
+    this.clients.add(res);
+    req.on("close", () => {
+      this.clients.delete(res);
+      try {
+        res.end();
+      } catch {
+      }
+    });
+  }
+  sendToClient(client, event, payload) {
+    const data = (event ? `event: ${event}
+` : "") + `data: ${JSON.stringify(payload)}
+
+`;
+    try {
+      client.write(data);
+    } catch {
+    }
+  }
+  send(event, payload) {
+    for (const client of this.clients) {
+      this.sendToClient(client, event, payload);
+    }
+  }
+  /** Broadcast a JSON event to all SSE clients */
+  broadcast(payload) {
+    this.send(null, payload);
+  }
+  broadcastEvent(event, payload, options) {
+    if (options?.retain) {
+      this.retainedEvents.set(event, payload);
+    }
+    this.send(event, payload);
+  }
+  queueUpdate(modules) {
+    if (!modules.length) return null;
+    const timestamp = Date.now();
+    this.prunePending(timestamp);
+    const id = `${timestamp}-${this.nextId++}`;
+    const summary = {
+      type: "update",
+      id,
+      timestamp,
+      modules: modules.map(({ url: url2, hash, reason }) => ({ url: url2, hash, reason }))
+    };
+    this.pending.set(id, { summary, modules, createdAt: timestamp });
+    this.broadcastEvent("update", summary);
+    return summary;
+  }
+  consumeUpdate(id) {
+    const now = Date.now();
+    this.prunePending(now);
+    const pending = this.pending.get(id);
+    if (!pending) return void 0;
+    if (now - pending.createdAt > this.pendingUpdateTtlMs) {
+      this.pending.delete(id);
+      return void 0;
+    }
+    return pending;
+  }
+  prunePending(now = Date.now()) {
+    for (const [id, pending] of this.pending.entries()) {
+      if (now - pending.createdAt > this.pendingUpdateTtlMs) {
+        this.pending.delete(id);
+      }
+    }
+  }
+  broadcastError(payload) {
+    this.broadcastEvent("error", { type: "error", ...payload });
+  }
+  close() {
+    this.closed = true;
+    for (const client of this.clients) {
+      try {
+        client.end();
+      } catch {
+      }
+    }
+    this.clients.clear();
+    this.pending.clear();
+    this.retainedEvents.clear();
+  }
+};
+function injectHMRClient(html) {
+  const tag = `<script type="module" src="/__ionify_hmr_client.js"></script>`;
+  return html.includes("</body>") ? html.replace("</body>", `${tag}
+</body>`) : html + "\n" + tag;
+}
+
+// src/cli/commands/dev.ts
+init_css();
+init_css_ext();
+
+// src/core/loaders/asset.ts
+init_cjs_shims();
+init_public_path();
+function assetAsModule(urlPath) {
+  const safe = urlPath.replace(/"/g, "%22");
+  return `export default "${safe}";`;
+}
+function isAssetExt(ext) {
+  return [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".webp",
+    ".avif",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot"
+  ].includes(ext);
+}
+function contentTypeForAsset(ext) {
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".svg":
+      return "image/svg+xml";
+    case ".ico":
+      return "image/x-icon";
+    case ".webp":
+      return "image/webp";
+    case ".avif":
+      return "image/avif";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    case ".ttf":
+      return "font/ttf";
+    case ".otf":
+      return "font/otf";
+    case ".eot":
+      return "application/vnd.ms-fontobject";
+    default:
+      return "application/octet-stream";
+  }
+}
+function normalizeUrlFromFs(rootDir, fsPath) {
+  return publicPathForFile(rootDir, fsPath);
+}
+
+// src/core/refresh/entryDetection.ts
+init_cjs_shims();
+var import_path16 = __toESM(require("path"), 1);
+var ENTRY_PATTERNS = [
+  /\/src\/main\.(tsx?|jsx?)$/,
+  /\/src\/index\.(tsx?|jsx?)$/
+];
+function normalizePath(input) {
+  const normalized = import_path16.default.normalize(input).replace(/\\/g, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+function isEntryModule(filePath, config) {
+  const normalized = normalizePath(import_path16.default.resolve(filePath));
+  if (config?.entry) {
+    const root = config.root ?? process.cwd();
+    const entries = Array.isArray(config.entry) ? config.entry : [config.entry];
+    for (const entry of entries) {
+      const resolvedEntry = import_path16.default.resolve(root, entry);
+      const normalizedEntry = normalizePath(resolvedEntry);
+      if (normalized === normalizedEntry) return true;
+    }
+  }
+  return ENTRY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+// src/core/loaders/registry.ts
+init_cjs_shims();
+
+// src/core/loaders/js.ts
+init_cjs_shims();
+var import_core = require("@swc/core");
+var import_es_module_lexer = require("es-module-lexer");
+init_cache();
+init_resolver();
+init_public_path();
+init_cas();
+init_css_ext();
+
+// src/core/utils/declaration-file.ts
+init_cjs_shims();
+function isTypeDeclarationPath(filePath) {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase().split("?")[0]?.split("#")[0] ?? "";
+  return normalized.endsWith(".d.ts") || normalized.endsWith(".d.mts") || normalized.endsWith(".d.cts");
+}
+
+// src/core/loaders/js.ts
+init_native();
+init_registry();
+init_reactRefreshInstrumentation();
+
+// src/core/refresh/refreshEligibility.ts
+init_cjs_shims();
+function containsJSX(code) {
+  const sample = code.slice(0, 8 * 1024);
+  if (sample.includes("React.createElement")) return true;
+  if (/\bjsx(?:s)?\s*\(/.test(sample)) return true;
+  if (sample.includes("<>") || sample.includes("</>")) return true;
+  if (/<[A-Za-z][A-Za-z0-9.$_-]*\b[^>]*\/>/.test(sample)) return true;
+  if (/<[A-Za-z][A-Za-z0-9.$_-]*\b[^>]*>/.test(sample) && /<\/[A-Za-z]/.test(sample)) {
+    return true;
+  }
+  return false;
+}
+function shouldUseReactRefresh(options) {
+  const { ext, code, isDev, config } = options;
+  if (!isDev) return false;
+  if (config?.fastRefresh === false) return false;
+  if (ext === ".jsx" || ext === ".tsx") return containsJSX(code);
+  if (ext === ".js" || ext === ".ts" || ext === ".mjs" || ext === ".mts") return containsJSX(code);
+  return false;
+}
+
+// src/core/loaders/js.ts
+var import_fs17 = __toESM(require("fs"), 1);
+var import_path19 = __toESM(require("path"), 1);
+var JS_EXTENSIONS = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+function resolveIonifyDir3(rootDir) {
+  const fromEnv = process.env.IONIFY_STATE_DIR;
+  if (fromEnv && import_path19.default.isAbsolute(fromEnv)) return fromEnv;
+  return import_path19.default.join(rootDir, ".ionify");
+}
+function resolveDepsRoot(rootDir, depsHash) {
+  return import_path19.default.join(resolveIonifyDir3(rootDir), "deps", depsHash);
+}
+var featurePackIndexCache = null;
+function getFeaturePackChunkGroupId(rootDir, fileName) {
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return null;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.feature.index.json");
+  if (!import_fs17.default.existsSync(indexPath)) return null;
+  let stat;
+  try {
+    stat = import_fs17.default.statSync(indexPath);
+  } catch {
+    return null;
+  }
+  const mtimeMs = stat.mtimeMs;
+  if (!featurePackIndexCache || featurePackIndexCache.depsRoot !== depsRoot || featurePackIndexCache.depsHash !== depsHash || featurePackIndexCache.mtimeMs !== mtimeMs) {
+    try {
+      const raw = import_fs17.default.readFileSync(indexPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const mapping = /* @__PURE__ */ new Map();
+      if (parsed?.version === 1 && parsed?.depsHash === depsHash) {
+        const obj = parsed.fileNameToChunkGroupId;
+        if (obj && typeof obj === "object") {
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof k !== "string" || typeof v !== "string") continue;
+            mapping.set(k, v);
+          }
+        }
+      }
+      featurePackIndexCache = { depsRoot, depsHash, mtimeMs, mapping };
+    } catch {
+      featurePackIndexCache = { depsRoot, depsHash, mtimeMs, mapping: /* @__PURE__ */ new Map() };
+    }
+  }
+  const cg = featurePackIndexCache.mapping.get(fileName) ?? null;
+  if (!cg) return null;
+  const sharedPath = import_path19.default.join(depsRoot, `shared.${cg}.js`);
+  if (!import_fs17.default.existsSync(sharedPath)) return null;
+  return cg;
+}
+var vendorPackV2IndexCache = null;
+function vendorPackV2MemberKey2(fileName) {
+  return getCacheKey(`vp2:${fileName}`).slice(0, 12);
+}
+var vendorPackV2PackValidationCache = null;
+function validateVendorPackV2Module(depsRoot, depsHash, packFileName, expectedKey, chunkFiles) {
+  const packPath = import_path19.default.join(depsRoot, packFileName);
+  if (!import_fs17.default.existsSync(packPath)) return false;
+  for (const chunkFile of chunkFiles) {
+    if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) return false;
+    if (!import_fs17.default.existsSync(import_path19.default.join(depsRoot, chunkFile))) return false;
+  }
+  if (!vendorPackV2PackValidationCache || vendorPackV2PackValidationCache.depsRoot !== depsRoot || vendorPackV2PackValidationCache.depsHash !== depsHash) {
+    vendorPackV2PackValidationCache = { depsRoot, depsHash, byPackFile: /* @__PURE__ */ new Map() };
+  }
+  let stat;
+  try {
+    stat = import_fs17.default.statSync(packPath);
+  } catch {
+    return false;
+  }
+  const cached = vendorPackV2PackValidationCache.byPackFile.get(packFileName);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    if (!cached.ok) return false;
+    if (expectedKey && cached.key !== expectedKey) return false;
+    return true;
+  }
+  let ok = false;
+  let actualKey = null;
+  try {
+    const head = import_fs17.default.readFileSync(packPath, "utf8").slice(0, 256);
+    const match = head.match(/\/\/\s*ionify:vendor-pack-v2\s+([0-9a-fA-F]{32,})/);
+    actualKey = match?.[1] ? String(match[1]).toLowerCase() : null;
+    ok = !!actualKey && (!expectedKey || actualKey === expectedKey);
+  } catch {
+    ok = false;
+  }
+  vendorPackV2PackValidationCache.byPackFile.set(packFileName, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    ok,
+    key: actualKey
+  });
+  return ok;
+}
+function getVendorPackV2ImportFileName(rootDir, fileName) {
+  if (isCoreSingletonDepFileName(fileName)) return null;
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return null;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!import_fs17.default.existsSync(indexPath)) return null;
+  let stat;
+  try {
+    stat = import_fs17.default.statSync(indexPath);
+  } catch {
+    return null;
+  }
+  const mtimeMs = stat.mtimeMs;
+  if (!vendorPackV2IndexCache || vendorPackV2IndexCache.depsRoot !== depsRoot || vendorPackV2IndexCache.depsHash !== depsHash || vendorPackV2IndexCache.mtimeMs !== mtimeMs) {
+    try {
+      const raw = import_fs17.default.readFileSync(indexPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const fileNameToPackFile = /* @__PURE__ */ new Map();
+      const packFileToSharedFile = /* @__PURE__ */ new Map();
+      const packFileToKey = /* @__PURE__ */ new Map();
+      const packFileToChunkFiles = /* @__PURE__ */ new Map();
+      if (parsed?.version === 1 && parsed?.depsHash === depsHash) {
+        const sharedObj = parsed.packFileToSharedFile;
+        if (sharedObj && typeof sharedObj === "object") {
+          for (const [packFile, sharedFile] of Object.entries(sharedObj)) {
+            if (typeof packFile !== "string" || typeof sharedFile !== "string") continue;
+            if (!packFile.endsWith(".js") || !sharedFile.endsWith(".js")) continue;
+            packFileToSharedFile.set(packFile, sharedFile);
+          }
+        }
+        const keyObj = parsed.packFileToKey;
+        if (keyObj && typeof keyObj === "object") {
+          for (const [packFile, key] of Object.entries(keyObj)) {
+            if (typeof packFile !== "string" || typeof key !== "string") continue;
+            if (!packFile.endsWith(".js")) continue;
+            const cleaned = key.trim().toLowerCase();
+            if (!/^[0-9a-f]{32,}$/.test(cleaned)) continue;
+            packFileToKey.set(packFile, cleaned);
+          }
+        }
+        const chunkObj = parsed.packFileToChunkFiles;
+        if (chunkObj && typeof chunkObj === "object") {
+          for (const [packFile, chunkFiles2] of Object.entries(chunkObj)) {
+            if (typeof packFile !== "string" || !Array.isArray(chunkFiles2)) continue;
+            if (!packFile.endsWith(".js")) continue;
+            const normalized = chunkFiles2.map((v) => typeof v === "string" ? v : "").filter(Boolean).slice().sort();
+            const unique = [];
+            for (const file of normalized) {
+              if (!file.endsWith(".js")) continue;
+              if (unique.length === 0 || unique[unique.length - 1] !== file) unique.push(file);
+            }
+            if (unique.length > 0) packFileToChunkFiles.set(packFile, unique);
+          }
+        }
+        const obj = parsed.fileNameToPackFile;
+        if (obj && typeof obj === "object") {
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof k !== "string" || typeof v !== "string") continue;
+            if (!v.endsWith(".js")) continue;
+            fileNameToPackFile.set(k, v);
+          }
+        }
+      }
+      vendorPackV2IndexCache = {
+        depsRoot,
+        depsHash,
+        mtimeMs,
+        fileNameToPackFile,
+        packFileToSharedFile,
+        packFileToKey,
+        packFileToChunkFiles
+      };
+      vendorPackV2PackValidationCache = null;
+    } catch {
+      vendorPackV2IndexCache = {
+        depsRoot,
+        depsHash,
+        mtimeMs,
+        fileNameToPackFile: /* @__PURE__ */ new Map(),
+        packFileToSharedFile: /* @__PURE__ */ new Map(),
+        packFileToKey: /* @__PURE__ */ new Map(),
+        packFileToChunkFiles: /* @__PURE__ */ new Map()
+      };
+      vendorPackV2PackValidationCache = null;
+    }
+  }
+  const packFileName = vendorPackV2IndexCache.fileNameToPackFile.get(fileName) ?? null;
+  if (!packFileName) return null;
+  const expectedKey = vendorPackV2IndexCache.packFileToKey.get(packFileName) ?? null;
+  const chunkFiles = vendorPackV2IndexCache.packFileToChunkFiles.get(packFileName) ?? (() => {
+    const shared = vendorPackV2IndexCache?.packFileToSharedFile.get(packFileName) ?? null;
+    return shared ? [shared] : [];
+  })();
+  if (chunkFiles.length === 0) return null;
+  if (!validateVendorPackV2Module(depsRoot, depsHash, packFileName, expectedKey, chunkFiles)) return null;
+  return packFileName;
+}
+function extractDepsFileNameFromUrl(url2) {
+  if (!url2.startsWith("/@deps/")) return null;
+  let rest = url2.slice("/@deps/".length);
+  const queryIndex = rest.indexOf("?");
+  const hashIndex = rest.indexOf("#");
+  const splitIndex = queryIndex === -1 ? hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
+  if (splitIndex !== -1) {
+    rest = rest.slice(0, splitIndex);
+  }
+  if (!rest.endsWith(".js")) return null;
+  return rest;
+}
+function rewriteVendorPackV2Imports(code, rootDir) {
+  const depsHash = process.env.IONIFY_DEPS_HASH;
+  if (!depsHash) return code;
+  if (!code.includes("/@deps/")) return code;
+  const depsRoot = resolveDepsRoot(rootDir, depsHash);
+  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!import_fs17.default.existsSync(indexPath)) return code;
+  let ast;
+  try {
+    ast = (0, import_core.parseSync)(code, {
+      syntax: "ecmascript",
+      jsx: true,
+      decorators: true,
+      dynamicImport: true,
+      importAssertions: true
+    });
+  } catch {
+    return code;
+  }
+  let mutated = false;
+  const body = Array.isArray(ast?.body) ? ast.body : [];
+  for (const item of body) {
+    if (!item || item.type !== "ImportDeclaration") continue;
+    const sourceValue = item.source?.value;
+    if (typeof sourceValue !== "string") continue;
+    const depFileName = extractDepsFileNameFromUrl(sourceValue);
+    if (!depFileName) continue;
+    const importFileName = getVendorPackV2ImportFileName(rootDir, depFileName);
+    if (!importFileName) continue;
+    const memberKey = vendorPackV2MemberKey2(depFileName);
+    const prefix = `__ionify_vp_${memberKey}`;
+    const newSourceValue = `/@deps/${importFileName}`;
+    const makeImportedIdent = (value, template) => ({
+      type: "Identifier",
+      span: template?.span ?? { start: 0, end: 0 },
+      ctxt: 0,
+      value,
+      optional: false
+    });
+    const specifiers = Array.isArray(item.specifiers) ? item.specifiers : [];
+    if (specifiers.length === 0) {
+      item.source.value = newSourceValue;
+      item.source.raw = JSON.stringify(newSourceValue);
+      mutated = true;
+      continue;
+    }
+    const nextSpecs = [];
+    let ok = true;
+    for (const spec of specifiers) {
+      if (!spec || typeof spec.type !== "string") {
+        ok = false;
+        break;
+      }
+      if (spec.type === "ImportDefaultSpecifier") {
+        const local = spec.local;
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__default`, local),
+          isTypeOnly: false
+        });
+        continue;
+      }
+      if (spec.type === "ImportNamespaceSpecifier") {
+        const local = spec.local;
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__ns`, local),
+          isTypeOnly: false
+        });
+        continue;
+      }
+      if (spec.type === "ImportSpecifier") {
+        const local = spec.local;
+        const imported = spec.imported ?? local;
+        const importedName = imported?.value;
+        if (typeof importedName !== "string" || importedName.length === 0) {
+          ok = false;
+          break;
+        }
+        nextSpecs.push({
+          type: "ImportSpecifier",
+          span: spec.span,
+          local,
+          imported: makeImportedIdent(`${prefix}__${importedName}`, imported ?? local),
+          isTypeOnly: false
+        });
+        continue;
+      }
+      ok = false;
+      break;
+    }
+    if (!ok) continue;
+    item.specifiers = nextSpecs;
+    item.source.value = newSourceValue;
+    item.source.raw = JSON.stringify(newSourceValue);
+    mutated = true;
+  }
+  if (!mutated) return code;
+  try {
+    const printed = (0, import_core.printSync)(ast, { minify: false });
+    return printed?.code ?? code;
+  } catch {
+    return code;
+  }
+}
+function shouldTransform(ext, filePath) {
+  if (!JS_EXTENSIONS.has(ext)) return false;
+  return true;
+}
+function computeSubpathForDep(fsPath, pkg) {
+  const computed = computeSubpathFromEntryPath(fsPath);
+  if (!computed && !import_fs17.default.existsSync(fsPath) && pkg && typeof pkg.subpath === "string") {
+    const raw = pkg.subpath;
+    const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (cleaned && cleaned !== "." && cleaned !== "index") {
+      return cleaned;
+    }
+  }
+  if (process.env.DEBUG_DEPS) {
+    console.log(`[computeSubpathForDep] fsPath: ${fsPath}`);
+    console.log(`[computeSubpathForDep] pkg.name: ${pkg?.name}, pkg.subpath: ${pkg?.subpath}`);
+    console.log(`[computeSubpathForDep] computed: "${computed}"`);
+  }
+  return computed || null;
+}
+function looksLikeCjsWrapperSource(source) {
+  const sample = source.slice(0, 16 * 1024);
+  return sample.includes("module.exports") || sample.includes("exports.") || sample.includes("Object.defineProperty(exports") || sample.includes("Object.defineProperty(module.exports") || sample.includes("require(") || sample.includes("require (");
+}
+function looksLikeEsmSource(source) {
+  const sample = source.slice(0, 16 * 1024);
+  return sample.includes("import ") || sample.includes("export ") || sample.includes("import{") || sample.includes("export{") || sample.includes("import(");
+}
+function findNearestPackageJson(filePath) {
+  let current = import_path19.default.dirname(filePath);
+  for (let i = 0; i < 25; i++) {
+    const candidate = import_path19.default.join(current, "package.json");
+    if (import_fs17.default.existsSync(candidate)) return candidate;
+    const parent = import_path19.default.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+function makeDepsProxyForFile(filePath, code, rootDir) {
+  if (!looksLikeCjsWrapperSource(code)) return null;
+  const pkgJsonPath = findNearestPackageJson(filePath);
+  if (!pkgJsonPath) return null;
+  try {
+    const pkg = JSON.parse(import_fs17.default.readFileSync(pkgJsonPath, "utf8"));
+    const fileName = registerDepEntry({
+      entryPath: filePath,
+      packageName: pkg?.name ?? "dep",
+      packageVersion: pkg?.version ?? "0.0.0",
+      // Important: include the physical subpath so stable dep ids remain correct across restarts
+      // and match the optimizer's stable id (e.g. react-refresh/runtime must include `__runtime`).
+      subpath: computeSubpathForDep(filePath, pkg)
+    }).fileName;
+    const importFileName = getVendorPackV2ImportFileName(rootDir, fileName);
+    if (importFileName) {
+      const depsHash = process.env.IONIFY_DEPS_HASH;
+      const depsRoot = depsHash ? resolveDepsRoot(rootDir, depsHash) : null;
+      const wrapperPath = depsRoot ? import_path19.default.join(depsRoot, fileName) : null;
+      let exportNames = [];
+      if (wrapperPath && import_fs17.default.existsSync(wrapperPath)) {
+        try {
+          const wrapperCode = import_fs17.default.readFileSync(wrapperPath, "utf8");
+          const names = [];
+          for (const match of wrapperCode.matchAll(
+            /export\s+\{\s*__ionify_export_[A-Za-z0-9_$]+\s+as\s+([A-Za-z0-9_$]+)\s*\}\s*;\s*/g
+          )) {
+            const name = match[1];
+            if (typeof name === "string" && name.length > 0) names.push(name);
+          }
+          exportNames = names.slice().sort().filter((v, i, arr) => i === 0 || arr[i - 1] !== v);
+        } catch {
+          exportNames = [];
+        }
+      }
+      const memberKey = vendorPackV2MemberKey2(fileName);
+      const prefix = `__ionify_vp_${memberKey}`;
+      const packUrl = `/@deps/${importFileName}`;
+      const lines = [];
+      lines.push(`import { ${prefix}__default, ${prefix}__ns } from "${packUrl}";`);
+      for (const name of exportNames) {
+        lines.push(`import { ${prefix}__${name} as ${name} } from "${packUrl}";`);
+      }
+      lines.push(`export default ${prefix}__default;`);
+      if (exportNames.length > 0) {
+        lines.push(`export { ${exportNames.join(", ")} };`);
+      }
+      lines.push("");
+      return lines.join("\n");
+    }
+    const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+    const url2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+    return `import __ionify_dep__default, * as __ionify_dep__ns from "${url2}";
+export default __ionify_dep__default;
+export * from "${url2}";
+`;
+  } catch {
+    return null;
+  }
+}
+async function swcTranspile(code, filePath, ext, reactRefresh) {
+  const isTypeScript = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts" || isTypeDeclarationPath(filePath);
+  const isTsx = ext === ".tsx";
+  const isJsx = ext === ".jsx";
+  const swcParser = isTypeScript ? {
+    syntax: "typescript",
+    tsx: isTsx,
+    decorators: true,
+    dynamicImport: true,
+    dts: false
+  } : {
+    syntax: "ecmascript",
+    jsx: isJsx,
+    decorators: true,
+    dynamicImport: true
+  };
+  const result = await (0, import_core.transform)(code, {
+    filename: runtimeTransformFilename(filePath),
+    jsc: {
+      parser: swcParser,
+      target: "es2022",
+      transform: isTsx || isJsx ? {
+        react: {
+          // Canonical base transform: keep transpiled output consistent across dev/build/test.
+          development: false,
+          runtime: "automatic",
+          ...reactRefresh ? { refresh: true } : {}
+        }
+      } : void 0
+    },
+    sourceMaps: false,
+    module: {
+      type: "es6"
+    }
+  });
+  return result.code ?? code;
+}
+function runtimeTransformFilename(filePath) {
+  if (!isTypeDeclarationPath(filePath)) return filePath;
+  return filePath.replace(/\.d\.ts$/i, ".ts").replace(/\.d\.mts$/i, ".mts").replace(/\.d\.cts$/i, ".cts");
+}
+function currentMode() {
+  const mode = (process.env.IONIFY_PARSER || "hybrid").toLowerCase();
+  if (mode === "swc") return "swc";
+  if (mode === "oxc") return "oxc";
+  return "hybrid";
+}
+var jsLoader = {
+  name: "js",
+  order: 0,
+  test: ({ ext, path: filePath }) => shouldTransform(ext, filePath),
+  transform: async ({ path: filePath, code, ext, config }) => {
+    const isNodeModules = filePath.includes("node_modules");
+    const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
+    const rootDir = config?.root ? import_path19.default.resolve(config.root) : process.cwd();
+    const stateDir = process.env.IONIFY_STATE_DIR && import_path19.default.isAbsolute(process.env.IONIFY_STATE_DIR) ? process.env.IONIFY_STATE_DIR : null;
+    const versionHash = process.env.IONIFY_CONFIG_HASH || null;
+    const casRoot = stateDir ? import_path19.default.join(stateDir, "cas") : null;
+    let output = code;
+    if (isNodeModules) {
+      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir);
+      if (depsProxy) {
+        output = depsProxy;
+      } else {
+        const shouldAttemptBundle = ext === ".cjs" || looksLikeCjsWrapperSource(code) || !looksLikeEsmSource(code) && ext !== ".mjs";
+        if (shouldAttemptBundle) {
+          const bundled = tryBundleNodeModule(filePath, code);
+          if (bundled) {
+            output = bundled;
+          } else {
+            output = code;
+          }
+        } else {
+          output = code;
+        }
+      }
+    } else {
+      const isDev = process.env.NODE_ENV !== "production";
+      const reactRefresh = shouldUseReactRefresh({ ext, code, isDev, config });
+      const mode = currentMode();
+      const runtimeFilename = runtimeTransformFilename(filePath);
+      const isTypeScriptRuntime = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts" || isTypeDeclarationPath(filePath);
+      const nativeResult = tryNativeTransform(mode, code, {
+        filename: runtimeFilename,
+        jsx: ext === ".jsx" || ext === ".tsx",
+        typescript: isTypeScriptRuntime,
+        react_refresh: false
+      });
+      const transpiled = nativeResult ? nativeResult.code ?? code : await swcTranspile(code, filePath, ext, false);
+      if (casRoot && versionHash) {
+        try {
+          const baseHash = getCacheKey(code);
+          const baseDir = getCasArtifactPath(casRoot, versionHash, baseHash);
+          const baseFile = import_path19.default.join(baseDir, "transformed.js");
+          if (!import_fs17.default.existsSync(baseFile)) {
+            import_fs17.default.mkdirSync(baseDir, { recursive: true });
+            const tmp = `${baseFile}.tmp-${process.pid}`;
+            import_fs17.default.writeFileSync(tmp, transpiled, "utf8");
+            import_fs17.default.renameSync(tmp, baseFile);
+          }
+        } catch {
+        }
+      }
+      output = transpiled;
+      if (isDev && reactRefresh) {
+        const isEntry = isEntryModule(filePath, config ?? void 0);
+        if (process.env.IONIFY_REFRESH_DEBUG === "1") {
+          console.log(`[Refresh] ${filePath} \u2192 isEntry=${isEntry}, ext=${ext}`);
+        }
+        const result = await instrumentReactRefresh({
+          code: output,
+          filePath,
+          ext,
+          isDev,
+          isEntry
+        });
+        if (process.env.IONIFY_REFRESH_DEBUG === "1") {
+          console.log(
+            `[Refresh] instrument=${result.shouldInstrument} ${filePath} \u2192 isEntry=${isEntry}`
+          );
+        }
+        if (result.shouldInstrument) {
+          output = result.prologue + output + result.registrations + result.epilogue;
+        } else {
+          output += `
+if (import.meta.hot) import.meta.hot.accept();
+`;
+        }
+      } else if (isDev) {
+        output += `
+if (import.meta.hot) {
+  import.meta.hot.accept();
+}
+`;
+      }
+    }
+    await import_es_module_lexer.init;
+    const [imports] = (0, import_es_module_lexer.parse)(output);
+    if (rewriteDebug && ext === ".mjs" && isNodeModules) {
+      console.warn(`[Ionify][rewrite] scanning ${imports.length} import(s) in ${filePath}`);
+    }
+    if (imports.length) {
+      let rewritten = "";
+      let lastIndex = 0;
+      let mutated = false;
+      for (const record of imports) {
+        if (!record.n) continue;
+        const spec = record.n;
+        if (spec.startsWith("http://") || spec.startsWith("https://") || spec.startsWith(MODULE_PREFIX)) {
+          continue;
+        }
+        let pathPart = spec;
+        let suffix = "";
+        const queryIndex = spec.indexOf("?");
+        const hashIndex = spec.indexOf("#");
+        const splitIndex = queryIndex === -1 ? hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
+        if (splitIndex !== -1) {
+          pathPart = spec.slice(0, splitIndex);
+          suffix = spec.slice(splitIndex);
+        }
+        const isBare = !pathPart.startsWith(".") && !pathPart.startsWith("/") && !pathPart.startsWith("http://") && !pathPart.startsWith("https://");
+        if (isBare && native?.resolveModule) {
+          const resolvedNative = native.resolveModule(pathPart, filePath);
+          const kind = resolvedNative?.kind;
+          const fsPath = resolvedNative?.fsPath ?? resolvedNative?.fs_path ?? null;
+          if (kind === "PkgCjs" && fsPath) {
+            const pkg = resolvedNative?.pkg;
+            const fileName = registerDepEntry({
+              entryPath: fsPath,
+              packageName: pkg?.name ?? pathPart,
+              packageVersion: pkg?.version ?? "0.0.0",
+              subpath: computeSubpathForDep(fsPath, pkg)
+            }).fileName;
+            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+            const replacement2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+            if (!mutated) {
+              mutated = true;
+            }
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement2;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement2;
+              lastIndex = record.e;
+            }
+            continue;
+          }
+          if (kind === "PkgEsm" && fsPath) {
+            try {
+              const resolvedCode = import_fs17.default.readFileSync(fsPath, "utf8");
+              if (looksLikeCjsWrapperSource(resolvedCode)) {
+                const pkg2 = resolvedNative?.pkg;
+                const fileName2 = registerDepEntry({
+                  entryPath: fsPath,
+                  packageName: pkg2?.name ?? pathPart,
+                  packageVersion: pkg2?.version ?? "0.0.0",
+                  subpath: computeSubpathForDep(fsPath, pkg2)
+                }).fileName;
+                const cg2 = getFeaturePackChunkGroupId(rootDir, fileName2);
+                const replacement3 = cg2 ? `/@deps/${fileName2}?cg=${encodeURIComponent(cg2)}` : `/@deps/${fileName2}`;
+                if (!mutated) mutated = true;
+                if (record.t === 2) {
+                  rewritten += output.slice(lastIndex, record.s + 1);
+                  rewritten += replacement3;
+                  rewritten += output[record.e - 1];
+                  lastIndex = record.e;
+                } else {
+                  rewritten += output.slice(lastIndex, record.s);
+                  rewritten += replacement3;
+                  lastIndex = record.e;
+                }
+                continue;
+              }
+            } catch {
+            }
+            const pkg = resolvedNative?.pkg;
+            const fileName = registerDepEntry({
+              entryPath: fsPath,
+              packageName: pkg?.name ?? pathPart,
+              packageVersion: pkg?.version ?? "0.0.0",
+              subpath: computeSubpathForDep(fsPath, pkg)
+            }).fileName;
+            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
+            const replacement2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+            if (!mutated) mutated = true;
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement2;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement2;
+              lastIndex = record.e;
+            }
+            continue;
+          }
+          if (kind === "Builtin" || kind === "Virtual") {
+            continue;
+          }
+        }
+        const resolved = resolveImport(pathPart, filePath);
+        if (!resolved) {
+          if (rewriteDebug) {
+            console.warn(
+              `[Ionify][rewrite] FAILED to resolve '${pathPart}' from '${filePath}'`
+            );
+          }
+          continue;
+        }
+        const resolvedExt = resolved.slice(resolved.lastIndexOf("."));
+        let augmentedSuffix = suffix;
+        if (isCssLikeExt(resolvedExt) && !suffix) {
+          augmentedSuffix = "?inline";
+        }
+        const assetExts = [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".gif",
+          ".svg",
+          ".ico",
+          ".webp",
+          ".avif",
+          ".woff",
+          ".woff2",
+          ".ttf",
+          ".otf",
+          ".eot"
+        ];
+        if (assetExts.includes(resolvedExt) && !suffix) {
+          augmentedSuffix = "?import";
+        }
+        const replacementPath = publicPathForFile(rootDir, resolved);
+        const replacement = replacementPath + augmentedSuffix;
+        if (replacement === spec) continue;
+        if (!mutated) {
+          mutated = true;
+        }
+        if (record.t === 2) {
+          rewritten += output.slice(lastIndex, record.s + 1);
+          rewritten += replacement;
+          rewritten += output[record.e - 1];
+          lastIndex = record.e;
+        } else {
+          rewritten += output.slice(lastIndex, record.s);
+          rewritten += replacement;
+          lastIndex = record.e;
+        }
+      }
+      if (mutated) {
+        rewritten += output.slice(lastIndex);
+        output = rewritten;
+      } else if (rewriteDebug && isNodeModules) {
+        const sample = imports.slice(0, 8).map((r) => r.n).filter(Boolean).join(", ");
+        console.warn(
+          `[Ionify][rewrite] no rewrites applied for ${filePath}; first imports: ${sample}`
+        );
+      }
+    }
+    const vendorPacks = config?.optimizeDeps?.vendorPacks;
+    const vendorPackV2Enabled = vendorPacks === "auto" || !!vendorPacks && typeof vendorPacks === "object";
+    if (vendorPackV2Enabled) {
+      output = rewriteVendorPackV2Imports(output, rootDir);
+    }
+    return { code: output };
+  }
+};
+
+// src/core/loaders/registry.ts
+var registry2 = /* @__PURE__ */ new Set();
+function registerLoader(registration) {
+  registry2.add(registration);
+}
+async function applyRegisteredLoaders(engine, config) {
+  for (const registration of registry2) {
+    await registration(engine, config ?? null);
+  }
+  if (config?.plugins) {
+    for (const plugin of config.plugins) {
+      if (plugin.loaders) {
+        for (const loader of plugin.loaders) {
+          engine.useLoader(loader);
+        }
+      }
+      if (plugin.setup) {
+        const context = {
+          config: config ?? null,
+          registerLoader: (loader) => engine.useLoader(loader)
+        };
+        await plugin.setup(context);
+      }
+    }
+  }
+  if (config?.loaders) {
+    for (const loader of config.loaders) {
+      engine.useLoader(loader);
+    }
+  }
+}
+registerLoader((engine) => {
+  engine.useLoader(jsLoader);
+});
+
+// src/cli/commands/dev.ts
+init_config();
+init_lockfile();
+init_minifier();
+init_env();
+init_treeshake();
+init_scope_hoist();
+init_parser();
+init_public_path();
+init_cas();
+var import_os2 = __toESM(require("os"), 1);
+init_workspace();
+init_native();
+init_registry();
+init_usage();
+init_reactRefreshInstrumentation();
+init_define();
+
+// src/core/http-cache.ts
+init_cjs_shims();
+init_cache();
+function normalizeEtag(tag) {
+  return tag.trim().replace(/^W\//, "");
+}
+function isNotModified(req, etag) {
+  const header = req.headers["if-none-match"];
+  const value = Array.isArray(header) ? header.join(",") : header;
+  if (!value) return false;
+  if (value.trim() === "*") return true;
+  const expected = normalizeEtag(etag);
+  return value.split(",").map((t) => t.trim()).filter(Boolean).some((t) => normalizeEtag(t) === expected);
+}
+function weakEtagFromStat(prefix, stat) {
+  const mtime = Math.floor(stat.mtimeMs);
+  return `W/"${prefix}-${stat.size}-${mtime}"`;
+}
+function weakEtagFromContent(prefix, content) {
+  const size = typeof content === "string" ? Buffer.byteLength(content, "utf8") : Buffer.byteLength(content);
+  const hash = getCacheKey(content).slice(0, 16);
+  return `W/"${prefix}-${size}-${hash}"`;
+}
+
+// src/cli/commands/dev.ts
+var import_crypto8 = __toESM(require("crypto"), 1);
+var import_zlib = __toESM(require("zlib"), 1);
+init_deps_hash();
+init_federation();
+init_module_id();
+var IONIFY_CSS_JS_MARKER = "// ionify:css";
+var IONIFY_VENDOR_PACK_MARKER = "// ionify:vendor-pack";
+var DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
+var VENDOR_PACK_V2_REWRITE_POLICY_VERSION = 2;
+var __filename2 = (0, import_url7.fileURLToPath)(importMetaUrl);
+var __dirname = import_path25.default.dirname(__filename2);
+var CLIENT_DIR = import_path25.default.resolve(__dirname, "../client");
+var CLIENT_FALLBACK_DIR = import_path25.default.resolve(process.cwd(), "src/client");
+var DEPS_PREFIX2 = "/@deps/";
+function syncFederationGraphNodes(graph, nodes) {
+  const nextIds = new Set(nodes.map((node) => node.id));
+  for (const existingId of graph.listNodeIdsByPrefix(FEDERATION_GRAPH_PREFIX)) {
+    if (!nextIds.has(existingId)) graph.removeNodeById(existingId);
+  }
+  for (const node of nodes) {
+    graph.recordNodeById(node.id, node.hash, node.deps, node.dynamicDeps ?? [], node.kind);
+  }
+}
+function resolvePublicDir(rootDir, value) {
+  if (value === false) return null;
+  const dir = typeof value === "string" && value.trim().length > 0 ? value.trim() : "public";
+  return import_path25.default.isAbsolute(dir) ? dir : import_path25.default.resolve(rootDir, dir);
+}
+function decodePublicDirPath(publicDirAbs, urlPath) {
+  if (!urlPath.startsWith("/")) return null;
+  const normalizedRoot = import_path25.default.resolve(publicDirAbs);
+  const joined = import_path25.default.resolve(normalizedRoot, "." + urlPath);
+  if (!joined.startsWith(normalizedRoot + import_path25.default.sep) && joined !== normalizedRoot) return null;
+  if (isForbiddenFsPath(joined)) return null;
+  return joined;
+}
+function shouldTryPublicDir(reqPath) {
+  if (!reqPath || reqPath === "/" || reqPath === "/index.html") return false;
+  if (reqPath.startsWith(DEPS_PREFIX2)) return false;
+  if (reqPath.startsWith("/__ionify")) return false;
+  return true;
+}
+function resolveSpaFallbackPolicy(rootDir, rawValue) {
+  const objectValue = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? rawValue : null;
+  const rawEnabled = objectValue ? objectValue.enabled : rawValue;
+  const mode = rawEnabled === void 0 ? "auto" : rawEnabled === true || rawEnabled === false ? rawEnabled : rawEnabled === "auto" ? "auto" : "auto";
+  const entryRaw = objectValue && typeof objectValue.entry === "string" && objectValue.entry.trim().length > 0 ? objectValue.entry.trim() : "/index.html";
+  const entryFilePath = entryRaw.startsWith("/") ? import_path25.default.join(rootDir, entryRaw) : import_path25.default.resolve(rootDir, entryRaw);
+  const disableDotRule = objectValue?.disableDotRule === true;
+  const entryExists = import_fs23.default.existsSync(entryFilePath) && import_fs23.default.statSync(entryFilePath).isFile();
+  const enabled = mode === "auto" ? entryExists : mode === true ? entryExists : false;
+  return {
+    enabled,
+    entryFilePath: enabled ? entryFilePath : null,
+    entryUrlPath: enabled ? normalizeUrlFromFs(rootDir, entryFilePath) : null,
+    disableDotRule
+  };
+}
+function headerValue(value) {
+  if (Array.isArray(value)) return value.join(", ");
+  return typeof value === "string" ? value : "";
+}
+function isHtmlNavigationRequest(req, reqPath, query, policy) {
+  if (!policy.enabled || !policy.entryFilePath) return false;
+  const method = (req.method ?? "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  if (!reqPath.startsWith("/")) return false;
+  if (reqPath.startsWith(DEPS_PREFIX2) || reqPath.startsWith("/__ionify")) return false;
+  if ("import" in query || "inline" in query || "raw" in query || "module" in query || "url" in query) {
+    return false;
+  }
+  const baseName = import_path25.default.posix.basename(reqPath);
+  if (!policy.disableDotRule && baseName.includes(".")) {
+    return false;
+  }
+  const secFetchDest = headerValue(req.headers["sec-fetch-dest"]).toLowerCase();
+  if (secFetchDest === "document") return true;
+  const secFetchMode = headerValue(req.headers["sec-fetch-mode"]).toLowerCase();
+  if (secFetchMode === "navigate") return true;
+  const accept = headerValue(req.headers.accept).toLowerCase();
+  return accept.includes("text/html");
+}
+function normalizeGraphDepForClient(rootDir, dep) {
+  return dep.startsWith("http://") || dep.startsWith("https://") ? dep : import_path25.default.isAbsolute(dep) ? normalizeUrlFromFs(rootDir, dep) : dep;
+}
+function rewriteCssImportSpecifiers(cssText, filePath, rootDir, moduleResolver) {
+  const importRe = /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
+  let rewritten = "";
+  let lastIndex = 0;
+  let mutated = false;
+  let match;
+  while (match = importRe.exec(cssText)) {
+    const spec = (match[1] || match[2] || match[3] || "").trim();
+    if (!spec || /^(data:|https?:|\/\/)/i.test(spec) || spec.startsWith("/")) {
+      continue;
+    }
+    const resolved = moduleResolver.resolve(spec, filePath);
+    if (!resolved) {
+      continue;
+    }
+    const replacement = normalizeUrlFromFs(rootDir, resolved);
+    if (!replacement || replacement === spec) {
+      continue;
+    }
+    mutated = true;
+    rewritten += cssText.slice(lastIndex, match.index);
+    rewritten += match[0].replace(spec, replacement);
+    lastIndex = match.index + match[0].length;
+  }
+  if (!mutated) {
+    return cssText;
+  }
+  rewritten += cssText.slice(lastIndex);
+  return rewritten;
+}
+function readClientAssetFile(fileName) {
+  const primary = import_path25.default.join(CLIENT_DIR, fileName);
+  if (import_fs23.default.existsSync(primary)) {
+    return { filePath: primary, code: import_fs23.default.readFileSync(primary, "utf8") };
+  }
+  const fallback = import_path25.default.join(CLIENT_FALLBACK_DIR, fileName);
+  if (import_fs23.default.existsSync(fallback)) {
+    return { filePath: fallback, code: import_fs23.default.readFileSync(fallback, "utf8") };
+  }
+  throw new Error(`Missing Ionify client asset: ${fileName}`);
+}
+function readClientAsset(fileName) {
+  return readClientAssetFile(fileName).code;
+}
+function resolveHttpsMaterial(rootDir, rawValue) {
+  if (typeof rawValue !== "string") return void 0;
+  const trimmed = rawValue.trim();
+  if (!trimmed) return void 0;
+  if (trimmed.includes("BEGIN ")) return trimmed;
+  const candidate = import_path25.default.isAbsolute(trimmed) ? trimmed : import_path25.default.resolve(rootDir, trimmed);
+  if (!import_fs23.default.existsSync(candidate)) return void 0;
+  return import_fs23.default.readFileSync(candidate);
+}
+function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
+  if (!httpsConfig) return null;
+  if (typeof httpsConfig === "object" && httpsConfig !== null) {
+    const configObject = httpsConfig;
+    const key = resolveHttpsMaterial(rootDir, configObject.key);
+    const cert = resolveHttpsMaterial(rootDir, configObject.cert);
+    if (key && cert) {
+      return {
+        ...configObject,
+        key,
+        cert
+      };
+    }
+  }
+  const certDir = import_path25.default.join(ionifyDir, "certs");
+  const keyPath = import_path25.default.join(certDir, "dev-server.key");
+  const certPath = import_path25.default.join(certDir, "dev-server.crt");
+  if (!import_fs23.default.existsSync(keyPath) || !import_fs23.default.existsSync(certPath)) {
+    import_fs23.default.mkdirSync(certDir, { recursive: true });
+    const generated = import_selfsigned.default.generate(
+      [
+        { name: "commonName", value: "localhost" },
+        { name: "organizationName", value: "Ionify Dev Server" }
+      ],
+      {
+        algorithm: "sha256",
+        days: 30,
+        keySize: 2048,
+        extensions: [
+          {
+            name: "subjectAltName",
+            altNames: [
+              { type: 2, value: "localhost" },
+              { type: 2, value: "127.0.0.1" },
+              { type: 7, ip: "127.0.0.1" }
+            ]
+          }
+        ]
+      }
+    );
+    import_fs23.default.writeFileSync(keyPath, generated.private, "utf8");
+    import_fs23.default.writeFileSync(certPath, generated.cert, "utf8");
+  }
+  return {
+    key: import_fs23.default.readFileSync(keyPath),
+    cert: import_fs23.default.readFileSync(certPath)
+  };
+}
+function guessContentType(filePath) {
+  const ext = import_path25.default.extname(filePath);
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (isCssLikeExt(ext)) return "text/css; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  if ([".mjs", ".js", ".ts", ".tsx", ".jsx", ".cjs", ".mts", ".cts"].includes(ext))
+    return "application/javascript; charset=utf-8";
+  if ([".wasm"].includes(ext))
+    return "application/wasm";
+  if ([".map"].includes(ext))
+    return "application/json; charset=utf-8";
+  return "text/plain; charset=utf-8";
+}
+function mergeVaryHeader(existing, next) {
+  const parts = /* @__PURE__ */ new Set();
+  const add = (value) => {
+    value.split(",").map((v) => v.trim()).filter(Boolean).forEach((v) => parts.add(v));
+  };
+  if (typeof existing === "string") add(existing);
+  else if (Array.isArray(existing)) existing.forEach(add);
+  add(next);
+  return Array.from(parts).join(", ");
+}
+function shouldCompressContentType(contentType) {
+  const ct = contentType.toLowerCase();
+  return ct.startsWith("text/") || ct.includes("javascript") || ct.includes("json") || ct.includes("xml") || ct.includes("svg");
+}
+function selectCompressionEncoding(req) {
+  const header = req.headers["accept-encoding"];
+  const value = Array.isArray(header) ? header.join(",") : header;
+  if (!value) return null;
+  const enc = value.toLowerCase();
+  if (enc.includes("gzip")) return "gzip";
+  return null;
+}
+function selectPrecompressedVariant(req, baseFilePath) {
+  const header = req.headers["accept-encoding"];
+  const value = Array.isArray(header) ? header.join(",") : header;
+  if (!value) return null;
+  const enc = value.toLowerCase();
+  if (enc.includes("br")) {
+    const brPath = `${baseFilePath}.br`;
+    if (import_fs23.default.existsSync(brPath)) return { filePath: brPath, encoding: "br" };
+  }
+  if (enc.includes("gzip")) {
+    const gzPath = `${baseFilePath}.gz`;
+    if (import_fs23.default.existsSync(gzPath)) return { filePath: gzPath, encoding: "gzip" };
+  }
+  return null;
+}
+function sendPrecompressedFile(req, res, status, contentType, variant, opts) {
+  const stat = import_fs23.default.statSync(variant.filePath);
+  const etag = weakEtagFromStat(opts.etagPrefix, stat);
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", opts.cacheControl);
+  res.setHeader("Vary", mergeVaryHeader(res.getHeader("Vary"), "Accept-Encoding"));
+  res.setHeader("Content-Encoding", variant.encoding);
+  res.setHeader("ETag", etag);
+  if (isNotModified(req, etag)) {
+    res.statusCode = 304;
+    res.end();
+    return;
+  }
+  res.statusCode = status;
+  res.end(import_fs23.default.readFileSync(variant.filePath));
+}
+function looksLikeIonifyCssJsModule(body) {
+  const head = body.subarray(0, 96).toString("utf8");
+  return head.trimStart().startsWith(IONIFY_CSS_JS_MARKER);
+}
+function computeDepsStampHash(depsAbs) {
+  if (!depsAbs.length) return "0";
+  const entries = [];
+  for (const dep of depsAbs) {
+    const abs = import_path25.default.resolve(dep);
+    try {
+      const stat = import_fs23.default.statSync(abs);
+      entries.push(`${abs}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+    } catch {
+      entries.push(`${abs}:missing`);
+    }
+  }
+  entries.sort();
+  return getCacheKey(entries.join("|"));
+}
+function sendBuffer(req, res, status, contentType, body, opts) {
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", opts?.cacheControl ?? "no-cache");
+  const etag = opts?.etag;
+  if (etag) {
+    res.setHeader("ETag", etag);
+    if (isNotModified(req, etag)) {
+      res.statusCode = 304;
+      res.end();
+      return;
+    }
+  }
+  const encoding = body.length >= 1024 && shouldCompressContentType(contentType) ? selectCompressionEncoding(req) : null;
+  if (encoding === "gzip") {
+    res.setHeader("Vary", mergeVaryHeader(res.getHeader("Vary"), "Accept-Encoding"));
+    res.setHeader("Content-Encoding", "gzip");
+    res.statusCode = status;
+    res.end(import_zlib.default.gzipSync(body, { level: 1 }));
+    return;
+  }
+  res.statusCode = status;
+  res.end(body);
+}
+function readProjectPackageJson2(rootDir) {
+  const pkgPath = import_path25.default.join(rootDir, "package.json");
+  if (!import_fs23.default.existsSync(pkgPath)) return null;
+  try {
+    return JSON.parse(import_fs23.default.readFileSync(pkgPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function detectVendorSpecifiers(pkgJson) {
+  if (!pkgJson || typeof pkgJson !== "object") return [];
+  const deps = {
+    ...pkgJson.dependencies || {},
+    ...pkgJson.devDependencies || {},
+    ...pkgJson.peerDependencies || {}
+  };
+  const has = (name) => Object.prototype.hasOwnProperty.call(deps, name);
+  if (has("react") || has("react-dom")) {
+    return [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "scheduler",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+      "react-refresh"
+    ];
+  }
+  if (has("vue")) {
+    return ["vue", "@vue/runtime-dom", "@vue/runtime-core"];
+  }
+  if (has("svelte")) {
+    return ["svelte", "svelte/internal"];
+  }
+  return [];
+}
+function computeSubpathForDep2(fsPath, pkg) {
+  const computed = computeSubpathFromEntryPath(fsPath);
+  if (computed) return computed;
+  if (import_fs23.default.existsSync(fsPath)) return null;
+  const raw = pkg?.subpath;
+  if (typeof raw === "string") {
+    const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (cleaned && cleaned !== "." && cleaned !== "index") {
+      return cleaned;
+    }
+  }
+  return null;
+}
+function resolveVendorDeps(rootDir, specifiers) {
+  if (!native?.resolveModule) return [];
+  const seen = /* @__PURE__ */ new Set();
+  const resolved = [];
+  for (const spec of specifiers) {
+    try {
+      const r = native.resolveModule(spec, rootDir);
+      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      const pkg = r?.pkg ?? null;
+      const packageName = typeof pkg?.name === "string" ? pkg.name : spec;
+      const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+      const subpath = computeSubpathForDep2(fsPath, pkg);
+      const entry = registerDepEntry({
+        entryPath: fsPath,
+        packageName,
+        packageVersion,
+        subpath
+      });
+      if (seen.has(entry.fileName)) continue;
+      seen.add(entry.fileName);
+      resolved.push({
+        specifier: spec,
+        entryPath: fsPath,
+        fileName: entry.fileName,
+        packageLabel: formatDepLabel(packageName, subpath)
+      });
+    } catch {
+    }
+  }
+  return resolved;
+}
+function injectModulePreload(html, href) {
+  const tag = `<link rel="modulepreload" href="${href}">`;
+  if (html.includes(tag)) return html;
+  const headCloseMatch = html.match(/<\/head>/i);
+  if (headCloseMatch?.index !== void 0) {
+    const idx = headCloseMatch.index;
+    return `${html.slice(0, idx)}${tag}
+${html.slice(idx)}`;
+  }
+  const headOpenMatch = html.match(/<head[^>]*>/i);
+  if (headOpenMatch?.index !== void 0) {
+    const idx = headOpenMatch.index + headOpenMatch[0].length;
+    return `${html.slice(0, idx)}
+${tag}${html.slice(idx)}`;
+  }
+  return `${tag}
+${html}`;
+}
+function injectInlineScript(html, script) {
+  const tag = `<script>${script}</script>`;
+  if (html.includes(tag)) return html;
+  const headCloseMatch = html.match(/<\/head>/i);
+  if (headCloseMatch?.index !== void 0) {
+    const idx = headCloseMatch.index;
+    return `${html.slice(0, idx)}${tag}
+${html.slice(idx)}`;
+  }
+  const bodyOpenMatch = html.match(/<body[^>]*>/i);
+  if (bodyOpenMatch?.index !== void 0) {
+    const idx = bodyOpenMatch.index + bodyOpenMatch[0].length;
+    return `${html.slice(0, idx)}
+${tag}${html.slice(idx)}`;
+  }
+  return `${tag}
+${html}`;
+}
+function injectStartupEvaluationMarker(code) {
+  const marker = "globalThis.__IONIFY_STARTUP__?.markEvaluated?.(import.meta.url);";
+  return code.startsWith(marker) ? code : `${marker}
+${code}`;
+}
+function instrumentJavaScriptBuffer(buffer, enabled) {
+  if (!enabled) return buffer;
+  return Buffer.from(injectStartupEvaluationMarker(buffer.toString("utf8")));
+}
+function extractBarePackageRoot(specifier) {
+  const raw = String(specifier || "").trim();
+  if (!raw) return null;
+  if (raw.startsWith(".") || raw.startsWith("/") || raw.startsWith("http://") || raw.startsWith("https://")) {
+    return null;
+  }
+  if (raw.startsWith("@")) {
+    const parts = raw.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : raw;
+  }
+  const slashIndex = raw.indexOf("/");
+  return slashIndex === -1 ? raw : raw.slice(0, slashIndex);
+}
+function extractPackageRootFromLabel(label) {
+  return extractBarePackageRoot(label);
+}
+function buildRouteHintClientKey(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const remoteAddress = typeof forwardedValue === "string" && forwardedValue.trim().length > 0 ? forwardedValue.split(",")[0]?.trim() ?? "" : req.socket.remoteAddress ?? "";
+  const userAgent = Array.isArray(req.headers["user-agent"]) ? req.headers["user-agent"][0] ?? "" : req.headers["user-agent"] ?? "";
+  const key = `${remoteAddress}::${userAgent}`.trim();
+  return key.length > 2 ? key : null;
+}
+function pruneDepsCache(ionifyDir, depsHash) {
+  const depsRoot = import_path25.default.join(ionifyDir, "deps");
+  if (!import_fs23.default.existsSync(depsRoot)) return;
+  const entries = import_fs23.default.readdirSync(depsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+    const fullPath = import_path25.default.join(depsRoot, entry.name);
+    const stat = import_fs23.default.statSync(fullPath);
+    return { name: entry.name, path: fullPath, mtimeMs: stat.mtimeMs };
+  }).sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const keep = /* @__PURE__ */ new Set();
+  keep.add(depsHash);
+  for (const entry of entries.slice(0, 2)) {
+    keep.add(entry.name);
+  }
+  for (const entry of entries) {
+    if (!keep.has(entry.name)) {
+      import_fs23.default.rmSync(entry.path, { recursive: true, force: true });
+    }
+  }
+}
+function loadDepsManifestIndex(depsRoot) {
+  const manifestPath = import_path25.default.join(depsRoot, "manifest.json");
+  if (!import_fs23.default.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
+  try {
+    const raw = import_fs23.default.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries = parsed?.entries ?? {};
+    const map = /* @__PURE__ */ new Map();
+    for (const [entryPath, entry] of Object.entries(entries)) {
+      if (!entry?.outFile) continue;
+      const artifactHash = typeof entry.artifactHash === "string" && entry.artifactHash.length > 0 ? entry.artifactHash : typeof entry.artifact_hash === "string" && entry.artifact_hash.length > 0 ? entry.artifact_hash : null;
+      const sizeBytes = typeof entry.sizeBytes === "number" ? entry.sizeBytes : typeof entry.size_bytes === "number" ? entry.size_bytes : 0;
+      const moduleCount = typeof entry.moduleCount === "number" ? entry.moduleCount : typeof entry.module_count === "number" ? entry.module_count : 0;
+      const edgeCount = typeof entry.edgeCount === "number" ? entry.edgeCount : typeof entry.edge_count === "number" ? entry.edge_count : 0;
+      const externalCount = typeof entry.externalCount === "number" ? entry.externalCount : typeof entry.external_count === "number" ? entry.external_count : 0;
+      const chunkGroup = typeof entry.chunkGroup === "string" ? entry.chunkGroup : typeof entry.chunk_group === "string" ? entry.chunk_group : null;
+      const outputVersion = typeof entry.outputVersion === "number" ? entry.outputVersion : typeof entry.output_version === "number" ? entry.output_version : 0;
+      const chunkFilesRaw = Array.isArray(entry.chunkFiles) ? entry.chunkFiles : Array.isArray(entry.chunk_files) ? entry.chunk_files : [];
+      const chunkFiles = (Array.isArray(chunkFilesRaw) ? chunkFilesRaw : []).map((v) => typeof v === "string" ? v : null).filter((v) => typeof v === "string" && v.length > 0);
+      map.set(entry.outFile, {
+        entryPath,
+        artifactHash,
+        packageLabel: entry.package || "unknown",
+        hasSourcemap: entry.hasSourcemap === true,
+        sizeBytes,
+        moduleCount,
+        edgeCount,
+        externalCount,
+        outputVersion,
+        chunkGroup,
+        chunkFiles
+      });
+    }
+    return map;
+  } catch {
+    return /* @__PURE__ */ new Map();
+  }
+}
+function readJsonFile4(filePath) {
+  if (!import_fs23.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs23.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile4(filePath, data) {
+  try {
+    import_fs23.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  } catch {
+  }
+}
+function loadDepRequestCounts(filePath) {
+  const raw = readJsonFile4(filePath);
+  if (!raw || typeof raw !== "object") return /* @__PURE__ */ new Map();
+  const map = /* @__PURE__ */ new Map();
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      map.set(key, value);
+    }
+  }
+  return map;
+}
+function saveDepRequestCounts(filePath, counts) {
+  const obj = {};
+  const keys = Array.from(counts.keys()).sort();
+  for (const key of keys) {
+    const value = counts.get(key) ?? 0;
+    if (value > 0) obj[key] = value;
+  }
+  writeJsonFile4(filePath, obj);
+}
+function parseStableDepFileName(fileName) {
+  if (typeof fileName !== "string" || !fileName.endsWith(".js")) return null;
+  const base = fileName.slice(0, -".js".length);
+  const at = base.indexOf("@");
+  if (at <= 0) return null;
+  const sanitizedName = base.slice(0, at);
+  const rest = base.slice(at + 1);
+  const underscore = rest.lastIndexOf("_");
+  if (underscore <= 0) return null;
+  const versionAndSubpath = rest.slice(0, underscore);
+  const subSep = versionAndSubpath.indexOf("__");
+  const version = subSep === -1 ? versionAndSubpath : versionAndSubpath.slice(0, subSep);
+  const subpathNorm = subSep === -1 ? "" : versionAndSubpath.slice(subSep + 2);
+  const subpath = subpathNorm ? subpathNorm.split("__").join("/") : null;
+  if (!sanitizedName || !version) return null;
+  return { sanitizedName, version, subpath };
+}
+function recoverDepEntryFromStableFileName(fileName, rootDir) {
+  if (!native?.resolveModule) return null;
+  const parsed = parseStableDepFileName(fileName);
+  if (!parsed) return null;
+  const suffix = parsed.subpath ? `/${parsed.subpath}` : "";
+  const bases = [parsed.sanitizedName];
+  if (parsed.sanitizedName.includes("__")) {
+    bases.push(`@${parsed.sanitizedName.replace("__", "/")}`);
+    bases.push(`@${parsed.sanitizedName.split("__").join("/")}`);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const base of bases) {
+    const spec = `${base}${suffix}`;
+    if (seen.has(spec)) continue;
+    seen.add(spec);
+    try {
+      const r = native.resolveModule(spec, rootDir);
+      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+      if (!fsPath || typeof fsPath !== "string") continue;
+      const pkg = r?.pkg ?? null;
+      const packageName = typeof pkg?.name === "string" ? pkg.name : base.replace(/^@/, "");
+      const packageVersion = typeof pkg?.version === "string" ? pkg.version : parsed.version;
+      const entry = registerDepEntry({
+        entryPath: fsPath,
+        packageName,
+        packageVersion,
+        subpath: computeSubpathForDep2(fsPath, pkg)
+      });
+      if (entry.fileName === fileName) {
+        return entry;
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function buildVendorPackPlan(options) {
+  const {
+    depsHash,
+    mode,
+    vendorDeps,
+    manifestIndex,
+    requestCounts,
+    maxBytes,
+    maxMembers
+  } = options;
+  const vendorFileNames = new Set(vendorDeps.map((d) => d.fileName));
+  const candidates = [];
+  for (const [fileName, entry] of manifestIndex.entries()) {
+    if (vendorFileNames.has(fileName)) continue;
+    if (!entry?.entryPath) continue;
+    const requestCount = requestCounts.get(fileName) ?? 0;
+    const sizeBytes = entry.sizeBytes ?? 0;
+    const moduleCount = entry.moduleCount ?? 0;
+    const edgeCount = entry.edgeCount ?? 0;
+    const externalCount = entry.externalCount ?? 0;
+    const qualifies = (
+      // Force mode: any requested dep can be eligible, still subject to caps.
+      mode === "force" && requestCount >= 1 || // Heuristic v1 (Phase 6.1 roadmap).
+      requestCount >= 2 || sizeBytes >= 80 * 1024 || moduleCount >= 120 || edgeCount >= 400 || // Ionify-native signal: many external deps implies a request-waterfall root (e.g. Radix).
+      externalCount >= 6
+    );
+    if (!qualifies) continue;
+    const sizeKb = Math.max(sizeBytes / 1024, 1);
+    const score = 10 * Math.min(requestCount, 5) + 8 * Math.log2(sizeKb) + 3 * Math.min(moduleCount / 50, 5) + // Extra weight for deps that trigger many external `/@deps/*` requests (waterfall roots).
+    4 * Math.min(externalCount, 10);
+    candidates.push({
+      fileName,
+      entryPath: entry.entryPath,
+      packageLabel: entry.packageLabel || fileName,
+      score,
+      signals: { requestCount, sizeBytes, moduleCount, edgeCount, externalCount }
+    });
+  }
+  candidates.sort((a, b) => {
+    const scoreDelta = b.score - a.score;
+    if (scoreDelta !== 0) return scoreDelta;
+    return a.packageLabel.localeCompare(b.packageLabel);
+  });
+  const selected = [];
+  const seen = /* @__PURE__ */ new Set();
+  let totalBytes = 0;
+  for (const candidate of candidates) {
+    if (selected.length >= maxMembers) break;
+    if (seen.has(candidate.fileName)) continue;
+    const sizeBytes = candidate.signals.sizeBytes ?? 0;
+    if (totalBytes + sizeBytes > maxBytes) continue;
+    if (!candidate.entryPath || !import_fs23.default.existsSync(candidate.entryPath)) continue;
+    seen.add(candidate.fileName);
+    totalBytes += sizeBytes;
+    selected.push(candidate);
+  }
+  return {
+    version: 1,
+    depsHash,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    members: selected
+  };
+}
+function formatDepLabel(name, subpath) {
+  if (!subpath) return name;
+  const cleaned = subpath.replace(/^\.\//, "").replace(/^\/+/, "");
+  if (!cleaned || cleaned === ".") return name;
+  return `${name}/${cleaned}`;
+}
+function resolveDevProductionPublishingBuildMode(productionArtifactPublishing, env = process.env) {
+  const raw = productionArtifactPublishing && typeof productionArtifactPublishing === "object" && typeof productionArtifactPublishing.mode === "string" ? productionArtifactPublishing.mode : env.IONIFY_PRODUCTION_PUBLISHING_MODE;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : "production";
+}
+async function startDevServer({
+  port,
+  host,
+  enableSignalHandlers = true,
+  mode
+} = {}) {
+  const bootStartMs = Date.now();
+  const envMode = mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "development";
+  process.env.IONIFY_MODE = envMode;
+  process.env.MODE = envMode;
+  const userConfig = await loadIonifyConfig(process.cwd(), envMode);
+  const configuredExternalSpecifiers = collectConfiguredExternalSpecifiers(userConfig);
+  const projectRootOverride = userConfig?.root ? import_path25.default.resolve(userConfig.root) : null;
+  const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
+    projectRootOverride
+  });
+  const rootDir = workspace.projectRoot;
+  const ionifyDir = workspace.ionifyDir;
+  const allowedRoots = workspace.allowedRoots;
+  const publicDirAbs = resolvePublicDir(rootDir, userConfig?.publicDir);
+  import_fs23.default.mkdirSync(ionifyDir, { recursive: true });
+  process.env.IONIFY_PROJECT_ROOT = rootDir;
+  process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
+  process.env.IONIFY_STATE_DIR = ionifyDir;
+  process.env.IONIFY_WORKSPACE_ID = workspace.workspaceId;
+  process.env.IONIFY_PROJECT_ID = workspace.projectId;
+  process.env.IONIFY_MODE = envMode;
+  const configuredServer = userConfig?.server ?? {};
+  const resolvedPort = port ?? configuredServer.port ?? 5173;
+  const resolvedHost = host ?? configuredServer.host ?? process.env.IONIFY_HOST ?? "127.0.0.1";
+  const httpsOptions = ensureDevHttpsOptions(configuredServer.https, rootDir, ionifyDir);
+  const spaFallback = resolveSpaFallbackPolicy(rootDir, configuredServer.spaFallback);
+  const protocol = httpsOptions ? "https" : "http";
+  const watcher = new IonifyWatcher(rootDir);
+  const cacheDebug = process.env.IONIFY_DEV_TRANSFORM_CACHE_DEBUG === "1";
+  const minifier = resolveMinifier(userConfig, { envVar: process.env.IONIFY_MINIFIER });
+  const parserMode = resolveParser(userConfig, { envMode: process.env.IONIFY_PARSER });
+  applyParserEnv(parserMode);
+  const treeshake = resolveTreeshake(userConfig?.treeshake, {
+    envMode: process.env.IONIFY_TREESHAKE,
+    includeEnv: process.env.IONIFY_TREESHAKE_INCLUDE,
+    excludeEnv: process.env.IONIFY_TREESHAKE_EXCLUDE
+  });
+  const scopeHoist = resolveScopeHoist(userConfig?.scopeHoist, {
+    envMode: process.env.IONIFY_SCOPE_HOIST,
+    inlineEnv: process.env.IONIFY_SCOPE_HOIST_INLINE,
+    constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
+    combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
+  });
+  const resolvedEntries = userConfig?.entry ? (Array.isArray(userConfig.entry) ? userConfig.entry : [userConfig.entry]).map(
+    (entry) => entry.startsWith("/") ? import_path25.default.join(rootDir, entry) : import_path25.default.resolve(rootDir, entry)
+  ) : void 0;
+  const pluginNames = Array.isArray(userConfig?.plugins) ? userConfig.plugins.map((p) => typeof p === "string" ? p : p?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
+  const rawVersionInputs = {
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    plugins: pluginNames,
+    entry: resolvedEntries ?? null,
+    resolveOptions: {
+      alias: userConfig?.resolve?.alias,
+      extensions: userConfig?.resolve?.extensions,
+      conditions: userConfig?.resolve?.conditions,
+      mainFields: userConfig?.resolve?.mainFields
+    },
+    cssOptions: userConfig?.css,
+    assetOptions: userConfig?.assets ?? userConfig?.asset,
+    runtimeContracts: {
+      reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
+      reactRefreshHmr: REACT_REFRESH_HMR_CONTRACT_VERSION,
+      federation: buildFederationVersionContract(userConfig?.federation)
+    }
+  };
+  const configHash = computeGraphVersion(rawVersionInputs);
+  logInfo(`[Dev] Version hash: ${configHash}`);
+  process.env.IONIFY_CONFIG_HASH = configHash;
+  const casRoot = import_path25.default.join(ionifyDir, "cas");
+  const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
+  if (lockfile) {
+    const countLabel = lockfile.packageCount === null ? "unknown" : lockfile.packageCount;
+    logInfo(`[deps] SCAN lockfile: ${lockfile.name} (${countLabel} packages)`);
+  }
+  const depsSourcemapEnabled = userConfig?.optimizeDeps?.sourcemap === true;
+  const depsBundleEsmEnabled = userConfig?.optimizeDeps?.bundleEsm !== false;
+  const depsSharedChunksRaw = userConfig?.optimizeDeps?.sharedChunks;
+  const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+  const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
+  const depsNodeEnv = process.env.NODE_ENV ?? "development";
+  const depsHash = computeDepsHash(configHash, lockfile, {
+    nodeEnv: depsNodeEnv,
+    sourcemap: depsSourcemapEnabled,
+    bundleEsm: depsBundleEsmEnabled,
+    sharedChunks: depsSharedChunksMode,
+    outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION
+  });
+  logInfo(`[deps] depsHash: ${depsHash} from ${lockfile?.name ?? "config"}`);
+  process.env.IONIFY_DEPS_HASH = depsHash;
+  const depsRoot = import_path25.default.join(ionifyDir, "deps", depsHash);
+  import_fs23.default.mkdirSync(depsRoot, { recursive: true });
+  pruneDepsCache(ionifyDir, depsHash);
+  const DEV_STABLE_DEBOUNCE_MS = 5e3;
+  let devStableTimer = null;
+  let devStableServedCount = 0;
+  const writeDevStableSentinel = () => {
+    try {
+      const sentinelPath = import_path25.default.join(depsRoot, ".dev-stable");
+      const payload = {
+        ts: (/* @__PURE__ */ new Date()).toISOString(),
+        depsHash,
+        nodeEnv: depsNodeEnv,
+        servedDepCount: devStableServedCount
+      };
+      import_fs23.default.writeFileSync(sentinelPath, JSON.stringify(payload));
+    } catch {
+    }
+  };
+  const bumpDevStable = () => {
+    devStableServedCount += 1;
+    if (devStableTimer) clearTimeout(devStableTimer);
+    devStableTimer = setTimeout(writeDevStableSentinel, DEV_STABLE_DEBOUNCE_MS);
+    if (devStableTimer.unref) devStableTimer.unref();
+  };
+  const depsManifestIndex = loadDepsManifestIndex(depsRoot);
+  let depsManifestCanonicalFileNames = buildCanonicalDepFileNameIndex(
+    Array.from(depsManifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath }))
+  );
+  const refreshDepsManifestIndex = () => {
+    const refreshed = loadDepsManifestIndex(depsRoot);
+    depsManifestIndex.clear();
+    refreshed.forEach((value, key) => depsManifestIndex.set(key, value));
+    depsManifestCanonicalFileNames = buildCanonicalDepFileNameIndex(
+      Array.from(depsManifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath }))
+    );
+  };
+  const canonicalFileNameForEntry = (fileName, entryPath) => {
+    return canonicalizeDepFileName(fileName, entryPath, depsManifestCanonicalFileNames);
+  };
+  const realpathOrSelf3 = (filePath) => {
+    try {
+      return import_fs23.default.realpathSync(filePath);
+    } catch {
+      return filePath;
+    }
+  };
+  const recordDepLeafGraphNodes = (depAbsPaths) => {
+    if (depAbsPaths.length === 0) return;
+    if (depsManifestIndex.size === 0) refreshDepsManifestIndex();
+    const manifestEntries = Array.from(depsManifestIndex.values());
+    const byCanonicalEntry = /* @__PURE__ */ new Map();
+    for (const entry of manifestEntries) {
+      if (!entry.artifactHash) continue;
+      byCanonicalEntry.set(realpathOrSelf3(entry.entryPath), entry);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    for (const depAbs of depAbsPaths) {
+      if (typeof depAbs !== "string" || depAbs.length === 0) continue;
+      if (!depAbs.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) continue;
+      const canonical = realpathOrSelf3(depAbs);
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      const existing = graph.getNode(canonical) ?? graph.getNode(depAbs);
+      if (existing?.hash) continue;
+      const depId = toWsModuleId(depAbs, workspace.workspaceRoot);
+      if (!depId) continue;
+      const entry = byCanonicalEntry.get(canonical);
+      let hash = entry?.artifactHash ?? null;
+      if (!hash) {
+        try {
+          hash = import_crypto8.default.createHash("sha256").update(import_fs23.default.readFileSync(canonical)).digest("hex");
+        } catch {
+          continue;
+        }
+      }
+      graph.recordNodeById(depId, hash, [], [], "dep", configHash);
+    }
+  };
+  const graphCompletionExts = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const completeLocalGraphClosure = (seedAbsPaths) => {
+    const queue = seedAbsPaths.filter((dep) => typeof dep === "string" && dep.length > 0);
+    const seen = /* @__PURE__ */ new Set();
+    let processed = 0;
+    while (queue.length && processed < 2e3) {
+      const absPath = queue.shift();
+      if (!import_path25.default.isAbsolute(absPath)) continue;
+      const canonical = realpathOrSelf3(absPath);
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      if (canonical.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) {
+        recordDepLeafGraphNodes([canonical]);
+        continue;
+      }
+      if (graph.getNode(canonical)) continue;
+      if (!import_fs23.default.existsSync(canonical)) continue;
+      const extName = import_path25.default.extname(canonical).toLowerCase();
+      if (isAssetExt(extName)) {
+        try {
+          const assetHash = import_crypto8.default.createHash("sha256").update(import_fs23.default.readFileSync(canonical)).digest("hex");
+          graph.recordFile(canonical, assetHash, [], [], "asset");
+        } catch {
+        }
+        continue;
+      }
+      if (!graphCompletionExts.has(extName)) continue;
+      let code;
+      try {
+        code = import_fs23.default.readFileSync(canonical, "utf8");
+      } catch {
+        continue;
+      }
+      processed++;
+      let hash;
+      let specs;
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(canonical, code);
+          hash = ir.hash;
+          specs = ir.dependencies.map((dep) => dep.specifier);
+        } catch {
+          hash = getCacheKey(code);
+          specs = extractImports(code, canonical);
+        }
+      } else {
+        hash = getCacheKey(code);
+        specs = extractImports(code, canonical);
+      }
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        canonical,
+        configuredExternalSpecifiers
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings
+      );
+      recordDepLeafGraphNodes(localDeps);
+      graph.recordFile(canonical, hash, nextDeps);
+      for (const dep of localDeps) queue.push(dep);
+    }
+  };
+  const pendingGraphCompletionSeeds = /* @__PURE__ */ new Set();
+  const enqueueLocalGraphCompletion = (seedAbsPaths) => {
+    for (const depAbs of seedAbsPaths) {
+      if (typeof depAbs !== "string" || depAbs.length === 0 || !import_path25.default.isAbsolute(depAbs)) continue;
+      pendingGraphCompletionSeeds.add(depAbs);
+    }
+  };
+  const drainPendingGraphCompletion = async () => {
+    if (pendingGraphCompletionSeeds.size === 0) return;
+    const seeds = Array.from(pendingGraphCompletionSeeds);
+    pendingGraphCompletionSeeds.clear();
+    completeLocalGraphClosure(seeds);
+    graph.flush();
+  };
+  const upsertObservedPackEntry = (groupMap, entry) => {
+    const canonicalEntryPath = realpathOrSelf3(entry.entryPath);
+    let existed = groupMap.has(entry.fileName);
+    for (const [existingFileName, existing] of Array.from(groupMap.entries())) {
+      if (!existing?.entryPath) continue;
+      if (realpathOrSelf3(existing.entryPath) !== canonicalEntryPath) continue;
+      existed = true;
+      if (existingFileName !== entry.fileName) {
+        groupMap.delete(existingFileName);
+      }
+    }
+    groupMap.set(entry.fileName, entry);
+    return !existed;
+  };
+  const depUsageStatePath = import_path25.default.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsageStatePath = import_path25.default.join(depsRoot, "deps-usage.v1.json");
+  const directDepUsageFileNames = /* @__PURE__ */ new Set();
+  const setDirectDepUsageFileNames = (index) => {
+    directDepUsageFileNames.clear();
+    if (!index) return;
+    for (const usage of index.values()) {
+      if (!usage?.fileName || !usage?.entryPath) continue;
+      directDepUsageFileNames.add(canonicalFileNameForEntry(usage.fileName, usage.entryPath));
+    }
+  };
+  const loadDirectDepUsageFileNamesFromDisk = () => {
+    const raw = readJsonFile4(depUsageStatePath) ?? readJsonFile4(legacyDepUsageStatePath);
+    if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return;
+    const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
+    for (const [fileName, value] of Object.entries(deps)) {
+      const entryPath = typeof value?.entryPath === "string" ? value.entryPath : "";
+      if (!fileName || !entryPath) continue;
+      directDepUsageFileNames.add(canonicalFileNameForEntry(fileName, entryPath));
+    }
+  };
+  loadDirectDepUsageFileNamesFromDisk();
+  const isDirectlyUsedDepFile = (fileName, entryPath) => {
+    if (directDepUsageFileNames.size === 0) return true;
+    return directDepUsageFileNames.has(canonicalFileNameForEntry(fileName, entryPath));
+  };
+  const optimizeVendorMode = userConfig?.optimizeDeps?.vendor ?? "auto";
+  const optimizeExclude = Array.isArray(userConfig?.optimizeDeps?.exclude) ? new Set(userConfig.optimizeDeps.exclude) : null;
+  const autoVendor = optimizeVendorMode === "auto";
+  const vendorSpecifiersRaw = optimizeVendorMode === false ? [] : Array.isArray(optimizeVendorMode) ? optimizeVendorMode : autoVendor ? detectVendorSpecifiers(readProjectPackageJson2(rootDir)) : [];
+  const vendorSpecifiers = vendorSpecifiersRaw.map((s) => String(s).trim()).filter(Boolean).filter((s) => !optimizeExclude?.has(s));
+  const vendorDeps = resolveVendorDeps(rootDir, vendorSpecifiers);
+  const vendorPacksRaw = userConfig?.optimizeDeps?.vendorPacks ?? false;
+  const packSlimmingRaw = userConfig?.optimizeDeps?.packSlimming ?? "auto";
+  const vendorPacksForce = vendorPacksRaw === true;
+  const vendorPacksProgressive = vendorPacksRaw === "auto";
+  const vendorPacksManualRaw = !vendorPacksForce && !vendorPacksProgressive && vendorPacksRaw && typeof vendorPacksRaw === "object" && !Array.isArray(vendorPacksRaw) ? vendorPacksRaw : null;
+  const normalizeManualPackGroup2 = (raw) => {
+    const base = String(raw ?? "").trim().toLowerCase();
+    if (!base) return null;
+    const normalized = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+    return normalized || null;
+  };
+  const normalizeMatchSubpath2 = (subpath) => {
+    if (!subpath) return null;
+    const cleaned = String(subpath).trim().replace(/^\.\//, "").replace(/^\/+/, "");
+    if (!cleaned || cleaned === "." || cleaned === "index") return null;
+    return cleaned;
+  };
+  const escapeRegExp3 = (value) => {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  };
+  const compileManualPackMatchers2 = (patterns) => {
+    const matchers = [];
+    for (const rawPattern of patterns) {
+      const pattern = String(rawPattern ?? "").trim();
+      if (!pattern) continue;
+      if (pattern.includes("*")) {
+        const source = `^${escapeRegExp3(pattern).replace(/\\\*/g, ".*")}$`;
+        let re = null;
+        try {
+          re = new RegExp(source);
+        } catch {
+          re = null;
+        }
+        if (!re) continue;
+        matchers.push({
+          raw: pattern,
+          test: (pkgName, subpath) => {
+            const pkg = String(pkgName ?? "");
+            if (re.test(pkg)) return true;
+            const sp = normalizeMatchSubpath2(subpath);
+            if (!sp) return false;
+            return re.test(`${pkg}/${sp}`);
+          }
+        });
+        continue;
+      }
+      matchers.push({
+        raw: pattern,
+        test: (pkgName, subpath) => {
+          const pkg = String(pkgName ?? "");
+          if (pkg === pattern) return true;
+          const sp = normalizeMatchSubpath2(subpath);
+          if (!sp) return false;
+          return `${pkg}/${sp}` === pattern;
+        }
+      });
+    }
+    return matchers;
+  };
+  const vendorPacksManualDefs = [];
+  if (vendorPacksManualRaw) {
+    const defsByGroup = /* @__PURE__ */ new Map();
+    for (const [rawGroup, rawPatterns] of Object.entries(vendorPacksManualRaw)) {
+      const group = normalizeManualPackGroup2(rawGroup);
+      if (!group) continue;
+      const patterns = Array.isArray(rawPatterns) ? rawPatterns : [];
+      const matchers = compileManualPackMatchers2(
+        patterns.map((v) => String(v ?? "").trim()).filter(Boolean).filter((spec) => !optimizeExclude?.has(spec))
+      );
+      if (matchers.length === 0) continue;
+      const existing = defsByGroup.get(group);
+      if (existing) {
+        existing.matchers.push(...matchers);
+        continue;
+      }
+      const def = { group, matchers };
+      defsByGroup.set(group, def);
+      vendorPacksManualDefs.push(def);
+    }
+  }
+  const classifyManualPackGroup2 = (pkgName, subpath) => {
+    if (!pkgName) return null;
+    const pkg = String(pkgName);
+    if (optimizeExclude?.has(pkg)) return null;
+    const sp = normalizeMatchSubpath2(subpath);
+    if (sp && optimizeExclude?.has(`${pkg}/${sp}`)) return null;
+    for (const def of vendorPacksManualDefs) {
+      for (const matcher of def.matchers) {
+        try {
+          if (matcher.test(pkg, sp)) return def.group;
+        } catch {
+        }
+      }
+    }
+    return null;
+  };
+  const vendorPacksManual = vendorPacksManualDefs.length > 0;
+  const vendorPacksEnabled = vendorPacksForce || vendorPacksProgressive || vendorPacksManual;
+  const packSlimmingEnabled = vendorPacksEnabled && (packSlimmingRaw === true || packSlimmingRaw === "auto" || packSlimmingRaw === void 0);
+  const vendorPacksMode = vendorPacksForce ? "force" : "auto";
+  const vendorPackMaxBytes = typeof userConfig?.optimizeDeps?.vendorPackMaxBytes === "number" && userConfig.optimizeDeps.vendorPackMaxBytes > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxBytes) : 600 * 1024;
+  const vendorPackMaxMembers = typeof userConfig?.optimizeDeps?.vendorPackMaxMembers === "number" && userConfig.optimizeDeps.vendorPackMaxMembers > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxMembers) : 25;
+  const vendorPackPlanPath = import_path25.default.join(depsRoot, "vendor-pack.app.json");
+  const vendorPackRequestsPath = import_path25.default.join(depsRoot, "deps-requests.json");
+  const vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath) : /* @__PURE__ */ new Map();
+  const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile4(vendorPackPlanPath) : null;
+  const vendorPackPlanFromDiskValid = vendorPacksForce && vendorPackPlanFromDisk && typeof vendorPackPlanFromDisk?.depsHash === "string" && vendorPackPlanFromDisk.depsHash === depsHash && Array.isArray(vendorPackPlanFromDisk?.members) ? vendorPackPlanFromDisk : null;
+  const vendorPackComputedPlan = vendorPacksForce ? buildVendorPackPlan({
+    depsHash,
+    mode: vendorPacksMode,
+    vendorDeps,
+    manifestIndex: depsManifestIndex,
+    requestCounts: vendorPackLastRequestCounts,
+    maxBytes: vendorPackMaxBytes,
+    maxMembers: vendorPackMaxMembers
+  }) : null;
+  const vendorPackPlan = vendorPacksForce ? vendorPackComputedPlan && vendorPackComputedPlan.members.length > 0 ? vendorPackComputedPlan : vendorPackPlanFromDiskValid ?? vendorPackComputedPlan : null;
+  if (vendorPacksForce && vendorPackPlan) {
+    writeJsonFile4(vendorPackPlanPath, vendorPackPlan);
+  }
+  const vendorPackMembers = vendorPacksForce && vendorPackPlan ? vendorPackPlan.members : [];
+  const vendorPackEntries = [];
+  const vendorPackFileNameSet = /* @__PURE__ */ new Set();
+  for (const dep of vendorDeps) {
+    if (vendorPackFileNameSet.has(dep.fileName)) continue;
+    vendorPackFileNameSet.add(dep.fileName);
+    vendorPackEntries.push({ entryPath: dep.entryPath, fileName: dep.fileName, packageLabel: dep.packageLabel });
+  }
+  for (const member of vendorPackMembers) {
+    if (!member?.fileName || !member?.entryPath) continue;
+    if (!import_fs23.default.existsSync(member.entryPath)) continue;
+    if (vendorPackFileNameSet.has(member.fileName)) continue;
+    vendorPackFileNameSet.add(member.fileName);
+    vendorPackEntries.push({
+      entryPath: member.entryPath,
+      fileName: member.fileName,
+      packageLabel: member.packageLabel || member.fileName
+    });
+  }
+  const vendorPackDepFileNames = new Set(vendorPackEntries.map((d) => d.fileName));
+  const canChunkVendorPacks = vendorPacksForce && depsSharedChunksEnabled && vendorPackEntries.length > 1 && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled;
+  if (vendorPacksForce && !canChunkVendorPacks) {
+    const reasons = [];
+    if (!depsSharedChunksEnabled) reasons.push("sharedChunks=0");
+    if (depsSourcemapEnabled) reasons.push("sourcemap=1");
+    if (!depsBundleEsmEnabled) reasons.push("bundleEsm=0");
+    if (!native?.optimizeDependenciesChunked) reasons.push("nativeChunked=0");
+    if (vendorPackEntries.length <= 1) reasons.push("members<=1");
+    logWarn(
+      `[deps] vendorPacks enabled but chunking is unavailable (${reasons.join(", ")}). Falling back to per-entry deps.`
+    );
+  }
+  const vendorPackChunkGroupId = canChunkVendorPacks ? computeChunkGroupIdFromStableIds(vendorPackEntries.map((d) => d.fileName)) : null;
+  const vendorPackSharedFileName = vendorPackChunkGroupId ? `shared.${vendorPackChunkGroupId}.js` : null;
+  const vendorPackSharedUrl = vendorPackSharedFileName ? `${DEPS_PREFIX2}${vendorPackSharedFileName}` : null;
+  const vendorPackSessionRequestCounts = vendorPacksEnabled ? /* @__PURE__ */ new Map() : null;
+  let vendorPackRequestCountsDirty = false;
+  let vendorPackRequestCountsLastFlush = 0;
+  const flushVendorPackRequestCounts = (force = false) => {
+    if (!vendorPackSessionRequestCounts || !vendorPacksEnabled) return;
+    if (!vendorPackRequestCountsDirty && !force) return;
+    const now = Date.now();
+    if (!force && now - vendorPackRequestCountsLastFlush < 2e3) return;
+    vendorPackRequestCountsLastFlush = now;
+    vendorPackRequestCountsDirty = false;
+    saveDepRequestCounts(vendorPackRequestsPath, vendorPackSessionRequestCounts);
+  };
+  const getKnownDepRequestCount = (fileName) => {
+    const sessionCount = vendorPackSessionRequestCounts?.get(fileName) ?? 0;
+    if (sessionCount > 0) return sessionCount;
+    return vendorPackLastRequestCounts.get(fileName) ?? 0;
+  };
+  const vendorPackFileName = vendorDeps.length > 0 ? `vendor.${depsHash}.js` : null;
+  const vendorPackUrl = vendorPackFileName ? `${DEPS_PREFIX2}${vendorPackFileName}` : null;
+  const vendorDepFileNames = new Set(vendorDeps.map((d) => d.fileName));
+  const canChunkVendorCore = depsSharedChunksEnabled && vendorDeps.length > 1 && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled && // Avoid conflicting chunk groups when `vendorPacks: true` is active and chunked.
+  !canChunkVendorPacks;
+  const vendorCoreChunkGroupId = canChunkVendorCore ? computeChunkGroupIdFromStableIds(vendorDeps.map((d) => d.fileName)) : null;
+  const vendorCoreSharedFileName = vendorCoreChunkGroupId ? `shared.${vendorCoreChunkGroupId}.js` : null;
+  const vendorCoreSharedUrl = vendorCoreSharedFileName ? `${DEPS_PREFIX2}${vendorCoreSharedFileName}` : null;
+  const ensureVendorPackFile = () => {
+    if (!vendorPackFileName || !vendorPackUrl || vendorDeps.length === 0) return;
+    const vendorKey = getCacheKey(
+      `vendor:v1:${vendorDeps.map((d) => `${d.specifier}:${d.fileName}`).sort().join("|")}`
+    );
+    const filePath = import_path25.default.join(depsRoot, vendorPackFileName);
+    if (import_fs23.default.existsSync(filePath)) {
+      try {
+        const head = import_fs23.default.readFileSync(filePath, "utf8").slice(0, 256);
+        if (head.includes(`${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}`)) return;
+      } catch {
+      }
+    }
+    const imports = vendorDeps.slice().sort((a, b) => a.specifier.localeCompare(b.specifier)).map((d) => `import "${DEPS_PREFIX2}${d.fileName}";`).join("\n");
+    const body = `${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}
+// depsHash: ${depsHash}
+// vendor: ${vendorDeps.map((d) => d.specifier).join(", ")}
+${imports}
+`;
+    try {
+      import_fs23.default.writeFileSync(filePath, body, "utf8");
+    } catch {
+    }
+  };
+  const vendorPackV2IndexPath = import_path25.default.join(depsRoot, "vendor-pack.v2.index.json");
+  const vendorPackV2AllowedPrefix = vendorPacksManual ? "vendor-pack.manual." : vendorPacksProgressive ? "vendor-pack.feature." : null;
+  const vendorPackV2 = new VendorPackV2IndexManager({
+    depsRoot,
+    depsHash,
+    outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+    allowPackFilePrefix: vendorPackV2AllowedPrefix,
+    log: { info: logInfo, warn: logWarn }
+  });
+  vendorPackV2.loadFromDisk();
+  const routeHintStatePath = import_path25.default.join(ionifyDir, "route-hints.v1.json");
+  const routeHints = new RouteHintIndex(routeHintStatePath);
+  const startupPolicyRaw = userConfig?.startupPolicy;
+  const startupPolicyObject = startupPolicyRaw && typeof startupPolicyRaw === "object" && !Array.isArray(startupPolicyRaw) ? startupPolicyRaw : {};
+  const startupPolicyModeRaw = String(
+    process.env.IONIFY_STARTUP_POLICY ?? startupPolicyObject.mode ?? (startupPolicyRaw === false ? "off" : "auto")
+  ).toLowerCase();
+  const startupPolicyEnabled = startupPolicyModeRaw !== "off" && startupPolicyRaw !== false;
+  const startupPolicyPreloadAuthorityEnabled = startupPolicyEnabled && startupPolicyModeRaw !== "observe";
+  const startupPolicyObserveEvaluations = startupPolicyEnabled && (process.env.IONIFY_STARTUP_OBSERVE_EVALUATIONS === "1" || process.env.IONIFY_STARTUP_EVAL_OBSERVATION === "1" || startupPolicyObject.observeEvaluations === true);
+  const startupPolicyEagerBudget = {
+    minRouteDocuments: typeof startupPolicyObject.minRouteDocuments === "number" ? startupPolicyObject.minRouteDocuments : 3,
+    maxEagerDepAssets: typeof startupPolicyObject.maxEagerDepAssets === "number" ? startupPolicyObject.maxEagerDepAssets : 4,
+    maxEagerSourceAssets: typeof startupPolicyObject.maxEagerSourceAssets === "number" ? startupPolicyObject.maxEagerSourceAssets : 4,
+    maxEagerTotalAssets: typeof startupPolicyObject.maxEagerTotalAssets === "number" ? startupPolicyObject.maxEagerTotalAssets : 6,
+    maxEagerDepBytes: typeof startupPolicyObject.maxEagerDepBytes === "number" ? startupPolicyObject.maxEagerDepBytes : 256 * 1024,
+    maxEagerSourceBytes: typeof startupPolicyObject.maxEagerSourceBytes === "number" ? startupPolicyObject.maxEagerSourceBytes : 128 * 1024,
+    maxEagerTotalBytes: typeof startupPolicyObject.maxEagerTotalBytes === "number" ? startupPolicyObject.maxEagerTotalBytes : 384 * 1024
+  };
+  const startupObservationStatePath = import_path25.default.join(ionifyDir, "startup-observations.v1.json");
+  const startupPolicyStatePath = import_path25.default.join(ionifyDir, "startup-policy.v1.json");
+  const startupObservations = new StartupObservationIndex(startupObservationStatePath);
+  let startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
+  const startupInstrumentJavaScriptBuffer = (buffer) => instrumentJavaScriptBuffer(buffer, startupPolicyObserveEvaluations);
+  const startupInstrumentJavaScriptCode = (code) => startupPolicyObserveEvaluations ? injectStartupEvaluationMarker(code) : code;
+  const bootstrapSourceExts = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const resolveBootstrapEntryFile = (rawEntryPath) => {
+    const raw = String(rawEntryPath || "").trim();
+    if (!raw) return null;
+    const candidates = import_path25.default.isAbsolute(raw) ? [raw, import_path25.default.join(rootDir, raw.replace(/^\/+/, ""))] : [import_path25.default.resolve(rootDir, raw)];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (import_fs23.default.existsSync(candidate)) return candidate;
+    }
+    return null;
+  };
+  const bootstrapEntryFiles = (() => {
+    if (Array.isArray(resolvedEntries) && resolvedEntries.length > 0) {
+      return resolvedEntries.map((entryPath) => resolveBootstrapEntryFile(String(entryPath))).filter((entryPath) => typeof entryPath === "string" && entryPath.length > 0);
+    }
+    const entries = [];
+    for (const candidate of [
+      import_path25.default.join(rootDir, "src", "main.tsx"),
+      import_path25.default.join(rootDir, "src", "main.ts"),
+      import_path25.default.join(rootDir, "src", "index.tsx"),
+      import_path25.default.join(rootDir, "src", "index.ts")
+    ]) {
+      if (import_fs23.default.existsSync(candidate)) entries.push(candidate);
+    }
+    return entries;
+  })();
+  const resolveAuthoritativeDepPreloadUrls = (hintUrl) => {
+    if (!hintUrl.startsWith(DEPS_PREFIX2) || !hintUrl.endsWith(".js")) return [];
+    const fileName = hintUrl.slice(DEPS_PREFIX2.length);
+    const fileNames = resolveAuthoritativeDepPreloadFiles({
+      fileName,
+      fileExists: (candidateFileName) => import_fs23.default.existsSync(import_path25.default.join(depsRoot, candidateFileName)),
+      fileNameToPackFile: vendorPackV2.fileNameToPackFile,
+      packFileToChunkFiles: vendorPackV2.packFileToChunkFiles,
+      packFileToSharedFile: vendorPackV2.packFileToSharedFile,
+      currentStableSharedFileNames: [vendorPackSharedFileName, vendorCoreSharedFileName].filter(
+        (value) => typeof value === "string" && value.endsWith(".js")
+      )
+    });
+    return fileNames.map((candidateFileName) => `${DEPS_PREFIX2}${candidateFileName}`);
+  };
+  const isRouteHintPreloadValid = (hintUrl, kind) => {
+    if (kind === "dep") {
+      return resolveAuthoritativeDepPreloadUrls(hintUrl).length > 0;
+    }
+    const parsedHint = import_url6.default.parse(hintUrl);
+    const hintPath = parsedHint.pathname || "";
+    if (!hintPath || hintPath === "/" || hintPath.startsWith(DEPS_PREFIX2) || hintPath.startsWith("/__ionify")) {
+      return false;
+    }
+    const resolved = decodePublicPath(rootDir, hintPath, {
+      allowedRoots,
+      workspaceRoot: workspace.workspaceRoot
+    });
+    if (!resolved || !import_fs23.default.existsSync(resolved)) return false;
+    const stat = import_fs23.default.statSync(resolved);
+    if (stat.isDirectory()) return false;
+    const ext = import_path25.default.extname(resolved).toLowerCase();
+    return ext !== ".html" && !isAssetExt(ext);
+  };
+  const expandRouteHintPreloadUrls = (hintUrl, kind) => {
+    if (kind !== "dep" || !hintUrl.startsWith(DEPS_PREFIX2)) return [hintUrl];
+    const authoritative = resolveAuthoritativeDepPreloadUrls(hintUrl);
+    return authoritative.length > 0 ? authoritative : [hintUrl];
+  };
+  const estimateStartupAssetSize = (assetUrl, kind) => {
+    const parsed = import_url6.default.parse(assetUrl);
+    const pathname = parsed.pathname || "";
+    if (!pathname) return null;
+    const candidatePath = kind === "dep" && pathname.startsWith(DEPS_PREFIX2) ? import_path25.default.join(depsRoot, pathname.slice(DEPS_PREFIX2.length)) : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
+    if (!candidatePath || !import_fs23.default.existsSync(candidatePath)) return null;
+    try {
+      const stat = import_fs23.default.statSync(candidatePath);
+      return stat.isFile() ? stat.size : null;
+    } catch {
+      return null;
+    }
+  };
+  const refreshStartupPolicySnapshot = () => {
+    const next = buildStartupPolicySnapshot({
+      routeKeys: routeHints.listRouteKeys(),
+      routeAssetsForRoute: (routeKey) => routeHints.getRouteAssetEntries(routeKey),
+      assetSummaries: routeHints.summarizeAssets(),
+      observations: startupObservations,
+      assetSizeBytes: estimateStartupAssetSize,
+      isAssetValid: isRouteHintPreloadValid,
+      eagerBudget: startupPolicyEagerBudget
+    });
+    if (!startupPolicySnapshot || startupPolicySnapshot.policyHash !== next.policyHash) {
+      persistStartupPolicySnapshot(startupPolicyStatePath, next);
+    }
+    startupPolicySnapshot = next;
+    return next;
+  };
+  const buildStartupPolicyClientScript = (documentRouteKey) => `(()=>{const routeKey=${JSON.stringify(documentRouteKey)};const reportUrl="/__ionify_startup/report";const loaded=[];const loadedSet=new Set();const evaluated=[];const evaluatedSet=new Set();let fcpTime=Number.POSITIVE_INFINITY;let reported=false;const normalize=(value)=>{try{const parsed=new URL(String(value),location.href);if(parsed.origin!==location.origin)return null;return parsed.pathname+parsed.search;}catch{return null;}};const trackLoaded=(name,startTime)=>{const url=normalize(name);if(!url)return;loaded.push({url,startTime:Number(startTime)||0});};globalThis.__IONIFY_STARTUP__={markEvaluated:(value)=>{const url=normalize(value);if(!url||evaluatedSet.has(url))return;evaluatedSet.add(url);evaluated.push({url,time:(globalThis.performance&&performance.now)?performance.now():0});}};const send=()=>{if(reported)return;reported=true;const effectiveFcp=Number.isFinite(fcpTime)?fcpTime:Number.POSITIVE_INFINITY;const preFcpLoadedUrls=[];for(const item of loaded){if(item.startTime<=effectiveFcp&&!loadedSet.has(item.url)){loadedSet.add(item.url);preFcpLoadedUrls.push(item.url);}}const preFcpEvaluatedUrls=[];for(const item of evaluated){if(item.time<=effectiveFcp&&!preFcpEvaluatedUrls.includes(item.url))preFcpEvaluatedUrls.push(item.url);}const payload={routeKey,documentUrl:location.pathname+location.search,preFcpLoadedUrls,preFcpEvaluatedUrls};const body=JSON.stringify(payload);const fallbackBeacon=()=>{if(!navigator.sendBeacon)return;try{const blob=new Blob([body],{type:"application/json"});navigator.sendBeacon(reportUrl,blob);}catch{}};fetch(reportUrl,{method:"POST",headers:{"content-type":"application/json"},body}).catch(()=>{fallbackBeacon();});};try{new PerformanceObserver((list)=>{for(const entry of list.getEntries()){if(entry.name==="first-contentful-paint"){fcpTime=Math.min(fcpTime,entry.startTime);setTimeout(send,0);}}}).observe({type:"paint",buffered:true});}catch{}try{new PerformanceObserver((list)=>{for(const entry of list.getEntries()){if(entry.entryType==="resource")trackLoaded(entry.name,entry.startTime);}}).observe({type:"resource",buffered:true});}catch{}if(globalThis.performance&&typeof performance.getEntriesByType==="function"){for(const entry of performance.getEntriesByType("resource"))trackLoaded(entry.name,entry.startTime);}globalThis.addEventListener("pagehide",()=>setTimeout(send,0),{once:true});globalThis.addEventListener("load",()=>setTimeout(send,250),{once:true});})();`;
+  const collectBootstrapPackageRootToDepFiles = () => {
+    const next = /* @__PURE__ */ new Map();
+    const register = (packageRoot, fileName) => {
+      if (!packageRoot || !fileName) return;
+      const normalizedRoot = packageRoot.trim();
+      const normalizedFileName = String(fileName).trim();
+      if (!normalizedRoot || !normalizedFileName) return;
+      let set = next.get(normalizedRoot);
+      if (!set) {
+        set = /* @__PURE__ */ new Set();
+        next.set(normalizedRoot, set);
+      }
+      set.add(normalizedFileName);
+    };
+    for (const state of featureLastReadyState.values()) {
+      if (!state || state.status !== "ready" || !state.chunkGroupId || !state.sharedFileName || !Array.isArray(state.entries)) {
+        continue;
+      }
+      for (const entry of state.entries) {
+        if (!entry?.fileName) continue;
+        register(extractPackageRootFromLabel(entry.packageLabel), entry.fileName);
+      }
+    }
+    return next;
+  };
+  const collectBootstrapRoutedPackPreloadUrls = () => {
+    if (!vendorPacksEnabled || vendorPackV2.fileNameToPackFile.size === 0) return [];
+    if (!native?.resolveModule || bootstrapEntryFiles.length === 0) return [];
+    const queue = bootstrapEntryFiles.slice();
+    const visited = /* @__PURE__ */ new Set();
+    const routedPreloads = /* @__PURE__ */ new Set();
+    const resolvedDepFiles = /* @__PURE__ */ new Set();
+    const observedBarePackageRoots = /* @__PURE__ */ new Set();
+    const maxSourceFiles = 32;
+    while (queue.length > 0 && visited.size < maxSourceFiles) {
+      const nextPath = queue.shift();
+      if (!nextPath || !import_fs23.default.existsSync(nextPath)) continue;
+      const canonicalPath = (() => {
+        try {
+          return import_fs23.default.realpathSync(nextPath);
+        } catch {
+          return nextPath;
+        }
+      })();
+      if (visited.has(canonicalPath)) continue;
+      visited.add(canonicalPath);
+      if (!bootstrapSourceExts.has(import_path25.default.extname(canonicalPath).toLowerCase())) continue;
+      let code = "";
+      try {
+        code = import_fs23.default.readFileSync(canonicalPath, "utf8");
+      } catch {
+        continue;
+      }
+      let specs = [];
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(canonicalPath, code);
+          specs = Array.isArray(ir?.dependencies) ? ir.dependencies.map((dep) => dep.specifier).filter((value) => typeof value === "string" && value.length > 0) : [];
+        } catch {
+          specs = extractImports(code, canonicalPath);
+        }
+      } else {
+        specs = extractImports(code, canonicalPath);
+      }
+      for (const spec of specs) {
+        const packageRoot = extractBarePackageRoot(spec);
+        if (packageRoot) observedBarePackageRoots.add(packageRoot);
+      }
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        canonicalPath,
+        configuredExternalSpecifiers
+      );
+      for (const localDep of localDeps) {
+        if (!import_path25.default.isAbsolute(localDep)) continue;
+        if (!import_fs23.default.existsSync(localDep)) continue;
+        if (localDep.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) continue;
+        if (!bootstrapSourceExts.has(import_path25.default.extname(localDep).toLowerCase())) continue;
+        queue.push(localDep);
+      }
+      for (const externalDep of externalDeps) {
+        const packageRoot = extractBarePackageRoot(externalDep);
+        if (packageRoot) observedBarePackageRoots.add(packageRoot);
+        try {
+          const resolved = native.resolveModule(externalDep, rootDir);
+          const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
+          if (!fsPath || typeof fsPath !== "string") continue;
+          const pkg = resolved?.pkg ?? null;
+          const packageName = typeof pkg?.name === "string" ? pkg.name : externalDep;
+          const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+          const subpath = computeSubpathForDep2(fsPath, pkg);
+          const entry = registerDepEntry({
+            entryPath: fsPath,
+            packageName,
+            packageVersion,
+            subpath
+          });
+          resolvedDepFiles.add(entry.fileName);
+        } catch {
+        }
+      }
+    }
+    const bootstrapPackageRootToDepFiles = collectBootstrapPackageRootToDepFiles();
+    for (const packageRoot of Array.from(observedBarePackageRoots).sort()) {
+      const fileNames = bootstrapPackageRootToDepFiles.get(packageRoot);
+      if (!fileNames || fileNames.size === 0) continue;
+      for (const depFileName of fileNames) {
+        resolvedDepFiles.add(depFileName);
+      }
+    }
+    for (const depFileName of Array.from(resolvedDepFiles).sort()) {
+      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(`${DEPS_PREFIX2}${depFileName}`)) {
+        routedPreloads.add(preloadUrl);
+      }
+    }
+    return Array.from(routedPreloads);
+  };
+  const minimumRequestPositivePackMembers = depsSharedChunksEnabled ? 4 : 3;
+  const hasPositivePackRequestSavings = (memberCount) => {
+    return Number.isFinite(memberCount) && memberCount >= minimumRequestPositivePackMembers;
+  };
+  const featurePacksEnabled = vendorPacksProgressive && depsSharedChunksEnabled && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled;
+  if (vendorPacksProgressive && !featurePacksEnabled) {
+    const reasons = [];
+    if (!depsSharedChunksEnabled) reasons.push("sharedChunks=0");
+    if (depsSourcemapEnabled) reasons.push("sourcemap=1");
+    if (!depsBundleEsmEnabled) reasons.push("bundleEsm=0");
+    if (!native?.optimizeDependenciesChunked) reasons.push("nativeChunked=0");
+    logWarn(
+      `[deps] vendorPacks:auto enabled but feature packs are unavailable (${reasons.join(", ")}). Falling back to per-entry deps.`
+    );
+  }
+  const featurePackIndexPath = import_path25.default.join(depsRoot, "vendor-pack.feature.index.json");
+  const featurePackStatePathFor = (group) => import_path25.default.join(depsRoot, `vendor-pack.feature.${group}.json`);
+  const featurePackSlimStatePathFor = (group) => import_path25.default.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
+  const discoverFeaturePackGroupsFromDisk = () => {
+    if (!featurePacksEnabled) return [];
+    let names = [];
+    try {
+      names = import_fs23.default.readdirSync(depsRoot);
+    } catch {
+      return [];
+    }
+    const groups = /* @__PURE__ */ new Set();
+    for (const name of names) {
+      const slimMatch = /^vendor-pack\.feature\.([a-z0-9_-]+)\.slim\.json$/i.exec(name);
+      if (slimMatch?.[1]) {
+        groups.add(slimMatch[1]);
+        continue;
+      }
+      const baseMatch = /^vendor-pack\.feature\.([a-z0-9_-]+)\.json$/i.exec(name);
+      if (baseMatch?.[1]) {
+        groups.add(baseMatch[1]);
+      }
+    }
+    return Array.from(groups).sort();
+  };
+  const featurePackFileNameToChunkGroup = /* @__PURE__ */ new Map();
+  const loadFeaturePackIndex = () => {
+    featurePackFileNameToChunkGroup.clear();
+    const raw = featurePacksEnabled ? readJsonFile4(featurePackIndexPath) : null;
+    if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION) {
+      return;
+    }
+    const mapping = raw.fileNameToChunkGroupId;
+    if (!mapping || typeof mapping !== "object") return;
+    let rawCount = 0;
+    for (const [fileName, chunkGroupId] of Object.entries(mapping)) {
+      if (typeof fileName !== "string" || typeof chunkGroupId !== "string") continue;
+      if (!fileName.endsWith(".js")) continue;
+      rawCount += 1;
+      const shared = import_path25.default.join(depsRoot, `shared.${chunkGroupId}.js`);
+      const wrapper = import_path25.default.join(depsRoot, fileName);
+      if (!import_fs23.default.existsSync(shared) || !import_fs23.default.existsSync(wrapper)) continue;
+      featurePackFileNameToChunkGroup.set(fileName, chunkGroupId);
+    }
+    if (rawCount > 0 && featurePackFileNameToChunkGroup.size !== rawCount) {
+      writeFeaturePackIndex();
+    }
+  };
+  const writeFeaturePackIndex = () => {
+    const obj = {};
+    const keys = Array.from(featurePackFileNameToChunkGroup.keys()).sort();
+    for (const key of keys) {
+      const value = featurePackFileNameToChunkGroup.get(key);
+      if (value) obj[key] = value;
+    }
+    const payload = {
+      version: 2,
+      depsHash,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      fileNameToChunkGroupId: obj
+    };
+    writeJsonFile4(featurePackIndexPath, payload);
+  };
+  loadFeaturePackIndex();
+  const ensureVendorPackV2Module = (options) => {
+    return vendorPackV2.ensurePackModuleFromEntries(options);
+  };
+  const ensureVendorPackV2ModuleFromWrappers = (options) => {
+    return vendorPackV2.ensurePackModuleFromWrappers(options);
+  };
+  const manualPacksEnabled = vendorPacksManual && depsSharedChunksEnabled && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled;
+  if (vendorPacksManual && !manualPacksEnabled) {
+    const reasons = [];
+    if (!depsSharedChunksEnabled) reasons.push("sharedChunks=0");
+    if (depsSourcemapEnabled) reasons.push("sourcemap=1");
+    if (!depsBundleEsmEnabled) reasons.push("bundleEsm=0");
+    if (!native?.optimizeDependenciesChunked) reasons.push("nativeChunked=0");
+    logWarn(
+      `[deps] vendorPacks manual mode configured but pack modules are unavailable (${reasons.join(", ")}). Falling back to per-entry deps.`
+    );
+  }
+  const manualObserved = /* @__PURE__ */ new Map();
+  const manualState = /* @__PURE__ */ new Map();
+  const manualSlimState = /* @__PURE__ */ new Map();
+  for (const def of vendorPacksManualDefs) {
+    manualObserved.set(def.group, /* @__PURE__ */ new Map());
+  }
+  const manualHasCore = manualObserved.has("core");
+  const manualPackStatePathFor = (group) => import_path25.default.join(depsRoot, `vendor-pack.manual.${group}.json`);
+  const manualPackSlimStatePathFor = (group) => import_path25.default.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
+  const updateManualState = (group, next) => {
+    const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
+    manualState.set(group, stamped);
+    writeJsonFile4(manualPackStatePathFor(group), stamped);
+  };
+  const updateManualSlimState = (group, next) => {
+    const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
+    manualSlimState.set(group, stamped);
+    writeJsonFile4(manualPackSlimStatePathFor(group), stamped);
+  };
+  const pruneManualPackRoutes = (group) => {
+    vendorPackV2.prunePackPrefix(`vendor-pack.manual.${group}.`);
+  };
+  const pruneFeaturePackRoutes = (group) => {
+    vendorPackV2.prunePackPrefix(`vendor-pack.feature.${group}.`);
+  };
+  const planManualPackEntries = (group) => {
+    const entries = reconcilePackEntries(Array.from(manualObserved.get(group)?.values() ?? []), canonicalFileNameForEntry);
+    const selected = [];
+    const seen = /* @__PURE__ */ new Set();
+    let totalBytes = 0;
+    for (const entry of entries) {
+      if (selected.length >= vendorPackMaxMembers) break;
+      if (seen.has(entry.fileName)) continue;
+      if (!entry.entryPath || !import_fs23.default.existsSync(entry.entryPath)) continue;
+      if (isCoreSingletonDepFileName(entry.fileName)) continue;
+      if (manualHasCore && group !== "core" && vendorDepFileNames.has(entry.fileName)) continue;
+      const sizeBytes = depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0;
+      if (totalBytes + sizeBytes > vendorPackMaxBytes) continue;
+      seen.add(entry.fileName);
+      totalBytes += sizeBytes;
+      selected.push(entry);
+    }
+    if (!hasPositivePackRequestSavings(selected.length)) {
+      return [];
+    }
+    return selected;
+  };
+  if (manualPacksEnabled) {
+    for (const def of vendorPacksManualDefs) {
+      const group = def.group;
+      const raw = readJsonFile4(manualPackStatePathFor(group));
+      if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION || raw.group !== group) {
+        continue;
+      }
+      if ((Array.isArray(raw.entries) ? raw.entries : []).some(
+        (entry) => !entry?.fileName || !entry?.entryPath || isCoreSingletonDepFileName(entry.fileName) || canonicalFileNameForEntry(entry.fileName, entry.entryPath) !== entry.fileName
+      )) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      if (!hasPositivePackRequestSavings(Array.isArray(raw.entries) ? raw.entries.length : 0)) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      manualState.set(group, raw);
+      const groupMap = manualObserved.get(group);
+      if (!groupMap) continue;
+      for (const entry of Array.isArray(raw.entries) ? raw.entries : []) {
+        if (!entry?.fileName || !entry?.entryPath) continue;
+        groupMap.set(entry.fileName, entry);
+      }
+    }
+  }
+  if (manualPacksEnabled && packSlimmingEnabled) {
+    for (const def of vendorPacksManualDefs) {
+      const group = def.group;
+      const raw = readJsonFile4(manualPackSlimStatePathFor(group));
+      if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION || raw.group !== group) {
+        continue;
+      }
+      if ((Array.isArray(raw.entries) ? raw.entries : []).some(
+        (entry) => !entry?.baseFileName || !entry?.entryPath || isCoreSingletonDepFileName(entry.baseFileName) || canonicalFileNameForEntry(entry.baseFileName, entry.entryPath) !== entry.baseFileName
+      )) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      if (!hasPositivePackRequestSavings(Array.isArray(raw.entries) ? raw.entries.length : 0)) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      manualSlimState.set(group, raw);
+    }
+  }
+  if (manualPacksEnabled) {
+    for (const def of vendorPacksManualDefs) {
+      const group = def.group;
+      const slim = packSlimmingEnabled ? manualSlimState.get(group) : null;
+      if (slim && !hasPositivePackRequestSavings(Array.isArray(slim.entries) ? slim.entries.length : 0)) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      if (slim && slim.status === "ready" && slim.chunkGroupId && slim.sharedFileName) {
+        const ok = ensureVendorPackV2ModuleFromWrappers({
+          label: `manual/${group}/slim`,
+          packFileName: `vendor-pack.manual.${group}.${slim.chunkGroupId}.js`,
+          sharedFileName: slim.sharedFileName,
+          members: slim.entries.map((e) => ({
+            baseFileName: e.baseFileName,
+            wrapperFileName: e.wrapperFileName,
+            packageLabel: e.packageLabel
+          })),
+          prunePackPrefix: `vendor-pack.manual.${group}.`
+        });
+        if (ok) continue;
+      }
+      const state = manualState.get(group);
+      if (state && !hasPositivePackRequestSavings(Array.isArray(state.entries) ? state.entries.length : 0)) {
+        pruneManualPackRoutes(group);
+        continue;
+      }
+      if (!state || state.status !== "ready" || !state.chunkGroupId || !state.sharedFileName) continue;
+      ensureVendorPackV2Module({
+        label: `manual/${group}`,
+        packFileName: `vendor-pack.manual.${group}.${state.chunkGroupId}.js`,
+        sharedFileName: state.sharedFileName,
+        entries: state.entries,
+        prunePackPrefix: `vendor-pack.manual.${group}.`
+      });
+    }
+  }
+  const loadDepUsageIndexFromDisk2 = () => {
+    const raw = readJsonFile4(depUsageStatePath) ?? readJsonFile4(legacyDepUsageStatePath);
+    if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
+    const out = /* @__PURE__ */ new Map();
+    const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
+    for (const [fileName, value] of Object.entries(deps)) {
+      const item = value;
+      if (!item || typeof item !== "object") continue;
+      if (typeof item.entryPath !== "string" || typeof item.packageName !== "string") continue;
+      if (typeof item.packageVersion !== "string" || !Array.isArray(item.usedExports)) continue;
+      const usedExports = item.usedExports.map((v) => typeof v === "string" ? v : "").filter(Boolean).slice().sort();
+      const unique = [];
+      for (const name of usedExports) {
+        if (unique.length === 0 || unique[unique.length - 1] !== name) unique.push(name);
+      }
+      out.set(fileName, {
+        fileName,
+        entryPath: item.entryPath,
+        packageName: item.packageName,
+        packageVersion: item.packageVersion,
+        usedExports: unique,
+        hasNamespace: item.hasNamespace === true,
+        hasExportStar: item.hasExportStar === true,
+        importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.map((v) => typeof v === "string" ? v : "").filter(Boolean) : [],
+        entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.map((v) => typeof v === "string" ? v : "").filter(Boolean) : []
+      });
+    }
+    return out;
+  };
+  const saveDepUsageIndexToDisk2 = (index) => {
+    const depsObj = {};
+    const keys = Array.from(index.keys()).sort();
+    for (const fileName of keys) {
+      const item = index.get(fileName);
+      if (!item) continue;
+      depsObj[fileName] = {
+        entryPath: item.entryPath,
+        packageName: item.packageName,
+        packageVersion: item.packageVersion,
+        usedExports: item.usedExports.slice(),
+        hasNamespace: item.hasNamespace,
+        hasExportStar: item.hasExportStar,
+        importerKeys: Array.isArray(item.importerKeys) ? item.importerKeys.slice() : [],
+        entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : []
+      };
+    }
+    writeJsonFile4(depUsageStatePath, {
+      version: 2,
+      depsHash,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      deps: depsObj
+    });
+  };
+  const computeUsageIndexHash = (index) => {
+    const keys = Array.from(index.keys()).sort();
+    let body = `deps-usage:v2:${depsHash}
+`;
+    for (const fileName of keys) {
+      const item = index.get(fileName);
+      if (!item) continue;
+      const used = Array.isArray(item.usedExports) ? item.usedExports.slice().sort() : [];
+      const importers = Array.isArray(item.importerKeys) ? item.importerKeys.slice().sort() : [];
+      const entryRoots = Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice().sort() : [];
+      body += `${fileName}|ns=${item.hasNamespace ? 1 : 0}|star=${item.hasExportStar ? 1 : 0}|used=${used.join(",")}|importers=${importers.join(",")}|entryRoots=${entryRoots.join(",")}
+`;
+    }
+    return getCacheKey(body);
+  };
+  let depUsageIndex = packSlimmingEnabled ? loadDepUsageIndexFromDisk2() : null;
+  if (depUsageIndex) {
+    depUsageIndex = canonicalizeDepUsageIndex(depUsageIndex, depsManifestCanonicalFileNames);
+  }
+  setDirectDepUsageFileNames(depUsageIndex);
+  let depUsageScanRunning = false;
+  const manualSlimBuildQueue = [];
+  let manualSlimBuildRunning = false;
+  const manualSlimBuildTimers = /* @__PURE__ */ new Map();
+  const scheduleManualSlimBuild = (group) => {
+    if (!manualPacksEnabled || !packSlimmingEnabled) return;
+    const existing = manualSlimBuildTimers.get(group);
+    if (existing) clearTimeout(existing);
+    manualSlimBuildTimers.set(
+      group,
+      setTimeout(() => {
+        manualSlimBuildTimers.delete(group);
+        if (!manualSlimBuildQueue.includes(group)) manualSlimBuildQueue.push(group);
+        if (manualSlimBuildRunning) return;
+        manualSlimBuildRunning = true;
+        void (async () => {
+          try {
+            while (manualSlimBuildQueue.length) {
+              const next = manualSlimBuildQueue.shift();
+              if (!next) continue;
+              if (next === "core") continue;
+              const baseState = manualState.get(next);
+              if (!baseState || baseState.status !== "ready" || !baseState.sharedFileName || !baseState.chunkGroupId) {
+                continue;
+              }
+              if (!depUsageIndex) continue;
+              while (activeRequests > 0) {
+                await new Promise((r) => setTimeout(r, 250));
+              }
+              const baseEntries = Array.isArray(baseState.entries) ? baseState.entries : [];
+              if (baseEntries.length === 0) continue;
+              const usedByBase = /* @__PURE__ */ new Map();
+              for (const entry of baseEntries) {
+                const u = depUsageIndex.get(entry.fileName);
+                if (!u) continue;
+                if (u.hasNamespace || u.hasExportStar) continue;
+                if (!Array.isArray(u.usedExports) || u.usedExports.length === 0) continue;
+                usedByBase.set(entry.fileName, u.usedExports.slice());
+              }
+              const hasAnyUsage = usedByBase.size > 0;
+              if (!hasAnyUsage) continue;
+              const existingSlim = manualSlimState.get(next);
+              if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
+                const sharedPath = import_path25.default.join(depsRoot, existingSlim.sharedFileName);
+                const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
+                const baseSet = new Set(baseEntries.map((e) => e.fileName));
+                const inputsMatch = import_fs23.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                  const entry = byBase.get(base.fileName);
+                  if (!entry) return false;
+                  if (entry.entryPath !== base.entryPath) return false;
+                  if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, entry.wrapperFileName))) return false;
+                  const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
+                  const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
+                  if (expected.length !== actual.length) return false;
+                  for (let i = 0; i < expected.length; i++) {
+                    if (expected[i] !== actual[i]) return false;
+                  }
+                  return true;
+                });
+                if (inputsMatch) {
+                  ensureVendorPackV2ModuleFromWrappers({
+                    label: `manual/${next}/slim`,
+                    packFileName: `vendor-pack.manual.${next}.${existingSlim.chunkGroupId}.js`,
+                    sharedFileName: existingSlim.sharedFileName,
+                    members: existingSlim.entries.map((e) => ({
+                      baseFileName: e.baseFileName,
+                      wrapperFileName: e.wrapperFileName,
+                      packageLabel: e.packageLabel
+                    })),
+                    prunePackPrefix: `vendor-pack.manual.${next}.`
+                  });
+                  continue;
+                }
+              }
+              updateManualSlimState(next, {
+                version: 1,
+                depsHash,
+                group: next,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                status: "building",
+                chunkGroupId: null,
+                sharedFileName: null,
+                entries: baseEntries.map((e) => ({
+                  baseFileName: e.fileName,
+                  wrapperFileName: e.fileName,
+                  entryPath: e.entryPath,
+                  packageLabel: e.packageLabel,
+                  usedExports: usedByBase.get(e.fileName) ?? []
+                }))
+              });
+              try {
+                const chunked = native?.optimizeDependenciesChunked;
+                if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+                const start = Date.now();
+                const result = chunked(
+                  baseEntries.map((e) => {
+                    const usedExports = usedByBase.get(e.fileName);
+                    return usedExports && usedExports.length > 0 ? { entryPath: e.entryPath, depsHash, usedExports } : { entryPath: e.entryPath, depsHash };
+                  }),
+                  ionifyDir
+                );
+                const groupId = result?.chunk_group ?? result?.chunkGroup ?? null;
+                if (!groupId || typeof groupId !== "string") throw new Error("Missing chunkGroupId");
+                broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+                const elapsed = Date.now() - start;
+                const sharedFileName = `shared.${groupId}.js`;
+                const sharedOut = import_path25.default.join(depsRoot, sharedFileName);
+                if (!import_fs23.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
+                const outByEntryPath = /* @__PURE__ */ new Map();
+                for (const item of resultsArr) {
+                  const entryPath = item?.entry_path ?? item?.entryPath ?? null;
+                  const outPath = item?.out_path ?? item?.outPath ?? null;
+                  if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
+                  const canonicalEntryPath = (() => {
+                    try {
+                      return import_fs23.default.realpathSync(entryPath);
+                    } catch {
+                      return entryPath;
+                    }
+                  })();
+                  outByEntryPath.set(canonicalEntryPath, import_path25.default.basename(outPath));
+                }
+                const slimMembers = [];
+                const slimEntries = [];
+                for (const base of baseEntries) {
+                  const canonicalBaseEntryPath = (() => {
+                    try {
+                      return import_fs23.default.realpathSync(base.entryPath);
+                    } catch {
+                      return base.entryPath;
+                    }
+                  })();
+                  const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
+                  if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, wrapperFileName))) {
+                    throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
+                  }
+                  slimMembers.push({
+                    baseFileName: base.fileName,
+                    wrapperFileName,
+                    packageLabel: base.packageLabel
+                  });
+                  slimEntries.push({
+                    baseFileName: base.fileName,
+                    wrapperFileName,
+                    entryPath: base.entryPath,
+                    packageLabel: base.packageLabel,
+                    usedExports: usedByBase.get(base.fileName) ?? []
+                  });
+                }
+                ensureVendorPackV2ModuleFromWrappers({
+                  label: `manual/${next}/slim`,
+                  packFileName: `vendor-pack.manual.${next}.${groupId}.js`,
+                  sharedFileName,
+                  members: slimMembers,
+                  prunePackPrefix: `vendor-pack.manual.${next}.`
+                });
+                refreshDepsManifestIndex();
+                updateManualSlimState(next, {
+                  version: 1,
+                  depsHash,
+                  group: next,
+                  updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                  status: "ready",
+                  chunkGroupId: groupId,
+                  sharedFileName,
+                  entries: slimEntries
+                });
+                const fullSharedPath = import_path25.default.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = import_fs23.default.existsSync(fullSharedPath) ? import_fs23.default.statSync(fullSharedPath).size : 0;
+                const slimBytes = import_fs23.default.existsSync(sharedOut) ? import_fs23.default.statSync(sharedOut).size : 0;
+                const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
+                const savedLabel = saved > 0 ? ` (-${formatByteDelta2(saved)})` : "";
+                if (process.env.DEBUG_DEPS) {
+                  logInfo(
+                    `[deps] \u2713 Manual pack slimmed (${next}) group=${groupId} members=${baseEntries.length} (${elapsed}ms)${savedLabel}.`
+                  );
+                }
+                logInfo(`Slim pack ready: ${next}${savedLabel}`);
+              } catch (err) {
+                updateManualSlimState(next, {
+                  version: 1,
+                  depsHash,
+                  group: next,
+                  updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                  status: "failed",
+                  chunkGroupId: null,
+                  sharedFileName: null,
+                  entries: manualSlimState.get(next)?.entries ?? [],
+                  error: String(err)
+                });
+                logWarn(`[deps] WARN: Manual pack slimming failed (${next}): ${String(err)}`);
+              }
+            }
+          } finally {
+            manualSlimBuildRunning = false;
+          }
+        })();
+      }, 800)
+    );
+  };
+  const manualBuildQueue = [];
+  let manualBuildRunning = false;
+  const manualBuildTimers = /* @__PURE__ */ new Map();
+  const enqueueManualBuild = (group) => {
+    if (!manualPacksEnabled) return;
+    if (!manualObserved.has(group)) return;
+    if (!manualBuildQueue.includes(group)) {
+      manualBuildQueue.push(group);
+    }
+    if (manualBuildRunning) return;
+    manualBuildRunning = true;
+    void (async () => {
+      try {
+        while (manualBuildQueue.length) {
+          const next = manualBuildQueue.shift();
+          if (!next) continue;
+          while (activeRequests > 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          const entries = planManualPackEntries(next);
+          if (entries.length === 0) continue;
+          const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
+          const sharedFileName = `shared.${chunkGroupId}.js`;
+          const sharedPath = import_path25.default.join(depsRoot, sharedFileName);
+          const alreadyReady = import_fs23.default.existsSync(sharedPath) && entries.every((e) => import_fs23.default.existsSync(import_path25.default.join(depsRoot, e.fileName)));
+          if (alreadyReady) {
+            updateManualState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "ready",
+              chunkGroupId,
+              sharedFileName,
+              entries
+            });
+            ensureVendorPackV2Module({
+              label: `manual/${next}`,
+              packFileName: `vendor-pack.manual.${next}.${chunkGroupId}.js`,
+              sharedFileName,
+              entries,
+              prunePackPrefix: `vendor-pack.manual.${next}.`
+            });
+            if (packSlimmingEnabled) scheduleManualSlimBuild(next);
+            continue;
+          }
+          updateManualState(next, {
+            version: 1,
+            depsHash,
+            group: next,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            status: "building",
+            chunkGroupId,
+            sharedFileName,
+            entries
+          });
+          try {
+            const chunked = native?.optimizeDependenciesChunked;
+            if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+            const start = Date.now();
+            const result = chunked(entries.map((e) => ({ entryPath: e.entryPath, depsHash })), ionifyDir);
+            const groupId = result?.chunk_group ?? result?.chunkGroup ?? chunkGroupId;
+            const resolvedEntries2 = resolveChunkedPackEntries(
+              entries,
+              Array.isArray(result?.entries) ? result.entries.map((item) => ({
+                entryPath: item?.entry_path ?? item?.entryPath ?? null,
+                outPath: item?.out_path ?? item?.outPath ?? null
+              })) : []
+            );
+            broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+            const elapsed = Date.now() - start;
+            const sharedOut = import_path25.default.join(depsRoot, `shared.${groupId}.js`);
+            const ok = import_fs23.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs23.default.existsSync(import_path25.default.join(depsRoot, entry.fileName)));
+            if (!ok) {
+              throw new Error("Manual pack optimizer did not produce expected outputs");
+            }
+            refreshDepsManifestIndex();
+            updateManualState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "ready",
+              chunkGroupId: groupId,
+              sharedFileName: `shared.${groupId}.js`,
+              entries: resolvedEntries2
+            });
+            ensureVendorPackV2Module({
+              label: `manual/${next}`,
+              packFileName: `vendor-pack.manual.${next}.${groupId}.js`,
+              sharedFileName: `shared.${groupId}.js`,
+              entries: resolvedEntries2,
+              prunePackPrefix: `vendor-pack.manual.${next}.`
+            });
+            logInfo(
+              `[deps] \u2713 Manual pack ready (${next}) group=${groupId} members=${entries.length} (${elapsed}ms). Reload to apply.`
+            );
+            if (packSlimmingEnabled) scheduleManualSlimBuild(next);
+          } catch (err) {
+            updateManualState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "failed",
+              chunkGroupId,
+              sharedFileName,
+              entries,
+              error: String(err)
+            });
+            logWarn(`[deps] WARN: Manual pack build failed (${next}): ${String(err)}`);
+          }
+        }
+      } finally {
+        manualBuildRunning = false;
+      }
+    })();
+  };
+  const scheduleManualBuild = (group) => {
+    if (!manualPacksEnabled) return;
+    const existing = manualBuildTimers.get(group);
+    if (existing) clearTimeout(existing);
+    manualBuildTimers.set(
+      group,
+      setTimeout(() => {
+        manualBuildTimers.delete(group);
+        enqueueManualBuild(group);
+      }, 600)
+    );
+  };
+  const recordManualCandidate = (entry) => {
+    if (!manualPacksEnabled) return;
+    if (!entry.fileName || !entry.entryPath) return;
+    if (!import_fs23.default.existsSync(entry.entryPath)) return;
+    if (isCoreSingletonDepFileName(entry.fileName)) return;
+    const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
+    const group = classifyManualPackGroup2(entry.packageName, entry.subpath);
+    if (!group) return;
+    const groupMap = manualObserved.get(group);
+    if (!groupMap) return;
+    const wasNew = upsertObservedPackEntry(groupMap, {
+      entryPath: entry.entryPath,
+      fileName,
+      packageLabel: entry.packageLabel
+    });
+    const state = manualState.get(group);
+    const alreadyInState = !!state && Array.isArray(state.entries) && state.entries.some((e) => e.fileName === fileName);
+    const shouldRebuild = !state || state.status !== "ready" || !alreadyInState;
+    if (wasNew || shouldRebuild) {
+      updateManualState(group, {
+        version: 1,
+        depsHash,
+        group,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        status: "planned",
+        chunkGroupId: null,
+        sharedFileName: null,
+        entries: planManualPackEntries(group)
+      });
+      if (packSlimmingEnabled) {
+        const plannedEntries = planManualPackEntries(group);
+        updateManualSlimState(group, {
+          version: 1,
+          depsHash,
+          group,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          status: "planned",
+          chunkGroupId: null,
+          sharedFileName: null,
+          entries: plannedEntries.map((e) => ({
+            baseFileName: e.fileName,
+            wrapperFileName: e.fileName,
+            entryPath: e.entryPath,
+            packageLabel: e.packageLabel,
+            usedExports: []
+          }))
+        });
+      }
+      scheduleManualBuild(group);
+    }
+  };
+  const featureObserved = /* @__PURE__ */ new Map();
+  const featureState = /* @__PURE__ */ new Map();
+  const featureLastReadyState = /* @__PURE__ */ new Map();
+  const featureSlimState = /* @__PURE__ */ new Map();
+  const featureLastReadySlimState = /* @__PURE__ */ new Map();
+  let featurePackActivationPending = false;
+  const listFeaturePackGroups = () => {
+    const groups = /* @__PURE__ */ new Set();
+    for (const map of [featureState, featureLastReadyState, featureSlimState, featureLastReadySlimState]) {
+      for (const group of map.keys()) groups.add(group);
+    }
+    return Array.from(groups).sort();
+  };
+  const featureStateFilesFor = (group) => [
+    featurePackStatePathFor(group),
+    featurePackSlimStatePathFor(group)
+  ];
+  const removeFeatureGroupState = (group) => {
+    featureState.delete(group);
+    featureLastReadyState.delete(group);
+    featureSlimState.delete(group);
+    featureLastReadySlimState.delete(group);
+    pruneFeaturePackRoutes(group);
+    for (const filePath of featureStateFilesFor(group)) {
+      try {
+        import_fs23.default.unlinkSync(filePath);
+      } catch {
+      }
+    }
+  };
+  if (featurePacksEnabled) {
+    for (const group of discoverFeaturePackGroupsFromDisk()) {
+      const raw = readJsonFile4(featurePackStatePathFor(group));
+      if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION || raw.group !== group) {
+        continue;
+      }
+      if ((Array.isArray(raw.entries) ? raw.entries : []).some(
+        (entry) => !entry?.fileName || !entry?.entryPath || canonicalFileNameForEntry(entry.fileName, entry.entryPath) !== entry.fileName
+      )) {
+        pruneFeaturePackRoutes(group);
+        continue;
+      }
+      if (!hasPositivePackRequestSavings(Array.isArray(raw.entries) ? raw.entries.length : 0)) {
+        pruneFeaturePackRoutes(group);
+        continue;
+      }
+      featureState.set(group, raw);
+      if (raw.status === "ready" && raw.chunkGroupId && raw.sharedFileName) {
+        featureLastReadyState.set(group, raw);
+      }
+      for (const entry of Array.isArray(raw.entries) ? raw.entries : []) {
+        if (!entry?.fileName || !entry?.entryPath) continue;
+        upsertObservedPackEntry(featureObserved, {
+          entryPath: entry.entryPath,
+          fileName: entry.fileName,
+          packageLabel: entry.packageLabel,
+          packageName: entry?.packageName ?? null
+        });
+      }
+    }
+  }
+  if (featurePacksEnabled && packSlimmingEnabled) {
+    for (const group of discoverFeaturePackGroupsFromDisk()) {
+      const raw = readJsonFile4(featurePackSlimStatePathFor(group));
+      if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION || raw.group !== group) {
+        continue;
+      }
+      if ((Array.isArray(raw.entries) ? raw.entries : []).some(
+        (entry) => !entry?.baseFileName || !entry?.entryPath || canonicalFileNameForEntry(entry.baseFileName, entry.entryPath) !== entry.baseFileName
+      )) {
+        pruneFeaturePackRoutes(group);
+        continue;
+      }
+      if (!hasPositivePackRequestSavings(Array.isArray(raw.entries) ? raw.entries.length : 0)) {
+        pruneFeaturePackRoutes(group);
+        continue;
+      }
+      featureSlimState.set(group, raw);
+      if (raw.status === "ready" && raw.chunkGroupId && raw.sharedFileName) {
+        featureLastReadySlimState.set(group, raw);
+      }
+    }
+  }
+  const syncFeaturePackRoutingIndexFromState = (states) => {
+    featurePackFileNameToChunkGroup.clear();
+    const nextRouting = deriveFeaturePackRoutingMap(states);
+    for (const [fileName, chunkGroupId] of nextRouting) {
+      featurePackFileNameToChunkGroup.set(fileName, chunkGroupId);
+    }
+    writeFeaturePackIndex();
+  };
+  const isActivatableFeatureSlimState = (baseState, slimState) => {
+    if (!baseState || baseState.status !== "ready" || !baseState.chunkGroupId || !baseState.sharedFileName || !slimState || slimState.status !== "ready" || !slimState.chunkGroupId || !slimState.sharedFileName) {
+      return false;
+    }
+    if (!hasPositivePackRequestSavings(Array.isArray(slimState.entries) ? slimState.entries.length : 0)) {
+      return false;
+    }
+    return isFeaturePackSlimAligned(baseState.entries, slimState.entries);
+  };
+  const activateFeaturePackRoutes = () => {
+    vendorPackV2.prunePackPrefix("vendor-pack.feature.");
+    const activeBaseStates = [];
+    for (const group of listFeaturePackGroups()) {
+      const baseState = featureLastReadyState.get(group);
+      if (!baseState || baseState.status !== "ready" || !baseState.chunkGroupId || !baseState.sharedFileName || !hasPositivePackRequestSavings(Array.isArray(baseState.entries) ? baseState.entries.length : 0)) {
+        continue;
+      }
+      activeBaseStates.push(baseState);
+      const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
+      if (isActivatableFeatureSlimState(baseState, slimState)) {
+        ensureVendorPackV2ModuleFromWrappers({
+          label: `feature/${group}/slim`,
+          packFileName: `vendor-pack.feature.${group}.${slimState.chunkGroupId}.js`,
+          sharedFileName: slimState.sharedFileName,
+          members: slimState.entries.map((entry) => ({
+            baseFileName: entry.baseFileName,
+            wrapperFileName: entry.wrapperFileName,
+            packageLabel: entry.packageLabel
+          }))
+        });
+        continue;
+      }
+      ensureVendorPackV2Module({
+        label: `feature/${group}`,
+        packFileName: `vendor-pack.feature.${group}.${baseState.chunkGroupId}.js`,
+        sharedFileName: baseState.sharedFileName,
+        entries: baseState.entries
+      });
+    }
+    syncFeaturePackRoutingIndexFromState(activeBaseStates);
+    featurePackActivationPending = false;
+  };
+  const activateFeaturePacksOnNextDocument = () => {
+    if (!featurePacksEnabled || !featurePackActivationPending) return;
+    activateFeaturePackRoutes();
+  };
+  if (featurePacksEnabled) {
+    activateFeaturePackRoutes();
+  }
+  const updateFeatureState = (group, next) => {
+    const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
+    featureState.set(group, stamped);
+    if (stamped.status === "ready" && stamped.chunkGroupId && stamped.sharedFileName) {
+      featureLastReadyState.set(group, stamped);
+      featurePackActivationPending = true;
+    }
+    writeJsonFile4(featurePackStatePathFor(group), stamped);
+  };
+  const updateFeatureSlimState = (group, next) => {
+    const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
+    featureSlimState.set(group, stamped);
+    if (stamped.status === "ready" && stamped.chunkGroupId && stamped.sharedFileName) {
+      featureLastReadySlimState.set(group, stamped);
+      featurePackActivationPending = true;
+    }
+    writeJsonFile4(featurePackSlimStatePathFor(group), stamped);
+  };
+  const featureEntriesSignature = (entries) => entries.map((entry) => entry.fileName).filter(Boolean).slice().sort().join("|");
+  const featurePackSourceExts = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const plannedFeatureGroups = /* @__PURE__ */ new Map();
+  const featurePlanReportPath = import_path25.default.join(depsRoot, "vendor-pack.feature.plan-report.json");
+  const computeFeatureCandidates = () => {
+    const entries = reconcilePackEntries(Array.from(featureObserved.values()), canonicalFileNameForEntry);
+    const candidates = [];
+    const depRouteHints = new Map(
+      routeHints.summarizeAssets("dep").filter((summary) => summary.url.startsWith(DEPS_PREFIX2) && summary.url.endsWith(".js")).map((summary) => [summary.url.slice(DEPS_PREFIX2.length), summary])
+    );
+    for (const entry of entries) {
+      if (!entry.entryPath || !import_fs23.default.existsSync(entry.entryPath)) continue;
+      if (!featurePackSourceExts.has(import_path25.default.extname(entry.entryPath).toLowerCase())) continue;
+      if (vendorDepFileNames.has(entry.fileName) || isCoreSingletonDepFileName(entry.fileName)) continue;
+      const manifestEntry = depsManifestIndex.get(entry.fileName);
+      const requestCount = getKnownDepRequestCount(entry.fileName);
+      const sizeBytes = manifestEntry?.sizeBytes ?? 0;
+      const moduleCount = manifestEntry?.moduleCount ?? 0;
+      const edgeCount = manifestEntry?.edgeCount ?? 0;
+      const externalCount = manifestEntry?.externalCount ?? 0;
+      const sizeKb = Math.max(sizeBytes / 1024, 1);
+      const routeHint = depRouteHints.get(entry.fileName) ?? null;
+      const routeKeys = Array.isArray(routeHint?.routeKeys) ? routeHint.routeKeys.slice() : [];
+      const routeRequestCounts = routeHint && routeHint.routeRequestCounts && typeof routeHint.routeRequestCounts === "object" ? { ...routeHint.routeRequestCounts } : {};
+      const routeCount = routeKeys.length;
+      const score = 12 * Math.min(Math.max(requestCount, 1), 6) + 8 * Math.min(externalCount, 10) + 4 * Math.min(moduleCount / 40, 6) + 2 * Math.min(edgeCount / 80, 6) + 4 * Math.log2(sizeKb) - Math.max(0, routeCount - 1) * 5;
+      const usage = depUsageIndex?.get(entry.fileName);
+      candidates.push({
+        ...entry,
+        score,
+        sizeBytes,
+        importerKeys: Array.isArray(usage?.importerKeys) ? usage.importerKeys.slice() : [],
+        entryRootKeys: Array.isArray(usage?.entryRootKeys) ? usage.entryRootKeys.slice() : [],
+        routeKeys,
+        routeRequestCounts
+      });
+    }
+    return candidates;
+  };
+  const computeFeatureAutoMaxGroups = (candidateCount) => {
+    if (candidateCount <= 0) return 1;
+    const targetMembersPerGroup = Math.max(12, Math.min(vendorPackMaxMembers, 18));
+    return Math.max(4, Math.min(8, Math.ceil(candidateCount / targetMembersPerGroup)));
+  };
+  const assignFeaturePlanGroup = (usedGroups, plan) => {
+    if (plan.group) {
+      usedGroups.add(plan.group);
+      return plan.group;
+    }
+    const candidates = [
+      `auto-${getCacheKey(`feature-plan:${plan.familyKey}:${plan.seedFileName}`).slice(0, 8)}`,
+      `auto-${getCacheKey(`feature-plan:${featureEntriesSignature(plan.entries)}`).slice(0, 8)}`
+    ];
+    for (const candidate of candidates) {
+      if (!usedGroups.has(candidate)) {
+        usedGroups.add(candidate);
+        return candidate;
+      }
+    }
+    let index = 1;
+    while (usedGroups.has(`auto-${index}`)) index += 1;
+    const fallback = `auto-${index}`;
+    usedGroups.add(fallback);
+    return fallback;
+  };
+  const computePlannedFeatureGroups = () => {
+    const candidates = computeFeatureCandidates();
+    const candidatesByFileName = new Map(candidates.map((candidate) => [candidate.fileName, candidate]));
+    const normalizeSourceHintKey = (hintUrl) => {
+      const queryIndex = hintUrl.indexOf("?");
+      const pathname = queryIndex === -1 ? hintUrl : hintUrl.slice(0, queryIndex);
+      return pathname.replace(/^\/+/, "");
+    };
+    const sourceRouteHints = new Map(
+      routeHints.summarizeAssets("source").filter((summary) => summary.url.startsWith("/")).map((summary) => [normalizeSourceHintKey(summary.url), summary])
+    );
+    const pressureCandidatesByFileName = new Map(
+      candidates.map((candidate) => {
+        const routeRequestCounts = { ...candidate.routeRequestCounts };
+        for (const importerKey of candidate.importerKeys) {
+          const sourceHint = sourceRouteHints.get(importerKey);
+          if (!sourceHint) continue;
+          for (const [routeKey, requestCount] of Object.entries(sourceHint.routeRequestCounts)) {
+            if (!routeKey || !Number.isFinite(requestCount) || requestCount <= 0) continue;
+            routeRequestCounts[routeKey] = Math.max(routeRequestCounts[routeKey] ?? 0, requestCount);
+          }
+        }
+        return [
+          candidate.fileName,
+          {
+            ...candidate,
+            routeKeys: Object.keys(routeRequestCounts).sort(),
+            routeRequestCounts
+          }
+        ];
+      })
+    );
+    const usedGroups = new Set(listFeaturePackGroups());
+    const coupledGroups = extractDepCouplingGroups(
+      candidates.map((c) => ({ fileName: c.fileName, entryPath: c.entryPath }))
+    );
+    const readyGroupsForPlan = Array.from(featureLastReadyState.entries()).map(([group, state]) => ({
+      group,
+      entries: Array.isArray(state.entries) ? state.entries : []
+    }));
+    const plans = planAutoFeaturePackGroups({
+      candidates,
+      currentReadyGroups: readyGroupsForPlan,
+      maxMembers: vendorPackMaxMembers,
+      maxBytes: vendorPackMaxBytes,
+      minMembers: minimumRequestPositivePackMembers,
+      maxGroups: computeFeatureAutoMaxGroups(candidates.length),
+      coupledGroups
+    });
+    const next = /* @__PURE__ */ new Map();
+    for (const plan of plans) {
+      const group = assignFeaturePlanGroup(usedGroups, plan);
+      next.set(group, plan.entries.map((entry) => ({ ...entry })));
+    }
+    writeJsonFile4(featurePlanReportPath, {
+      version: 2,
+      depsHash,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      candidates: candidates.slice().sort((a, b) => b.score - a.score || a.fileName.localeCompare(b.fileName)).map((candidate) => ({
+        fileName: candidate.fileName,
+        packageLabel: candidate.packageLabel,
+        score: candidate.score,
+        sizeBytes: candidate.sizeBytes,
+        importerKeys: candidate.importerKeys,
+        entryRootKeys: candidate.entryRootKeys,
+        routeKeys: candidate.routeKeys,
+        routeRequestCounts: candidate.routeRequestCounts,
+        pressureRouteKeys: pressureCandidatesByFileName.get(candidate.fileName)?.routeKeys ?? [],
+        pressureRouteRequestCounts: pressureCandidatesByFileName.get(candidate.fileName)?.routeRequestCounts ?? {}
+      })),
+      plans: Array.from(next.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([group, entries]) => ({
+        currentActiveSharedArtifact: (() => {
+          const baseState = featureLastReadyState.get(group);
+          const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
+          const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
+          if (!activeState?.sharedFileName) return null;
+          const sharedPath = import_path25.default.join(depsRoot, activeState.sharedFileName);
+          const sharedBytes = import_fs23.default.existsSync(sharedPath) ? import_fs23.default.statSync(sharedPath).size : null;
+          return {
+            mode: activeState === slimState ? "slim" : "base",
+            sharedFileName: activeState.sharedFileName,
+            sharedBytes
+          };
+        })(),
+        group,
+        totalBytes: entries.reduce((sum, entry) => sum + (depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0), 0),
+        sharedClosurePressure: (() => {
+          const baseState = featureLastReadyState.get(group);
+          const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
+          const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
+          const activeSharedBytes = activeState?.sharedFileName && import_fs23.default.existsSync(import_path25.default.join(depsRoot, activeState.sharedFileName)) ? import_fs23.default.statSync(import_path25.default.join(depsRoot, activeState.sharedFileName)).size : null;
+          return analyzeFeaturePackSharedClosurePressure({
+            entries,
+            candidatesByFileName: pressureCandidatesByFileName,
+            activeSharedBytes
+          });
+        })(),
+        members: entries.map((entry) => ({
+          fileName: entry.fileName,
+          packageLabel: entry.packageLabel,
+          routeKeys: candidates.find((candidate) => candidate.fileName === entry.fileName)?.routeKeys ?? []
+        }))
+      }))
+    });
+    return next;
+  };
+  const replanFeaturePacks = () => {
+    if (!featurePacksEnabled) return;
+    const nextPlans = computePlannedFeatureGroups();
+    plannedFeatureGroups.clear();
+    for (const [group, entries] of nextPlans) {
+      plannedFeatureGroups.set(group, featureEntriesSignature(entries));
+    }
+    for (const group of listFeaturePackGroups()) {
+      if (nextPlans.has(group)) continue;
+      if (featureLastReadyState.has(group) || featureLastReadySlimState.has(group)) {
+        removeFeatureGroupState(group);
+        featurePackActivationPending = true;
+        continue;
+      }
+      removeFeatureGroupState(group);
+    }
+    for (const [group, entries] of nextPlans) {
+      const plannedSignature = featureEntriesSignature(entries);
+      const currentState = featureState.get(group);
+      const currentSignature = currentState ? featureEntriesSignature(currentState.entries) : "";
+      const hasRoutedMembers = featureLastReadyState.get(group)?.status === "ready" && entries.every((entry) => featurePackFileNameToChunkGroup.get(entry.fileName));
+      if (currentState?.status === "ready" && currentSignature === plannedSignature && hasRoutedMembers) {
+        continue;
+      }
+      updateFeatureState(group, {
+        version: 1,
+        depsHash,
+        group,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        status: "planned",
+        chunkGroupId: null,
+        sharedFileName: null,
+        entries
+      });
+      if (packSlimmingEnabled) {
+        updateFeatureSlimState(group, {
+          version: 1,
+          depsHash,
+          group,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          status: "planned",
+          chunkGroupId: null,
+          sharedFileName: null,
+          entries: entries.map((entry) => ({
+            baseFileName: entry.fileName,
+            wrapperFileName: entry.fileName,
+            entryPath: entry.entryPath,
+            packageLabel: entry.packageLabel,
+            usedExports: []
+          }))
+        });
+      }
+      scheduleFeatureBuild(group);
+    }
+  };
+  const featureBuildQueue = [];
+  let featureBuildRunning = false;
+  const featureBuildTimers = /* @__PURE__ */ new Map();
+  let activeRequests = 0;
+  const papConfigRaw = userConfig?.productionArtifactPublishing ?? "auto";
+  const papEnvRaw = process.env.IONIFY_PRODUCTION_PUBLISHING ?? process.env.IONIFY_PAP ?? process.env.IONIFY_PRODUCTION_PUBLICATION;
+  const papEnvNormalized = typeof papEnvRaw === "string" ? papEnvRaw.trim().toLowerCase() : "";
+  const papDisabledByEnv = papEnvNormalized === "0" || papEnvNormalized === "false" || papEnvNormalized === "off";
+  const papEnabledByEnv = papEnvNormalized === "1" || papEnvNormalized === "true" || papEnvNormalized === "on" || papEnvNormalized === "auto" || papEnvNormalized === "contracts" || papEnvNormalized === "artifacts";
+  const papEnabled = papConfigRaw !== false && !papDisabledByEnv && (papEnabledByEnv || process.env.VITEST !== "true");
+  const papIdleDelayMsRaw = papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.idleDelayMs === "number" ? papConfigRaw.idleDelayMs : Number(process.env.IONIFY_PAP_IDLE_MS ?? 2500);
+  const papIdleDelayMs = Number.isFinite(papIdleDelayMsRaw) ? Math.max(500, Math.min(6e4, Math.floor(papIdleDelayMsRaw))) : 2500;
+  const papPhaseRaw = typeof papConfigRaw === "string" ? papConfigRaw : papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.level === "string" ? papConfigRaw.level : papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.phase === "string" ? papConfigRaw.phase : process.env.IONIFY_PRODUCTION_PUBLISHING_LEVEL ?? process.env.IONIFY_PAP_PHASE ?? papEnvRaw;
+  const papLevelRaw = String(papPhaseRaw ?? "auto").trim().toLowerCase();
+  const papTargetLevel = papLevelRaw === "contracts" || papLevelRaw === "contract" || papLevelRaw === "a" || papLevelRaw === "production_contracts" ? "contracts" : "artifacts";
+  const papArtifactsEnabled = papTargetLevel === "artifacts";
+  const papArtifactsIdleDelayMsRaw = papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.artifactsIdleDelayMs === "number" ? papConfigRaw.artifactsIdleDelayMs : papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.deepIdleDelayMs === "number" ? papConfigRaw.deepIdleDelayMs : Number(process.env.IONIFY_PRODUCTION_PUBLISHING_ARTIFACTS_IDLE_MS ?? process.env.IONIFY_PAP_ARTIFACTS_IDLE_MS ?? papIdleDelayMs * 4);
+  const papArtifactsIdleDelayMs = Number.isFinite(papArtifactsIdleDelayMsRaw) ? Math.max(papIdleDelayMs + 500, Math.min(12e4, Math.floor(papArtifactsIdleDelayMsRaw))) : Math.max(1e4, papIdleDelayMs * 4);
+  const papCpuLoadFactorRaw = papConfigRaw && typeof papConfigRaw === "object" && typeof papConfigRaw.cpuLoadFactor === "number" ? papConfigRaw.cpuLoadFactor : Number(process.env.IONIFY_PRODUCTION_PUBLISHING_CPU_LOAD_FACTOR ?? 1.5);
+  const papCpuLoadFactor = Number.isFinite(papCpuLoadFactorRaw) && papCpuLoadFactorRaw > 0 ? papCpuLoadFactorRaw : 1.5;
+  const papBuildMode = resolveDevProductionPublishingBuildMode(papConfigRaw, process.env);
+  let papTimer = null;
+  let papRunning = false;
+  let papRunningLevel = null;
+  let papChild = null;
+  let papContractsPublished = false;
+  let papArtifactsPublished = false;
+  let papDirty = false;
+  const isProductionPublishingCpuPressured = () => {
+    const parallelism = Math.max(1, typeof import_os2.default.availableParallelism === "function" ? import_os2.default.availableParallelism() : import_os2.default.cpus().length || 1);
+    return import_os2.default.loadavg()[0] > parallelism * papCpuLoadFactor;
+  };
+  const cancelProductionArtifactsPublication = (reason) => {
+    if (papRunningLevel !== "artifacts" || !papChild || papChild.killed) return;
+    papDirty = true;
+    papArtifactsPublished = false;
+    logInfo(`[publish] Canceling Production Artifacts publication (${reason})`);
+    try {
+      papChild.kill("SIGTERM");
+    } catch {
+    }
+  };
+  const scheduleProductionArtifactPublication = (reason, level = "contracts") => {
+    if (!papEnabled || shuttingDown) return;
+    if (level === "artifacts" && !papArtifactsEnabled) return;
+    if (level === "contracts" && papContractsPublished && !papDirty) {
+      if (papArtifactsEnabled && !papArtifactsPublished) {
+        scheduleProductionArtifactPublication("contracts-ready", "artifacts");
+      }
+      return;
+    }
+    if (level === "artifacts" && papArtifactsPublished && !papDirty) return;
+    if (papTimer) clearTimeout(papTimer);
+    const delayMs = level === "artifacts" ? papArtifactsIdleDelayMs : papIdleDelayMs;
+    papTimer = setTimeout(() => {
+      papTimer = null;
+      if (shuttingDown) return;
+      if (papRunning) {
+        papDirty = true;
+        return;
+      }
+      if (level === "artifacts") {
+        if (activeRequests > 0 || isProductionPublishingCpuPressured()) {
+          scheduleProductionArtifactPublication(activeRequests > 0 ? "active-requests" : "cpu-pressure", "artifacts");
+          return;
+        }
+      }
+      papRunning = true;
+      papRunningLevel = level;
+      void (async () => {
+        let nextLevel = null;
+        try {
+          while (activeRequests > 0 && !shuttingDown) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          if (shuttingDown) return;
+          const cliEntry = process.argv[1];
+          if (!cliEntry || !import_fs23.default.existsSync(cliEntry)) {
+            logWarn("[publish] Production publication skipped: CLI entry is not available for child handoff.");
+            return;
+          }
+          if (level === "artifacts" && isProductionPublishingCpuPressured()) {
+            scheduleProductionArtifactPublication("cpu-pressure", "artifacts");
+            return;
+          }
+          logInfo(`[publish] Scheduling Production Publishing (${level}, ${reason})`);
+          const child = (0, import_child_process.spawn)(
+            process.execPath,
+            [cliEntry, "publish", `--${level}`, "--mode", papBuildMode],
+            {
+              cwd: rootDir,
+              env: {
+                ...process.env,
+                NODE_ENV: "production",
+                MODE: papBuildMode,
+                IONIFY_MODE: papBuildMode
+              },
+              stdio: ["ignore", "ignore", "pipe"]
+            }
+          );
+          papChild = child;
+          let stderr = "";
+          child.stderr?.on("data", (chunk) => {
+            stderr += String(chunk);
+            if (stderr.length > 4096) stderr = stderr.slice(-4096);
+          });
+          const exitCode = await new Promise((resolve) => {
+            child.on("error", () => resolve(-1));
+            child.on("exit", (code) => resolve(code));
+          });
+          if (exitCode === 0) {
+            if (!papDirty) {
+              if (level === "contracts") {
+                papContractsPublished = true;
+                papArtifactsPublished = false;
+                nextLevel = papArtifactsEnabled ? "artifacts" : null;
+              } else {
+                papArtifactsPublished = true;
+              }
+              logInfo(`[publish] Production Publishing complete (${level})`);
+            }
+          } else {
+            const suffix = stderr.trim() ? `: ${stderr.trim().split(/\r?\n/).slice(-2).join(" | ")}` : "";
+            logWarn(`[publish] WARN: Production publication failed (exit=${exitCode})${suffix}`);
+          }
+        } finally {
+          papChild = null;
+          papRunning = false;
+          papRunningLevel = null;
+          if (papDirty && !shuttingDown) {
+            papDirty = false;
+            scheduleProductionArtifactPublication("dirty-after-run", "contracts");
+          } else if (nextLevel && !shuttingDown) {
+            scheduleProductionArtifactPublication(`${level}-complete`, nextLevel);
+          }
+        }
+      })();
+    }, delayMs);
+    if (papTimer.unref) papTimer.unref();
+  };
+  const formatByteDelta2 = (bytes) => {
+    const value = Math.max(0, Math.floor(bytes));
+    if (value < 1024) return `${value}B`;
+    const kb = value / 1024;
+    if (kb < 1024) return `${Math.round(kb)}KB`;
+    const mb = kb / 1024;
+    if (mb < 1024) return `${mb.toFixed(1)}MB`;
+    const gb = mb / 1024;
+    return `${gb.toFixed(2)}GB`;
+  };
+  const featureSlimBuildQueue = [];
+  let featureSlimBuildRunning = false;
+  const featureSlimBuildTimers = /* @__PURE__ */ new Map();
+  const scheduleFeatureSlimBuild = (group) => {
+    if (!featurePacksEnabled || !packSlimmingEnabled) return;
+    const existing = featureSlimBuildTimers.get(group);
+    if (existing) clearTimeout(existing);
+    featureSlimBuildTimers.set(
+      group,
+      setTimeout(() => {
+        featureSlimBuildTimers.delete(group);
+        if (!featureSlimBuildQueue.includes(group)) featureSlimBuildQueue.push(group);
+        if (featureSlimBuildRunning) return;
+        featureSlimBuildRunning = true;
+        void (async () => {
+          try {
+            while (featureSlimBuildQueue.length) {
+              const next = featureSlimBuildQueue.shift();
+              if (!next) continue;
+              const baseState = featureState.get(next);
+              if (!baseState || baseState.status !== "ready" || !baseState.sharedFileName || !baseState.chunkGroupId) {
+                continue;
+              }
+              if (!depUsageIndex) continue;
+              while (activeRequests > 0) {
+                await new Promise((r) => setTimeout(r, 250));
+              }
+              const baseEntries = Array.isArray(baseState.entries) ? baseState.entries : [];
+              if (baseEntries.length === 0) continue;
+              const usedByBase = /* @__PURE__ */ new Map();
+              for (const entry of baseEntries) {
+                const u = depUsageIndex.get(entry.fileName);
+                if (!u) continue;
+                if (u.hasNamespace || u.hasExportStar) continue;
+                if (!Array.isArray(u.usedExports) || u.usedExports.length === 0) continue;
+                usedByBase.set(entry.fileName, u.usedExports.slice());
+              }
+              if (usedByBase.size === 0) continue;
+              const existingSlim = featureSlimState.get(next);
+              if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
+                const sharedPath = import_path25.default.join(depsRoot, existingSlim.sharedFileName);
+                const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
+                const baseSet = new Set(baseEntries.map((e) => e.fileName));
+                const inputsMatch = import_fs23.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                  const entry = byBase.get(base.fileName);
+                  if (!entry) return false;
+                  if (entry.entryPath !== base.entryPath) return false;
+                  if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, entry.wrapperFileName))) return false;
+                  const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
+                  const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
+                  if (expected.length !== actual.length) return false;
+                  for (let i = 0; i < expected.length; i++) {
+                    if (expected[i] !== actual[i]) return false;
+                  }
+                  return true;
+                });
+                if (inputsMatch) {
+                  continue;
+                }
+              }
+              updateFeatureSlimState(next, {
+                version: 1,
+                depsHash,
+                group: next,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                status: "building",
+                chunkGroupId: null,
+                sharedFileName: null,
+                entries: baseEntries.map((e) => ({
+                  baseFileName: e.fileName,
+                  wrapperFileName: e.fileName,
+                  entryPath: e.entryPath,
+                  packageLabel: e.packageLabel,
+                  usedExports: usedByBase.get(e.fileName) ?? []
+                }))
+              });
+              try {
+                const chunked = native?.optimizeDependenciesChunked;
+                if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+                const start = Date.now();
+                const result = chunked(
+                  baseEntries.map((e) => {
+                    const usedExports = usedByBase.get(e.fileName) ?? null;
+                    return usedExports && usedExports.length > 0 ? { entryPath: e.entryPath, depsHash, usedExports } : { entryPath: e.entryPath, depsHash };
+                  }),
+                  ionifyDir
+                );
+                const groupId = result?.chunk_group ?? result?.chunkGroup ?? null;
+                if (!groupId || typeof groupId !== "string") throw new Error("Missing chunkGroupId");
+                broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+                const elapsed = Date.now() - start;
+                const sharedFileName = `shared.${groupId}.js`;
+                const sharedOut = import_path25.default.join(depsRoot, sharedFileName);
+                if (!import_fs23.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
+                const outByEntryPath = /* @__PURE__ */ new Map();
+                for (const item of resultsArr) {
+                  const entryPath = item?.entry_path ?? item?.entryPath ?? null;
+                  const outPath = item?.out_path ?? item?.outPath ?? null;
+                  if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
+                  const canonicalEntryPath = (() => {
+                    try {
+                      return import_fs23.default.realpathSync(entryPath);
+                    } catch {
+                      return entryPath;
+                    }
+                  })();
+                  outByEntryPath.set(canonicalEntryPath, import_path25.default.basename(outPath));
+                }
+                const slimEntries = [];
+                for (const base of baseEntries) {
+                  const canonicalBaseEntryPath = (() => {
+                    try {
+                      return import_fs23.default.realpathSync(base.entryPath);
+                    } catch {
+                      return base.entryPath;
+                    }
+                  })();
+                  const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
+                  if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, wrapperFileName))) {
+                    throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
+                  }
+                  slimEntries.push({
+                    baseFileName: base.fileName,
+                    wrapperFileName,
+                    entryPath: base.entryPath,
+                    packageLabel: base.packageLabel,
+                    usedExports: usedByBase.get(base.fileName) ?? []
+                  });
+                }
+                refreshDepsManifestIndex();
+                updateFeatureSlimState(next, {
+                  version: 1,
+                  depsHash,
+                  group: next,
+                  updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                  status: "ready",
+                  chunkGroupId: groupId,
+                  sharedFileName,
+                  entries: slimEntries
+                });
+                const fullSharedPath = import_path25.default.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = import_fs23.default.existsSync(fullSharedPath) ? import_fs23.default.statSync(fullSharedPath).size : 0;
+                const slimBytes = import_fs23.default.existsSync(sharedOut) ? import_fs23.default.statSync(sharedOut).size : 0;
+                const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
+                const savedLabel = saved > 0 ? ` (-${formatByteDelta2(saved)})` : "";
+                logInfo(`Slim pack ready: ${next}${savedLabel}`);
+              } catch (err) {
+                updateFeatureSlimState(next, {
+                  version: 1,
+                  depsHash,
+                  group: next,
+                  updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+                  status: "failed",
+                  chunkGroupId: null,
+                  sharedFileName: null,
+                  entries: featureSlimState.get(next)?.entries ?? [],
+                  error: String(err)
+                });
+                logWarn(`[deps] WARN: Feature pack slimming failed (${next}): ${String(err)}`);
+              }
+            }
+          } finally {
+            featureSlimBuildRunning = false;
+          }
+        })();
+      }, 800)
+    );
+  };
+  const enqueueFeatureBuild = (group) => {
+    if (!featurePacksEnabled) return;
+    if (!featureBuildQueue.includes(group)) {
+      featureBuildQueue.push(group);
+    }
+    if (featureBuildRunning) return;
+    featureBuildRunning = true;
+    void (async () => {
+      try {
+        while (featureBuildQueue.length) {
+          const next = featureBuildQueue.shift();
+          if (!next) continue;
+          while (activeRequests > 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          const state = featureState.get(next);
+          const entries = Array.isArray(state?.entries) ? state.entries.slice() : [];
+          if (!hasPositivePackRequestSavings(entries.length)) continue;
+          const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
+          const sharedFileName = `shared.${chunkGroupId}.js`;
+          const sharedPath = import_path25.default.join(depsRoot, sharedFileName);
+          const alreadyReady = import_fs23.default.existsSync(sharedPath) && entries.every((e) => import_fs23.default.existsSync(import_path25.default.join(depsRoot, e.fileName)));
+          if (alreadyReady) {
+            updateFeatureState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "ready",
+              chunkGroupId,
+              sharedFileName,
+              entries
+            });
+            if (packSlimmingEnabled) scheduleFeatureSlimBuild(next);
+            continue;
+          }
+          updateFeatureState(next, {
+            version: 1,
+            depsHash,
+            group: next,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            status: "building",
+            chunkGroupId,
+            sharedFileName,
+            entries
+          });
+          try {
+            const chunked = native?.optimizeDependenciesChunked;
+            if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+            const start = Date.now();
+            const result = chunked(entries.map((e) => ({ entryPath: e.entryPath, depsHash })), ionifyDir);
+            const groupId = result?.chunk_group ?? result?.chunkGroup ?? chunkGroupId;
+            const resolvedEntries2 = resolveChunkedPackEntries(
+              entries,
+              Array.isArray(result?.entries) ? result.entries.map((item) => ({
+                entryPath: item?.entry_path ?? item?.entryPath ?? null,
+                outPath: item?.out_path ?? item?.outPath ?? null
+              })) : []
+            );
+            broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+            const elapsed = Date.now() - start;
+            const sharedOut = import_path25.default.join(depsRoot, `shared.${groupId}.js`);
+            const ok = import_fs23.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs23.default.existsSync(import_path25.default.join(depsRoot, entry.fileName)));
+            if (!ok) {
+              throw new Error("Feature pack optimizer did not produce expected outputs");
+            }
+            refreshDepsManifestIndex();
+            for (const entry of resolvedEntries2) {
+              upsertObservedPackEntry(featureObserved, entry);
+            }
+            updateFeatureState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "ready",
+              chunkGroupId: groupId,
+              sharedFileName: `shared.${groupId}.js`,
+              entries: resolvedEntries2
+            });
+            logInfo(
+              `[deps] \u2713 Feature pack ready (${next}) group=${groupId} members=${resolvedEntries2.length} (${elapsed}ms). Reload to apply.`
+            );
+            if (packSlimmingEnabled) scheduleFeatureSlimBuild(next);
+          } catch (err) {
+            updateFeatureState(next, {
+              version: 1,
+              depsHash,
+              group: next,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              status: "failed",
+              chunkGroupId,
+              sharedFileName,
+              entries,
+              error: String(err)
+            });
+            logWarn(`[deps] WARN: Feature pack build failed (${next}): ${String(err)}`);
+          }
+        }
+      } finally {
+        featureBuildRunning = false;
+      }
+    })();
+  };
+  const scheduleFeatureBuild = (group) => {
+    if (!featurePacksEnabled) return;
+    const plannedSignature = plannedFeatureGroups.get(group);
+    if (!plannedSignature) return;
+    const existing = featureBuildTimers.get(group);
+    if (existing) clearTimeout(existing);
+    featureBuildTimers.set(
+      group,
+      setTimeout(() => {
+        featureBuildTimers.delete(group);
+        enqueueFeatureBuild(group);
+      }, 600)
+    );
+  };
+  const recordFeatureCandidate = (entry) => {
+    if (!featurePacksEnabled) return;
+    if (!entry.fileName || !entry.entryPath) return;
+    if (!import_fs23.default.existsSync(entry.entryPath)) return;
+    const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
+    if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) return;
+    const wasNew = upsertObservedPackEntry(featureObserved, {
+      entryPath: entry.entryPath,
+      fileName,
+      packageLabel: entry.packageLabel,
+      packageName: entry.packageName
+    });
+    if (!wasNew && featurePackFileNameToChunkGroup.has(fileName)) return;
+    replanFeaturePacks();
+  };
+  const seedFeatureCandidatesFromUsageIndex = (index) => {
+    if (!featurePacksEnabled || !index) return;
+    let changed = false;
+    for (const usage of index.values()) {
+      if (!usage?.fileName || !usage?.entryPath || !usage?.packageName) continue;
+      if (!import_fs23.default.existsSync(usage.entryPath)) continue;
+      const fileName = canonicalFileNameForEntry(usage.fileName, usage.entryPath);
+      if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) continue;
+      const subpath = typeof getDepEntry(fileName)?.subpath === "string" ? getDepEntry(fileName)?.subpath ?? null : computeSubpathFromEntryPath(usage.entryPath);
+      const wasNew = upsertObservedPackEntry(featureObserved, {
+        entryPath: usage.entryPath,
+        fileName,
+        packageLabel: formatDepLabel(usage.packageName, subpath),
+        packageName: usage.packageName
+      });
+      if (wasNew || !featurePackFileNameToChunkGroup.has(fileName)) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      replanFeaturePacks();
+    }
+  };
+  if (featurePacksEnabled && depUsageIndex) {
+    seedFeatureCandidatesFromUsageIndex(depUsageIndex);
+  } else if (featurePacksEnabled && featureObserved.size > 0) {
+    replanFeaturePacks();
+  }
+  const pkgNameFromLabel = (label) => {
+    if (!label) return null;
+    const at = label.lastIndexOf("@");
+    if (at <= 0) return null;
+    return label.slice(0, at) || null;
+  };
+  const observeDepForPackPlanning = (fileName) => {
+    if (!manualPacksEnabled && !featurePacksEnabled) return;
+    if (!fileName.endsWith(".js")) return;
+    if (fileName.startsWith("shared.") || fileName.startsWith("vendor.") || fileName.startsWith("vendor-pack.")) {
+      return;
+    }
+    if (vendorPackFileName && fileName === vendorPackFileName) return;
+    const entryFromManifest = depsManifestIndex.get(fileName);
+    let entryFromRegistry = getDepEntry(fileName);
+    let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
+    if (!entryPath) {
+      const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
+      if (recovered) {
+        entryFromRegistry = recovered;
+        entryPath = recovered.entryPath;
+      }
+    }
+    if (!entryPath || !import_fs23.default.existsSync(entryPath)) return;
+    const packageLabel = entryFromRegistry?.packageName ? formatDepLabel(entryFromRegistry.packageName, entryFromRegistry.subpath) : entryFromManifest?.packageLabel ?? fileName;
+    const packageName = entryFromRegistry?.packageName ?? pkgNameFromLabel(entryFromManifest?.packageLabel) ?? null;
+    const subpath = typeof entryFromRegistry?.subpath === "string" ? entryFromRegistry.subpath : null;
+    if (manualPacksEnabled) {
+      recordManualCandidate({
+        fileName,
+        entryPath,
+        packageLabel,
+        packageName,
+        subpath
+      });
+    }
+    if (featurePacksEnabled) {
+      recordFeatureCandidate({
+        fileName,
+        entryPath,
+        packageLabel,
+        packageName
+      });
+    }
+  };
+  let featurePackRoutingHashCache = null;
+  let vendorPackV2RoutingHashCache = null;
+  const resolveReactRefreshRuntimeImportStatement = () => {
+    let packImport = null;
+    if (manualPacksEnabled && manualHasCore && native?.resolveModule) {
+      try {
+        const coreState = manualState.get("core");
+        const coreChunkGroupId = coreState?.status === "ready" ? coreState.chunkGroupId : null;
+        const corePackFileName = coreChunkGroupId ? `vendor-pack.manual.core.${coreChunkGroupId}.js` : null;
+        if (corePackFileName && import_fs23.default.existsSync(import_path25.default.join(depsRoot, corePackFileName))) {
+          const r = native.resolveModule("react-refresh/runtime", rootDir);
+          const fsPath = r?.fsPath ?? r?.fs_path ?? null;
+          if (fsPath && typeof fsPath === "string") {
+            const pkg = r?.pkg ?? null;
+            const packageName = typeof pkg?.name === "string" ? pkg.name : "react-refresh";
+            const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+            const subpath = computeSubpathForDep2(fsPath, pkg);
+            const fileName = registerDepEntry({
+              entryPath: fsPath,
+              packageName,
+              packageVersion,
+              subpath
+            }).fileName;
+            if (!isCoreSingletonDepFileName(fileName)) {
+              const routedPack = vendorPackV2.fileNameToPackFile.get(fileName) ?? null;
+              if (routedPack === corePackFileName) {
+                const memberKey = vendorPackV2MemberKey(fileName);
+                packImport = `import { __ionify_vp_${memberKey}__default as RefreshRuntime } from "${DEPS_PREFIX2}${corePackFileName}"`;
+              }
+            }
+          }
+        }
+      } catch {
+        packImport = null;
+      }
+    }
+    if (packImport) return packImport;
+    let reactRefreshImport = null;
+    try {
+      const resolved = native?.resolveModule?.("react-refresh/runtime", rootDir);
+      const fsPath = resolved?.fsPath ?? resolved?.fs_path ?? null;
+      const pkg = resolved?.pkg ?? null;
+      if (typeof fsPath === "string") {
+        const packageName = typeof pkg?.name === "string" ? pkg.name : "react-refresh";
+        const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
+        const subpath = computeSubpathForDep2(fsPath, pkg);
+        const fileName = registerDepEntry({
+          entryPath: fsPath,
+          packageName,
+          packageVersion,
+          subpath
+        }).fileName;
+        reactRefreshImport = `${DEPS_PREFIX2}${fileName}`;
+      }
+    } catch {
+      reactRefreshImport = null;
+    }
+    if (!reactRefreshImport) {
+      try {
+        const ionifyRequire = (0, import_module4.createRequire)(importMetaUrl);
+        const reactRefreshPath = ionifyRequire.resolve("react-refresh/runtime");
+        const reactRefreshPkgPath = ionifyRequire.resolve("react-refresh/package.json");
+        const reactRefreshPkg = JSON.parse(import_fs23.default.readFileSync(reactRefreshPkgPath, "utf8"));
+        const fileName = registerDepEntry({
+          entryPath: reactRefreshPath,
+          packageName: "react-refresh",
+          packageVersion: typeof reactRefreshPkg?.version === "string" && reactRefreshPkg.version.trim().length > 0 ? reactRefreshPkg.version : "0.0.0",
+          subpath: computeSubpathFromEntryPath(reactRefreshPath)
+        }).fileName;
+        reactRefreshImport = `${DEPS_PREFIX2}${fileName}`;
+      } catch (err) {
+        logError("Failed to resolve react-refresh/runtime", err);
+        return null;
+      }
+    }
+    return `import RefreshRuntime from "${reactRefreshImport}"`;
+  };
+  const buildHmrClientAssetCode = () => {
+    try {
+      const hmrAsset = readClientAsset("hmr.js");
+      const refreshAsset = readClientAsset("react-refresh-runtime.js");
+      const refreshImport = resolveReactRefreshRuntimeImportStatement();
+      if (!refreshImport) return null;
+      const refreshCode = refreshAsset.replace(
+        'import RefreshRuntime from "react-refresh/runtime"',
+        refreshImport
+      );
+      return `${hmrAsset}
+
+${refreshCode}
+`;
+    } catch (err) {
+      logError("Failed to build HMR client asset", err);
+      return null;
+    }
+  };
+  const getFeaturePackRoutingHash = () => {
+    if (!featurePacksEnabled) return null;
+    if (!import_fs23.default.existsSync(featurePackIndexPath)) return null;
+    try {
+      const stat = import_fs23.default.statSync(featurePackIndexPath);
+      if (featurePackRoutingHashCache && featurePackRoutingHashCache.mtimeMs === stat.mtimeMs && featurePackRoutingHashCache.size === stat.size) {
+        return featurePackRoutingHashCache.hash;
+      }
+      const raw = JSON.parse(import_fs23.default.readFileSync(featurePackIndexPath, "utf8"));
+      const hash = hashFeaturePackRoutingIndex(
+        raw,
+        depsHash,
+        DEPS_OPTIMIZER_OUTPUT_VERSION
+      );
+      featurePackRoutingHashCache = { mtimeMs: stat.mtimeMs, size: stat.size, hash };
+      return hash;
+    } catch {
+      featurePackRoutingHashCache = null;
+      return null;
+    }
+  };
+  const getVendorPackV2RoutingHash = () => {
+    if (!import_fs23.default.existsSync(vendorPackV2IndexPath)) return null;
+    try {
+      const stat = import_fs23.default.statSync(vendorPackV2IndexPath);
+      if (vendorPackV2RoutingHashCache && vendorPackV2RoutingHashCache.mtimeMs === stat.mtimeMs && vendorPackV2RoutingHashCache.size === stat.size) {
+        return vendorPackV2RoutingHashCache.hash;
+      }
+      const raw = JSON.parse(import_fs23.default.readFileSync(vendorPackV2IndexPath, "utf8"));
+      const hash = hashVendorPackV2RoutingIndex(
+        raw,
+        depsHash,
+        DEPS_OPTIMIZER_OUTPUT_VERSION
+      );
+      vendorPackV2RoutingHashCache = { mtimeMs: stat.mtimeMs, size: stat.size, hash };
+      return hash;
+    } catch {
+      vendorPackV2RoutingHashCache = null;
+      return null;
+    }
+  };
+  const computeTransformHash = (baseHash) => {
+    const parts = [];
+    parts.push(`reactRefreshHmr:${REACT_REFRESH_HMR_CONTRACT_VERSION}`);
+    parts.push(`depsRouting:${depsHash}:${DEPS_OPTIMIZER_OUTPUT_VERSION}`);
+    parts.push(`vendorPackV2Policy:${VENDOR_PACK_V2_REWRITE_POLICY_VERSION}`);
+    const featureHash = getFeaturePackRoutingHash();
+    if (featureHash) parts.push(`featurePacks:${featureHash}`);
+    const vendorHash = getVendorPackV2RoutingHash();
+    if (vendorHash) parts.push(`vendorPackV2:${vendorHash}`);
+    if (parts.length === 0) return baseHash;
+    return getCacheKey(`${baseHash}|${parts.join("|")}`);
+  };
+  const rewriteIonifySharedChunkImportsForVendorPackV2 = (code) => {
+    if (!code.startsWith("// Ionify Shared Chunk")) return null;
+    if (!vendorPacksEnabled) return null;
+    if (vendorPackV2.fileNameToPackFile.size === 0) return null;
+    if (!code.includes(`${DEPS_PREFIX2}`)) return null;
+    const modulesMarker = "\nconst __ionifyModules";
+    const cutIndex = code.indexOf(modulesMarker);
+    const headEnd = cutIndex === -1 ? Math.min(code.length, 8 * 1024) : cutIndex;
+    const head = code.slice(0, headEnd);
+    const tail = code.slice(headEnd);
+    const lines = head.split("\n");
+    let mutated = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("//")) continue;
+      if (!trimmed.startsWith("import ")) break;
+      const defMatch = trimmed.match(/^import\s+([A-Za-z0-9_$]+)\s+from\s+["']\/@deps\/([^"']+)["'];?\s*$/);
+      if (defMatch) {
+        const local = defMatch[1];
+        const depFileName = defMatch[2];
+        if (isCoreSingletonDepFileName(depFileName)) continue;
+        const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
+        if (!packFileName) continue;
+        if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, packFileName))) continue;
+        const memberKey = vendorPackV2MemberKey(depFileName);
+        lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${DEPS_PREFIX2}${packFileName}";`;
+        mutated = true;
+        continue;
+      }
+      const nsMatch = trimmed.match(
+        /^import\s+\*\s+as\s+([A-Za-z0-9_$]+)\s+from\s+["']\/@deps\/([^"']+)["'];?\s*$/
+      );
+      if (nsMatch) {
+        const local = nsMatch[1];
+        const depFileName = nsMatch[2];
+        if (isCoreSingletonDepFileName(depFileName)) continue;
+        const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
+        if (!packFileName) continue;
+        if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, packFileName))) continue;
+        const memberKey = vendorPackV2MemberKey(depFileName);
+        lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${DEPS_PREFIX2}${packFileName}";`;
+        mutated = true;
+        continue;
+      }
+    }
+    if (!mutated) return null;
+    return `${lines.join("\n")}${tail}`;
+  };
+  const transformer = new TransformEngine({ casRoot, versionHash: configHash });
+  const baseCasExts = /* @__PURE__ */ new Set([
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".mts",
+    ".cts"
+  ]);
+  let baseCasPool = null;
+  const pendingBaseCas = /* @__PURE__ */ new Map();
+  let shuttingDown = false;
+  const getBaseCasPool = () => {
+    if (baseCasPool) return baseCasPool;
+    baseCasPool = new TransformWorkerPool({ size: 1 });
+    return baseCasPool;
+  };
+  const ensureBaseCasTransform = async (opts) => {
+    const ext = opts.ext.toLowerCase();
+    if (!baseCasExts.has(ext)) return;
+    if (opts.filePath.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) return;
+    if (!opts.baseHash) return;
+    const dir = getCasArtifactPath(casRoot, configHash, opts.baseHash);
+    const outFile = import_path25.default.join(dir, "transformed.js");
+    if (import_fs23.default.existsSync(outFile)) return;
+    const existing = pendingBaseCas.get(opts.baseHash);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const jobPromise = (async () => {
+      try {
+        const pool = getBaseCasPool();
+        const result = await pool.run({
+          id: opts.baseHash,
+          filePath: opts.filePath,
+          ext,
+          code: opts.code
+        });
+        if (result.error) {
+          logWarn(`[CAS] base transform failed for ${opts.filePath}: ${result.error}`);
+          return;
+        }
+        try {
+          import_fs23.default.mkdirSync(dir, { recursive: true });
+          const tmp = `${outFile}.tmp-${process.pid}-${Date.now()}`;
+          import_fs23.default.writeFileSync(tmp, result.code, "utf8");
+          import_fs23.default.renameSync(tmp, outFile);
+          if (result.map) {
+            const mapFile = `${outFile}.map`;
+            const tmpMap = `${mapFile}.tmp-${process.pid}-${Date.now()}`;
+            import_fs23.default.writeFileSync(tmpMap, result.map, "utf8");
+            import_fs23.default.renameSync(tmpMap, mapFile);
+          }
+        } catch {
+        }
+      } finally {
+        pendingBaseCas.delete(opts.baseHash);
+      }
+    })();
+    pendingBaseCas.set(opts.baseHash, jobPromise);
+    await jobPromise;
+  };
+  const pendingWatchedDeps = /* @__PURE__ */ new Set();
+  let pendingWatchFlush = false;
+  const scheduleDependencyWatches = (depsAbs) => {
+    if (shuttingDown) return;
+    for (const dep of depsAbs) {
+      if (typeof dep === "string" && dep.length > 0) pendingWatchedDeps.add(dep);
+    }
+    if (pendingWatchFlush || pendingWatchedDeps.size === 0) return;
+    pendingWatchFlush = true;
+    setImmediate(() => {
+      if (shuttingDown) {
+        pendingWatchFlush = false;
+        pendingWatchedDeps.clear();
+        return;
+      }
+      pendingWatchFlush = false;
+      const batch = Array.from(pendingWatchedDeps);
+      pendingWatchedDeps.clear();
+      for (const dep of batch) {
+        try {
+          watcher.watchFile(dep);
+        } catch {
+        }
+      }
+    });
+  };
+  const scheduleBaseCasTransform = (opts) => {
+    if (shuttingDown) return;
+    setImmediate(() => {
+      if (shuttingDown) return;
+      void ensureBaseCasTransform(opts).catch(() => {
+      });
+    });
+  };
+  const graph = new Graph(rawVersionInputs, { ionifyDir });
+  const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
+  if (userConfig?.federation) {
+    syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
+  }
+  if (native?.initAstCache) {
+    const versionHash = JSON.stringify(rawVersionInputs);
+    native.initAstCache(versionHash);
+    logInfo(`AST cache initialized with version hash`);
+    if (native?.astCacheWarmup) {
+      try {
+        native.astCacheWarmup();
+      } catch (err) {
+        logWarn(`AST cache warmup skipped: ${err}`);
+      }
+    }
+    if (native?.astCacheStats) {
+      try {
+        const stats = native.astCacheStats();
+        const entries = stats.total_entries ?? stats.totalEntries ?? 0;
+        const sizeBytes = stats.total_size_bytes ?? stats.totalSizeBytes ?? 0;
+        const hits = stats.total_hits ?? stats.totalHits ?? 0;
+        const hitRate = stats.hit_rate ?? stats.hitRate ?? 0;
+        logInfo(`[AST Cache] entries=${entries}, size=${sizeBytes} bytes, hits=${hits}, hitRate=${hitRate}`);
+      } catch {
+      }
+    }
+  }
+  const moduleResolver = new ModuleResolver(rootDir, {
+    extensions: [".ts", ".tsx", ".js", ".jsx", ".json", ".mjs"],
+    conditions: ["import", "default"],
+    mainFields: ["module", "main"],
+    ...userConfig?.resolve || {}
+  });
+  await applyRegisteredLoaders(transformer, userConfig);
+  const hmr = new HMRServer();
+  const peerDepWarningSet = /* @__PURE__ */ new Set();
+  const peerDepWarningLog = [];
+  function broadcastPeerDepWarnings(warnings) {
+    if (!warnings || warnings.length === 0) return;
+    const freshWarnings = [];
+    for (const msg of warnings) {
+      if (typeof msg !== "string" || msg.length === 0 || peerDepWarningSet.has(msg)) continue;
+      peerDepWarningSet.add(msg);
+      peerDepWarningLog.push(msg);
+      freshWarnings.push(msg);
+    }
+    if (freshWarnings.length === 0) return;
+    for (const msg of freshWarnings) {
+      logWarn(`[deps] ${msg}`);
+    }
+    hmr.broadcastEvent("peer-dep-warning", { warnings: peerDepWarningLog.slice() }, { retain: true });
+  }
+  const envFromFiles = loadEnv(envMode, rootDir);
+  process.env.NODE_ENV = process.env.NODE_ENV ?? "development";
+  process.env.MODE = envMode;
+  const envValues = {
+    ...envFromFiles,
+    NODE_ENV: process.env.NODE_ENV,
+    MODE: process.env.MODE
+  };
+  const envPrefix = userConfig?.envPrefix || ["VITE_", "IONIFY_"];
+  const defineConfig = buildDefineConfig(userConfig?.define, envValues, envPrefix);
+  logInfo(`[define] ${Object.keys(defineConfig).length} replacements configured`);
+  const envEnabledExts = /* @__PURE__ */ new Set([
+    ".html",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".jsx"
+  ]);
+  const applyEnvPlaceholders = (input, extname) => {
+    if (!envEnabledExts.has(extname)) return input;
+    return substituteEnvPlaceholders(input, envValues, envPrefix);
+  };
+  const parseJsonBody = async (req) => {
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => resolve());
+      req.on("error", (err) => reject(err));
+    });
+    if (!chunks.length) return null;
+    const raw = Buffer.concat(chunks).toString("utf8");
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  };
+  const sendJson = (res, status, payload) => {
+    const body = JSON.stringify(payload);
+    res.writeHead(status, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    });
+    res.end(body);
+  };
+  const buildUpdatePayload = async (modules) => {
+    const updates = [];
+    for (const mod of modules) {
+      const exists = import_fs23.default.existsSync(mod.absPath);
+      if (mod.reason === "deleted" || !exists) {
+        graph.removeFile(mod.absPath);
+        watcher.unwatchFile(mod.absPath);
+        updates.push({
+          url: mod.url,
+          hash: null,
+          deps: [],
+          reason: mod.reason,
+          status: "deleted"
+        });
+        continue;
+      }
+      watcher.watchFile(mod.absPath);
+      const ext = import_path25.default.extname(mod.absPath).toLowerCase();
+      if (isCssLikeExt(ext)) {
+        let hash2 = mod.hash;
+        if (!hash2) {
+          try {
+            hash2 = getCacheKey(import_fs23.default.readFileSync(mod.absPath, "utf8"));
+          } catch {
+            hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
+          }
+        }
+        const depsAbs = graph.getNode(mod.absPath)?.deps ?? [];
+        graph.recordFile(mod.absPath, hash2, depsAbs, [], "css");
+        updates.push({
+          url: mod.url,
+          hash: hash2,
+          deps: depsAbs.map((dep) => normalizeUrlFromFs(rootDir, dep)),
+          reason: mod.reason,
+          status: "updated",
+          code: ""
+        });
+        continue;
+      }
+      if (isAssetExt(ext)) {
+        let hash2 = mod.hash;
+        if (!hash2) {
+          try {
+            const buf = import_fs23.default.readFileSync(mod.absPath);
+            hash2 = import_crypto8.default.createHash("sha256").update(buf).digest("hex");
+          } catch {
+            hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
+          }
+        }
+        graph.recordFile(mod.absPath, hash2, [], [], "asset");
+        updates.push({
+          url: mod.url,
+          hash: hash2,
+          deps: [],
+          reason: mod.reason,
+          status: "updated",
+          code: ""
+        });
+        continue;
+      }
+      let code;
+      try {
+        code = import_fs23.default.readFileSync(mod.absPath, "utf8");
+      } catch (err) {
+        logError("Failed to read module during HMR apply", err);
+        throw err;
+      }
+      let hash;
+      let specs;
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(mod.absPath, code);
+          hash = ir.hash;
+          specs = ir.dependencies.map((dep) => dep.specifier);
+        } catch {
+          hash = getCacheKey(code);
+          specs = extractImports(code, mod.absPath);
+        }
+      } else {
+        hash = getCacheKey(code);
+        specs = extractImports(code, mod.absPath);
+      }
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        mod.absPath,
+        configuredExternalSpecifiers
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings
+      );
+      enqueueLocalGraphCompletion(localDeps);
+      graph.recordFile(mod.absPath, hash, nextDeps);
+      scheduleDependencyWatches(localDeps);
+      if (isEntryModule(mod.absPath, userConfig ?? void 0) || hasReactRootRenderSideEffect(code)) {
+        updates.push({
+          url: mod.url,
+          hash,
+          deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
+          reason: mod.reason,
+          status: "reload"
+        });
+        continue;
+      }
+      const extName = import_path25.default.extname(mod.absPath);
+      const result = await transformer.run({
+        path: mod.absPath,
+        code,
+        ext: extName,
+        moduleHash: computeTransformHash(hash),
+        config: userConfig ?? null
+      });
+      scheduleBaseCasTransform({
+        filePath: mod.absPath,
+        ext: extName,
+        code,
+        baseHash: hash
+      });
+      const transformed = result.code;
+      const envApplied = applyEnvPlaceholders(
+        transformed,
+        extName
+      );
+      updates.push({
+        url: mod.url,
+        hash,
+        deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
+        reason: mod.reason,
+        status: "updated",
+        code: envApplied
+      });
+    }
+    return updates;
+  };
+  const requestHandler = async (req, res) => {
+    activeRequests += 1;
+    if (papRunningLevel === "artifacts") {
+      cancelProductionArtifactsPublication("active-request");
+    }
+    try {
+      const parsed = import_url6.default.parse(req.url || "/", true);
+      let reqPath = parsed.pathname || "/";
+      try {
+        reqPath = decodeURIComponent(reqPath);
+      } catch {
+      }
+      const q = parsed.query || {};
+      const requestUrlWithQuery = `${reqPath}${parsed.search ?? ""}`;
+      const routeHintClientKey = buildRouteHintClientKey(req);
+      const routeHintReferer = Array.isArray(req.headers.referer) ? req.headers.referer[0] ?? null : req.headers.referer ?? null;
+      const routeHintObservedAtMs = Date.now();
+      if (reqPath === "/__ionify_hmr") {
+        hmr.handleSSE(req, res);
+        return;
+      }
+      if (reqPath === "/__ionify_hmr_client.js") {
+        const code2 = buildHmrClientAssetCode();
+        if (!code2) {
+          res.statusCode = 500;
+          res.end("Failed to build HMR client");
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+        res.end(code2);
+        return;
+      }
+      if (reqPath === "/__ionify_overlay.js") {
+        res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+        res.end(readClientAsset("overlay.js"));
+        return;
+      }
+      if (reqPath === "/__ionify_react_refresh.js") {
+        try {
+          const asset = readClientAsset("react-refresh-runtime.js");
+          const refreshImport = resolveReactRefreshRuntimeImportStatement();
+          if (!refreshImport) {
+            res.statusCode = 500;
+            res.end("Failed to resolve react-refresh/runtime. Make sure react-refresh is installed.");
+            return;
+          }
+          const code2 = asset.replace(
+            'import RefreshRuntime from "react-refresh/runtime"',
+            refreshImport
+          );
+          res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+          res.end(code2);
+        } catch (err) {
+          logError("Failed to serve react refresh runtime", err);
+          res.statusCode = 500;
+          res.end("Internal Server Error");
+        }
+        return;
+      }
+      if (reqPath === "/__ionify_hmr/apply") {
+        if (req.method !== "POST") {
+          res.writeHead(405, { Allow: "POST" });
+          res.end("Method Not Allowed");
+          return;
+        }
+        let body;
+        try {
+          body = await parseJsonBody(req);
+        } catch (err) {
+          logError("Invalid JSON body for HMR apply", err);
+          sendJson(res, 400, { error: "Invalid JSON body" });
+          return;
+        }
+        const id = typeof body?.id === "string" ? body.id : null;
+        if (!id) {
+          sendJson(res, 400, { error: "Missing update id" });
+          return;
+        }
+        const pending = hmr.consumeUpdate(id);
+        if (!pending) {
+          sendJson(res, 404, { error: "Update not found", id });
+          return;
+        }
+        try {
+          const modules = await buildUpdatePayload(pending.modules);
+          sendJson(res, 200, {
+            type: "update",
+            id: pending.summary.id,
+            timestamp: Date.now(),
+            modules
+          });
+        } catch (err) {
+          logError("Failed to build HMR update payload", err);
+          hmr.broadcastError({
+            id,
+            message: "Failed to compile update; falling back to full reload"
+          });
+          sendJson(res, 500, { error: "Failed to compile update", id });
+        }
+        return;
+      }
+      if (reqPath === "/__ionify_hmr/error") {
+        if (req.method !== "POST") {
+          res.writeHead(405, { Allow: "POST" });
+          res.end("Method Not Allowed");
+          return;
+        }
+        let body;
+        try {
+          body = await parseJsonBody(req);
+        } catch {
+          body = null;
+        }
+        const id = typeof body?.id === "string" ? body.id : void 0;
+        const message = typeof body?.message === "string" ? body.message : "Unknown HMR error";
+        logError(`[HMR] client reported error${id ? ` ${id}` : ""}: ${message}`);
+        hmr.broadcastError({ id, message });
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (reqPath === "/__ionify_startup/report") {
+        if (!startupPolicyEnabled) {
+          res.statusCode = 404;
+          res.end("Not found");
+          return;
+        }
+        if (req.method !== "POST") {
+          res.writeHead(405, { Allow: "POST" });
+          res.end("Method Not Allowed");
+          return;
+        }
+        let body;
+        try {
+          body = await parseJsonBody(req);
+        } catch {
+          body = null;
+        }
+        const routeKey = normalizeDocumentRouteKey(typeof body?.routeKey === "string" ? body.routeKey : "/");
+        const preFcpLoadedUrls = Array.isArray(body?.preFcpLoadedUrls) ? body.preFcpLoadedUrls.filter((value) => {
+          if (typeof value !== "string" || !value.startsWith("/")) return false;
+          return isRouteHintPreloadValid(value, value.startsWith(DEPS_PREFIX2) ? "dep" : "source");
+        }) : [];
+        const preFcpEvaluatedUrls = Array.isArray(body?.preFcpEvaluatedUrls) ? body.preFcpEvaluatedUrls.filter((value) => {
+          if (typeof value !== "string" || !value.startsWith("/")) return false;
+          return isRouteHintPreloadValid(value, value.startsWith(DEPS_PREFIX2) ? "dep" : "source");
+        }) : [];
+        startupObservations.recordRouteObservation({
+          routeKey,
+          preFcpLoadedUrls,
+          preFcpEvaluatedUrls
+        });
+        refreshStartupPolicySnapshot();
+        scheduleProductionArtifactPublication(`startup-report:${routeKey}`);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (reqPath.startsWith(DEPS_PREFIX2)) {
+        const fileName = reqPath.slice(DEPS_PREFIX2.length);
+        if (fileName.endsWith(".js")) bumpDevStable();
+        if (vendorPackFileName && fileName === vendorPackFileName) {
+          ensureVendorPackFile();
+        }
+        if (fileName.endsWith(".js.map")) {
+          const mapPath = import_path25.default.join(depsRoot, fileName);
+          if (import_fs23.default.existsSync(mapPath)) {
+            const stat = import_fs23.default.statSync(mapPath);
+            const etag = weakEtagFromStat(`deps-map-${depsHash}`, stat);
+            if (isNotModified(req, etag)) {
+              res.setHeader("ETag", etag);
+              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.statusCode = 304;
+              res.end();
+              return;
+            }
+            sendBuffer(
+              req,
+              res,
+              200,
+              "application/json; charset=utf-8",
+              import_fs23.default.readFileSync(mapPath),
+              { etag, cacheControl: "public, max-age=31536000, immutable" }
+            );
+            return;
+          }
+        }
+        if (vendorPackSessionRequestCounts && fileName.endsWith(".js") && !fileName.startsWith("shared.") && (!vendorPackFileName || fileName !== vendorPackFileName)) {
+          vendorPackSessionRequestCounts.set(
+            fileName,
+            (vendorPackSessionRequestCounts.get(fileName) ?? 0) + 1
+          );
+          vendorPackRequestCountsDirty = true;
+          flushVendorPackRequestCounts(false);
+        }
+        const depsFilePath = import_path25.default.join(depsRoot, fileName);
+        const entryFromManifest = depsManifestIndex.get(fileName);
+        let entryFromRegistry = getDepEntry(fileName);
+        let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
+        let packageLabel = entryFromRegistry?.packageName ? formatDepLabel(entryFromRegistry.packageName, entryFromRegistry.subpath) : entryFromManifest?.packageLabel ?? fileName;
+        const observeRouteHintDepRequest = () => {
+          if (!fileName.endsWith(".js")) return;
+          routeHints.noteRequest({
+            url: requestUrlWithQuery,
+            kind: "dep",
+            refererUrl: routeHintReferer,
+            clientKey: routeHintClientKey,
+            observedAtMs: routeHintObservedAtMs
+          });
+        };
+        if (!entryPath && fileName.endsWith(".js") && !fileName.startsWith("shared.") && !fileName.startsWith("vendor.") && !!native?.resolveModule) {
+          const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
+          if (recovered) {
+            entryFromRegistry = recovered;
+            entryPath = recovered.entryPath;
+            packageLabel = recovered.packageName ? formatDepLabel(recovered.packageName, recovered.subpath) : packageLabel;
+          }
+        }
+        observeDepForPackPlanning(fileName);
+        const isVersionedDepWrapper = fileName.endsWith(".js") && !fileName.startsWith("shared.") && !fileName.startsWith("vendor.") && !fileName.startsWith("vendor-pack.");
+        const manifestVersionCurrent = !isVersionedDepWrapper || // No manifest entry means no recorded version — treat the on-disk file as current
+        // (it may have been written directly, e.g. by tests or external tooling).
+        // Only trigger a stale-rebuild when an entry exists WITH a mismatched outputVersion.
+        !entryFromManifest || entryFromManifest.outputVersion === DEPS_OPTIMIZER_OUTPUT_VERSION;
+        if (import_fs23.default.existsSync(depsFilePath) && manifestVersionCurrent) {
+          observeRouteHintDepRequest();
+          const vendorV2Hash = getVendorPackV2RoutingHash();
+          if (vendorV2Hash && fileName.startsWith("shared.") && fileName.endsWith(".js")) {
+            const stat2 = import_fs23.default.statSync(depsFilePath);
+            const etag2 = weakEtagFromStat(`deps-${depsHash}-vp2-${vendorV2Hash}`, stat2);
+            if (isNotModified(req, etag2)) {
+              res.setHeader("ETag", etag2);
+              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.statusCode = 304;
+              res.end();
+              logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304) (vp2)`);
+              return;
+            }
+            const raw = import_fs23.default.readFileSync(depsFilePath, "utf8");
+            const rewritten = rewriteIonifySharedChunkImportsForVendorPackV2(raw) ?? raw;
+            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(Buffer.from(rewritten, "utf8")), {
+              etag: etag2,
+              cacheControl: "public, max-age=31536000, immutable"
+            });
+            logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (vp2)`);
+            return;
+          }
+          const variant = selectPrecompressedVariant(req, depsFilePath);
+          if (variant) {
+            sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
+              etagPrefix: `deps-${depsHash}`,
+              cacheControl: "public, max-age=31536000, immutable"
+            });
+            const status = res.statusCode === 304 ? " (304)" : "";
+            logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache${status} (${variant.encoding})`);
+            return;
+          }
+          const stat = import_fs23.default.statSync(depsFilePath);
+          const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+          if (isNotModified(req, etag)) {
+            res.setHeader("ETag", etag);
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.statusCode = 304;
+            res.end();
+            logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304)`);
+            return;
+          }
+          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs23.default.readFileSync(depsFilePath)), {
+            etag,
+            cacheControl: "public, max-age=31536000, immutable"
+          });
+          logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache`);
+          return;
+        }
+        if (import_fs23.default.existsSync(depsFilePath) && !manifestVersionCurrent) {
+          try {
+            import_fs23.default.rmSync(depsFilePath, { force: true });
+            import_fs23.default.rmSync(`${depsFilePath}.gz`, { force: true });
+            import_fs23.default.rmSync(`${depsFilePath}.map`, { force: true });
+          } catch {
+          }
+          logInfo(
+            `[deps] OPTIMIZE ${packageLabel}: STALE cache (outputVersion=${entryFromManifest?.outputVersion ?? 0} expected=${DEPS_OPTIMIZER_OUTPUT_VERSION}) \u2192 REBUILD`
+          );
+        }
+        if (canChunkVendorPacks && vendorPackEntries.length > 1 && (vendorPackDepFileNames.has(fileName) || vendorPackSharedFileName && fileName === vendorPackSharedFileName)) {
+          try {
+            const start = Date.now();
+            const rawSize = entryPath && import_fs23.default.existsSync(entryPath) ? import_fs23.default.statSync(entryPath).size : 0;
+            const chunked = native?.optimizeDependenciesChunked;
+            if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+            const result2 = chunked(
+              vendorPackEntries.map((d) => ({ entryPath: d.entryPath, depsHash })),
+              ionifyDir
+            );
+            broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
+            const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
+            const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
+            if (!import_fs23.default.existsSync(depsFilePath)) {
+              throw new Error("Vendor pack optimizer did not produce requested file");
+            }
+            const stat = import_fs23.default.statSync(depsFilePath);
+            const optimizedSize = stat.size;
+            const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+            observeRouteHintDepRequest();
+            const variant = selectPrecompressedVariant(req, depsFilePath);
+            if (variant) {
+              sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
+                etagPrefix: `deps-${depsHash}`,
+                cacheControl: "public, max-age=31536000, immutable"
+              });
+            } else {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs23.default.readFileSync(depsFilePath)), {
+                etag,
+                cacheControl: "public, max-age=31536000, immutable"
+              });
+            }
+            const elapsed = Date.now() - start;
+            const rawKb = (rawSize / 1024).toFixed(1);
+            const optKb = (optimizedSize / 1024).toFixed(1);
+            const chunkCount = Array.isArray(chunks) ? chunks.length : 0;
+            logInfo(
+              `[deps] OPTIMIZE ${packageLabel}: MISS \u2192 BUILD (vendor pack group=${group}, ${elapsed}ms, ${rawKb}KB \u2192 ${optKb}KB, chunks=${chunkCount})`
+            );
+            refreshDepsManifestIndex();
+            observeDepForPackPlanning(fileName);
+            return;
+          } catch (err) {
+            logWarn(
+              `[deps] WARN: Vendor pack optimization failed for ${packageLabel}, falling back to per-entry: ${String(err)}`
+            );
+          }
+        }
+        if (canChunkVendorCore && (vendorDepFileNames.has(fileName) || vendorCoreSharedFileName && fileName === vendorCoreSharedFileName)) {
+          try {
+            const start = Date.now();
+            const rawSize = entryPath && import_fs23.default.existsSync(entryPath) ? import_fs23.default.statSync(entryPath).size : 0;
+            const chunked = native?.optimizeDependenciesChunked;
+            if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+            const result2 = chunked(
+              vendorDeps.map((d) => ({ entryPath: d.entryPath, depsHash })),
+              ionifyDir
+            );
+            broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
+            const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
+            const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
+            if (!import_fs23.default.existsSync(depsFilePath)) {
+              throw new Error("Chunked optimizer did not produce requested file");
+            }
+            const stat = import_fs23.default.statSync(depsFilePath);
+            const optimizedSize = stat.size;
+            const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+            observeRouteHintDepRequest();
+            const variant = selectPrecompressedVariant(req, depsFilePath);
+            if (variant) {
+              sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
+                etagPrefix: `deps-${depsHash}`,
+                cacheControl: "public, max-age=31536000, immutable"
+              });
+            } else {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs23.default.readFileSync(depsFilePath)), {
+                etag,
+                cacheControl: "public, max-age=31536000, immutable"
+              });
+            }
+            const elapsed = Date.now() - start;
+            const rawKb = (rawSize / 1024).toFixed(1);
+            const optKb = (optimizedSize / 1024).toFixed(1);
+            const chunkCount = Array.isArray(chunks) ? chunks.length : 0;
+            logInfo(
+              `[deps] OPTIMIZE ${packageLabel}: MISS \u2192 BUILD (chunked group=${group}, ${elapsed}ms, ${rawKb}KB \u2192 ${optKb}KB, chunks=${chunkCount})`
+            );
+            refreshDepsManifestIndex();
+            observeDepForPackPlanning(fileName);
+            return;
+          } catch (err) {
+            logWarn(
+              `[deps] WARN: Chunked optimization failed for ${packageLabel}, falling back to per-entry: ${String(err)}`
+            );
+          }
+        }
+        if (!entryPath || !native?.optimizeDependency) {
+          res.statusCode = 404;
+          res.end("Dependency not found");
+          return;
+        }
+        try {
+          const start = Date.now();
+          const rawSize = import_fs23.default.existsSync(entryPath) ? import_fs23.default.statSync(entryPath).size : 0;
+          const result2 = native.optimizeDependency(
+            entryPath,
+            depsHash,
+            depsSourcemapEnabled,
+            depsBundleEsmEnabled,
+            ionifyDir
+          );
+          broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
+          const outPath = result2?.out_path ?? result2?.outPath ?? depsFilePath;
+          const mapPath = result2?.map_path ?? result2?.mapPath ?? null;
+          const resolvedOutPath = import_path25.default.isAbsolute(outPath) ? outPath : import_path25.default.join(depsRoot, outPath);
+          if (!import_fs23.default.existsSync(resolvedOutPath)) {
+            throw new Error("Optimizer did not produce output");
+          }
+          const stat = import_fs23.default.statSync(resolvedOutPath);
+          const optimizedSize = stat.size;
+          const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
+          observeRouteHintDepRequest();
+          const variant = selectPrecompressedVariant(req, resolvedOutPath);
+          if (variant) {
+            sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
+              etagPrefix: `deps-${depsHash}`,
+              cacheControl: "public, max-age=31536000, immutable"
+            });
+          } else {
+            const outBuffer = import_fs23.default.readFileSync(resolvedOutPath);
+            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(outBuffer), {
+              etag,
+              cacheControl: "public, max-age=31536000, immutable"
+            });
+          }
+          const elapsed = Date.now() - start;
+          const rawKb = (rawSize / 1024).toFixed(1);
+          const optKb = (optimizedSize / 1024).toFixed(1);
+          const mapSuffix = mapPath ? ` map=${import_path25.default.basename(mapPath)}` : "";
+          logInfo(`[deps] OPTIMIZE ${packageLabel}: MISS \u2192 BUILD (${elapsed}ms, ${rawKb}KB \u2192 ${optKb}KB)${mapSuffix}`);
+          refreshDepsManifestIndex();
+          observeDepForPackPlanning(fileName);
+          return;
+        } catch (err) {
+          logWarn(
+            `[deps] WARN: Optimization failed for ${packageLabel}; refusing raw fallback to preserve /@deps contract: ${String(err)}`
+          );
+          res.statusCode = 500;
+          res.end("Dependency optimization failed");
+          return;
+        }
+      }
+      let fsPath = null;
+      let isPublicFile = false;
+      if (publicDirAbs && shouldTryPublicDir(reqPath)) {
+        const candidate = decodePublicDirPath(publicDirAbs, reqPath);
+        if (candidate && import_fs23.default.existsSync(candidate)) {
+          fsPath = candidate;
+          isPublicFile = true;
+        }
+      }
+      if (!fsPath) {
+        fsPath = decodePublicPath(rootDir, reqPath, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
+      }
+      if (!fsPath) {
+        res.statusCode = 404;
+        res.end("Not found");
+        return;
+      }
+      let effectiveFsPath = fsPath;
+      let effectiveUrlPath = reqPath;
+      if (import_fs23.default.existsSync(effectiveFsPath) && import_fs23.default.statSync(effectiveFsPath).isDirectory()) {
+        const indexExtensions = [".html", ".js", ".ts", ".tsx", ".jsx"];
+        let found = false;
+        for (const ext2 of indexExtensions) {
+          const indexFile = import_path25.default.join(effectiveFsPath, `index${ext2}`);
+          if (import_fs23.default.existsSync(indexFile)) {
+            effectiveFsPath = indexFile;
+            effectiveUrlPath = effectiveUrlPath.endsWith("/") ? `${effectiveUrlPath}index${ext2}` : `${effectiveUrlPath}/index${ext2}`;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const packageJson = import_path25.default.join(effectiveFsPath, "package.json");
+          if (import_fs23.default.existsSync(packageJson)) {
+            try {
+              const pkg = JSON.parse(import_fs23.default.readFileSync(packageJson, "utf8"));
+              if (pkg.main) {
+                const mainFile = import_path25.default.join(effectiveFsPath, pkg.main);
+                if (import_fs23.default.existsSync(mainFile)) {
+                  effectiveFsPath = mainFile;
+                  found = true;
+                }
+              }
+            } catch (e) {
+            }
+          }
+        }
+        if (!found) {
+          for (const ext2 of indexExtensions) {
+            const moduleFile = import_path25.default.join(effectiveFsPath, `module${ext2}`);
+            if (import_fs23.default.existsSync(moduleFile)) {
+              effectiveFsPath = moduleFile;
+              found = true;
+              break;
+            }
+          }
+        }
+        if (!found) {
+          if (isHtmlNavigationRequest(req, reqPath, q, spaFallback) && spaFallback.entryFilePath) {
+            effectiveFsPath = spaFallback.entryFilePath;
+            isPublicFile = false;
+          } else {
+            res.statusCode = 404;
+            res.end("Module not found");
+            return;
+          }
+        }
+      }
+      if (!import_fs23.default.existsSync(effectiveFsPath)) {
+        if (isHtmlNavigationRequest(req, reqPath, q, spaFallback) && spaFallback.entryFilePath) {
+          effectiveFsPath = spaFallback.entryFilePath;
+          isPublicFile = false;
+        } else {
+          res.statusCode = 404;
+          res.end("Not found");
+          return;
+        }
+      }
+      if (!import_fs23.default.existsSync(effectiveFsPath)) {
+        res.statusCode = 404;
+        res.end("Not found");
+        return;
+      }
+      const ext = import_path25.default.extname(effectiveFsPath);
+      if (isPublicFile && !isAssetExt(ext)) {
+        try {
+          watcher.watchFile(effectiveFsPath);
+        } catch {
+        }
+        res.writeHead(200, { "Content-Type": guessContentType(effectiveFsPath) });
+        import_fs23.default.createReadStream(effectiveFsPath).pipe(res);
+        return;
+      }
+      if (isAssetExt(ext)) {
+        try {
+          const data = import_fs23.default.readFileSync(effectiveFsPath);
+          const assetHash = import_crypto8.default.createHash("sha256").update(data).digest("hex");
+          const kind = "asset";
+          const changed2 = graph.recordFile(effectiveFsPath, assetHash, [], [], kind);
+          watcher.watchFile(effectiveFsPath);
+          if (changed2) {
+            logInfo(`[Graph] Asset updated: ${effectiveFsPath}`);
+          }
+        } catch {
+        }
+        if ("import" in q) {
+          const urlPath = isPublicFile ? effectiveUrlPath : normalizeUrlFromFs(rootDir, effectiveFsPath);
+          const js = assetAsModule(urlPath);
+          res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+          res.end(js);
+          return;
+        } else {
+          res.writeHead(200, { "Content-Type": contentTypeForAsset(ext) });
+          import_fs23.default.createReadStream(effectiveFsPath).pipe(res);
+          return;
+        }
+      }
+      if (isCssLikeExt(ext)) {
+        try {
+          const cssSource = import_fs23.default.readFileSync(effectiveFsPath, "utf8");
+          const isModule = "module" in q || isCssModuleLikePath(effectiveFsPath);
+          const mode2 = "raw" in q ? "css:raw-string" : "url" in q ? "css:url" : isModule ? "css:module" : "inline" in q ? "css:inline" : "css:raw";
+          const contentHash = getCacheKey(cssSource);
+          const baseCssDir = getCasArtifactPath(casRoot, configHash, contentHash);
+          const baseCssFile = import_path25.default.join(baseCssDir, "transformed.css");
+          watcher.watchFile(effectiveFsPath);
+          const kind = "css";
+          const prevDeps = graph.getNode(effectiveFsPath)?.deps ?? [];
+          graph.recordStructuralFiles(prevDeps);
+          scheduleDependencyWatches(prevDeps);
+          const depsStampHash = computeDepsStampHash(prevDeps);
+          let artifactHash = getCacheKey(
+            `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${depsStampHash}`
+          );
+          let casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+          const jsMode = mode2 !== "css:raw";
+          let casFile = import_path25.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+          let finalBuffer = null;
+          if (import_fs23.default.existsSync(casFile)) {
+            try {
+              finalBuffer = import_fs23.default.readFileSync(casFile);
+              const ok = jsMode ? looksLikeIonifyCssJsModule(finalBuffer) : !looksLikeIonifyCssJsModule(finalBuffer);
+              if (ok) {
+                res.setHeader("X-Ionify-Cache", "HIT");
+              } else {
+                finalBuffer = null;
+                res.setHeader("X-Ionify-Cache", "MISMATCH");
+              }
+            } catch {
+              finalBuffer = null;
+            }
+          }
+          if (finalBuffer && !import_fs23.default.existsSync(baseCssFile)) {
+            try {
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+                code: cssSource,
+                filePath: effectiveFsPath,
+                rootDir,
+                modules: isModule,
+                preprocessorOptions: userConfig?.css?.preprocessorOptions
+              });
+              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
+              graph.recordStructuralFiles(depsAbs);
+              const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              if (changed2) {
+                logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
+              }
+              scheduleDependencyWatches(depsAbs);
+              import_fs23.default.mkdirSync(baseCssDir, { recursive: true });
+              const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
+              import_fs23.default.writeFileSync(tmp, compiledCss, "utf8");
+              import_fs23.default.renameSync(tmp, baseCssFile);
+              const metaPath = import_path25.default.join(baseCssDir, "meta.json");
+              if (!import_fs23.default.existsSync(metaPath)) {
+                writeJsonFile4(metaPath, {
+                  version: 1,
+                  baseHash: contentHash,
+                  pipelineHash,
+                  deps: depsAbs.slice().sort(),
+                  urlDeps: [],
+                  modules: isModule,
+                  generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+                });
+              }
+              if (isModule && tokens) {
+                const tokPath = import_path25.default.join(baseCssDir, "tokens.json");
+                if (!import_fs23.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+              }
+            } catch {
+            }
+          }
+          if (!finalBuffer) {
+            let body;
+            if (mode2 === "css:url") {
+              const rawUrl = `${effectiveUrlPath}?v=${contentHash}-${depsStampHash.slice(0, 8)}`;
+              body = renderCssUrlModule(rawUrl);
+              if (!import_fs23.default.existsSync(baseCssFile)) {
+                try {
+                  const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+                    code: cssSource,
+                    filePath: effectiveFsPath,
+                    rootDir,
+                    modules: isModule,
+                    preprocessorOptions: userConfig?.css?.preprocessorOptions
+                  });
+                  const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
+                  graph.recordStructuralFiles(depsAbs);
+                  const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+                  if (changed2) {
+                    logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
+                  }
+                  scheduleDependencyWatches(depsAbs);
+                  import_fs23.default.mkdirSync(baseCssDir, { recursive: true });
+                  const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
+                  import_fs23.default.writeFileSync(tmp, compiledCss, "utf8");
+                  import_fs23.default.renameSync(tmp, baseCssFile);
+                  const metaPath = import_path25.default.join(baseCssDir, "meta.json");
+                  if (!import_fs23.default.existsSync(metaPath)) {
+                    writeJsonFile4(metaPath, {
+                      version: 1,
+                      baseHash: contentHash,
+                      pipelineHash,
+                      deps: depsAbs.slice().sort(),
+                      urlDeps: [],
+                      modules: isModule,
+                      generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+                    });
+                  }
+                  if (isModule && tokens) {
+                    const tokPath = import_path25.default.join(baseCssDir, "tokens.json");
+                    if (!import_fs23.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+                  }
+                } catch {
+                }
+              }
+            } else {
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+                code: cssSource,
+                filePath: effectiveFsPath,
+                rootDir,
+                modules: isModule,
+                preprocessorOptions: userConfig?.css?.preprocessorOptions
+              });
+              const servedCss = rewriteCssUrls(
+                rewriteCssImportSpecifiers(
+                  compiledCss,
+                  effectiveFsPath,
+                  rootDir,
+                  moduleResolver
+                ),
+                effectiveFsPath,
+                rootDir,
+                // Dev serve-time url() rebasing (CSS Option 2) — map each local url() asset to its
+                // dev-served public path so `@/`-alias + bare-package url()s resolve (relative ones
+                // already would). Mirrors the build emit-time rebasing via the shared resolver, so
+                // the phase-neutral CAS `transformed.css` stays untouched.
+                (abs) => isForbiddenFsPath(abs) || !import_fs23.default.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs)
+              );
+              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
+              const nextDepsStampHash = computeDepsStampHash(depsAbs);
+              artifactHash = getCacheKey(
+                `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${nextDepsStampHash}`
+              );
+              casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+              casFile = import_path25.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+              graph.recordStructuralFiles(depsAbs);
+              const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              if (changed2) {
+                logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
+              }
+              scheduleDependencyWatches(depsAbs);
+              try {
+                const alreadyExists = import_fs23.default.existsSync(baseCssFile);
+                if (!alreadyExists) {
+                  import_fs23.default.mkdirSync(baseCssDir, { recursive: true });
+                  const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
+                  import_fs23.default.writeFileSync(tmp, compiledCss, "utf8");
+                  import_fs23.default.renameSync(tmp, baseCssFile);
+                }
+                const metaPath = import_path25.default.join(baseCssDir, "meta.json");
+                if (!import_fs23.default.existsSync(metaPath)) {
+                  writeJsonFile4(metaPath, {
+                    version: 1,
+                    baseHash: contentHash,
+                    pipelineHash,
+                    deps: depsAbs.slice().sort(),
+                    urlDeps: [],
+                    modules: isModule,
+                    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+                  });
+                }
+                if (isModule && tokens) {
+                  const tokPath = import_path25.default.join(baseCssDir, "tokens.json");
+                  if (!import_fs23.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+                }
+              } catch {
+              }
+              if (mode2 === "css:raw") {
+                body = servedCss;
+              } else if (mode2 === "css:raw-string") {
+                body = renderCssRawStringModule(servedCss);
+              } else {
+                body = renderCssModule({
+                  css: servedCss,
+                  filePath: effectiveFsPath,
+                  tokens: isModule ? tokens ?? {} : void 0
+                });
+              }
+            }
+            finalBuffer = Buffer.from(body, "utf8");
+            res.setHeader("X-Ionify-Cache", "MISS");
+            try {
+              import_fs23.default.mkdirSync(casDir, { recursive: true });
+              import_fs23.default.writeFileSync(casFile, finalBuffer);
+            } catch {
+            }
+          }
+          const etag = `W/"css-${configHash}-${artifactHash}-${mode2}"`;
+          if (jsMode) {
+            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", finalBuffer, {
+              etag,
+              cacheControl: "no-cache"
+            });
+          } else {
+            sendBuffer(req, res, 200, "text/css; charset=utf-8", finalBuffer, {
+              etag,
+              cacheControl: "no-cache"
+            });
+          }
+          logInfo(`Served: ${effectiveUrlPath} ${mode2}`);
+          return;
+        } catch (err) {
+          logError("Failed to process CSS", err);
+          hmr.broadcastError({
+            message: err instanceof Error ? `Failed to process CSS: ${err.stack || err.message}` : `Failed to process CSS: ${String(err)}`
+          });
+          res.statusCode = 500;
+          res.end("Failed to process CSS");
+          return;
+        }
+      }
+      const code = import_fs23.default.readFileSync(effectiveFsPath, "utf8");
+      let hash;
+      let specs;
+      if (native?.parseModuleIr) {
+        try {
+          const ir = native.parseModuleIr(effectiveFsPath, code);
+          hash = ir.hash;
+          specs = ir.dependencies.map((dep) => dep.specifier);
+        } catch {
+          hash = getCacheKey(code);
+          specs = extractImports(code, effectiveFsPath);
+        }
+      } else {
+        hash = getCacheKey(code);
+        specs = extractImports(code, effectiveFsPath);
+      }
+      const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
+        specs,
+        effectiveFsPath,
+        configuredExternalSpecifiers
+      );
+      const nextDeps = rewriteFederationGraphEdgeIds(
+        [...localDeps, ...externalDeps],
+        federationRemoteBindings
+      );
+      enqueueLocalGraphCompletion(localDeps);
+      const changed = graph.recordFile(effectiveFsPath, hash, nextDeps);
+      if (!watcher.isWatched(effectiveFsPath)) {
+        watcher.watchFile(effectiveFsPath);
+      }
+      scheduleDependencyWatches(localDeps);
+      let result;
+      try {
+        result = await transformer.run({
+          path: effectiveFsPath,
+          code,
+          ext,
+          moduleHash: computeTransformHash(hash),
+          config: userConfig ?? null
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.stack || err.message : String(err);
+        hmr.broadcastError({ message: `Failed to transform ${effectiveUrlPath}: ${message}` });
+        throw err;
+      }
+      scheduleBaseCasTransform({
+        filePath: effectiveFsPath,
+        ext,
+        code,
+        baseHash: hash
+      });
+      const transformedCode = result.code;
+      res.setHeader("X-Ionify-Cache", changed ? "MISS" : "HIT");
+      const withDefine = applyDefineReplacements(transformedCode, defineConfig);
+      const envApplied = applyEnvPlaceholders(withDefine, ext);
+      if (import_path25.default.extname(effectiveFsPath) === ".html") {
+        activateFeaturePacksOnNextDocument();
+        const documentRouteKey = normalizeDocumentRouteKey(reqPath);
+        routeHints.beginDocument({
+          routeKey: documentRouteKey,
+          documentUrl: requestUrlWithQuery,
+          clientKey: routeHintClientKey,
+          observedAtMs: routeHintObservedAtMs
+        });
+        scheduleProductionArtifactPublication(`document:${documentRouteKey}`);
+        const currentStartupPolicySnapshot = startupPolicyEnabled ? refreshStartupPolicySnapshot() : null;
+        let htmlOut = envApplied;
+        const preloadUrl = (hintUrl) => {
+          if (!hintUrl) return;
+          htmlOut = injectModulePreload(htmlOut, hintUrl);
+        };
+        if (startupPolicyEnabled) {
+          htmlOut = injectInlineScript(htmlOut, buildStartupPolicyClientScript(documentRouteKey));
+        }
+        const routeAwarePreloads = /* @__PURE__ */ new Set();
+        const startupPolicyPreloads = startupPolicyPreloadAuthorityEnabled ? selectStartupPolicyPreloads(currentStartupPolicySnapshot, documentRouteKey) : [];
+        const preloadHints = startupPolicyPreloads.length > 0 ? startupPolicyPreloads : routeHints.selectPreloads(documentRouteKey, {
+          maxEntries: 24,
+          maxDepEntries: 8,
+          maxSourceEntries: 16,
+          minRequestCount: 1
+        });
+        for (const hint of preloadHints) {
+          if (!isRouteHintPreloadValid(hint.url, hint.kind)) continue;
+          for (const preloadUrlCandidate of expandRouteHintPreloadUrls(hint.url, hint.kind)) {
+            routeAwarePreloads.add(preloadUrlCandidate);
+          }
+        }
+        if (routeAwarePreloads.size > 0) {
+          for (const routePreload of routeAwarePreloads) {
+            preloadUrl(routePreload);
+          }
+          logInfo(
+            startupPolicyPreloads.length > 0 ? `[phase23] Startup policy ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}` : `[phase22] Route hints ${documentRouteKey}: modulepreload=${routeAwarePreloads.size}`
+          );
+        } else {
+          const preloadDepsUrl = (hintUrl) => {
+            if (!hintUrl.startsWith(DEPS_PREFIX2)) return;
+            const fileName = hintUrl.slice(DEPS_PREFIX2.length);
+            if (!fileName.endsWith(".js")) return;
+            if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, fileName))) return;
+            preloadUrl(hintUrl);
+          };
+          const packPreloads = new Set(collectBootstrapRoutedPackPreloadUrls());
+          const packFilesForVendorDeps = /* @__PURE__ */ new Set();
+          if (vendorPacksEnabled) {
+            for (const dep of vendorDeps) {
+              const packFileName = vendorPackV2.fileNameToPackFile.get(dep.fileName) ?? null;
+              if (!packFileName) continue;
+              if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, packFileName))) continue;
+              packFilesForVendorDeps.add(packFileName);
+              const chunkFiles = vendorPackV2.packFileToChunkFiles.get(packFileName) ?? (() => {
+                const shared = vendorPackV2.packFileToSharedFile.get(packFileName) ?? null;
+                return shared ? [shared] : [];
+              })();
+              if (chunkFiles.length === 0) continue;
+              for (const chunkFile of chunkFiles) {
+                if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
+                if (!import_fs23.default.existsSync(import_path25.default.join(depsRoot, chunkFile))) continue;
+                packPreloads.add(`${DEPS_PREFIX2}${chunkFile}`);
+              }
+            }
+          }
+          if (packFilesForVendorDeps.size > 0) {
+            for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
+            for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
+              preloadDepsUrl(`${DEPS_PREFIX2}${packFileName}`);
+            }
+          } else if (packPreloads.size > 0) {
+            const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
+            if (sharedPreload) preloadDepsUrl(sharedPreload);
+            for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
+          } else {
+            ensureVendorPackFile();
+            const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
+            if (sharedPreload) preloadUrl(sharedPreload);
+            if (vendorPackUrl) preloadUrl(vendorPackUrl);
+          }
+        }
+        const injected = injectHMRClient(htmlOut);
+        const htmlBuffer = Buffer.from(injected, "utf8");
+        const etag = weakEtagFromContent(`html-${configHash}`, htmlBuffer);
+        sendBuffer(req, res, 200, "text/html; charset=utf-8", htmlBuffer, {
+          etag,
+          cacheControl: "no-cache"
+        });
+      } else {
+        routeHints.noteRequest({
+          url: requestUrlWithQuery,
+          kind: "source",
+          refererUrl: routeHintReferer,
+          clientKey: routeHintClientKey,
+          observedAtMs: routeHintObservedAtMs
+        });
+        const startupInstrumented = guessContentType(effectiveFsPath).startsWith("application/javascript") ? startupInstrumentJavaScriptCode(envApplied) : envApplied;
+        const finalBuffer = Buffer.from(startupInstrumented);
+        const etag = weakEtagFromContent(`mod-${configHash}`, finalBuffer);
+        sendBuffer(req, res, 200, guessContentType(effectiveFsPath), finalBuffer, {
+          etag,
+          cacheControl: "no-cache"
+        });
+      }
+      logInfo(`Served: ${effectiveUrlPath} deps:${nextDeps.length} ${changed ? "(updated)" : "(cached)"}`);
+      if (cacheDebug) {
+        const m = transformCache.metrics();
+        logInfo(`[Ionify][Dev Cache] hits:${m.hits} misses:${m.misses} size:${m.size}`);
+      }
+    } catch (err) {
+      logError("Error serving request:", err);
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+    } finally {
+      activeRequests = Math.max(activeRequests - 1, 0);
+    }
+  };
+  const server = httpsOptions ? import_https.default.createServer(httpsOptions, requestHandler) : import_http.default.createServer(requestHandler);
+  watcher.on("change", (file, status) => {
+    logInfo(`[Watcher] ${status}: ${file}`);
+    papContractsPublished = false;
+    papArtifactsPublished = false;
+    papDirty = true;
+    cancelProductionArtifactsPublication(`watch:${status}`);
+    scheduleProductionArtifactPublication(`watch:${status}`, "contracts");
+    const ext = import_path25.default.extname(file).toLowerCase();
+    const isReactFastRefreshBoundary = status !== "deleted" && (ext === ".tsx" || ext === ".jsx");
+    const isCssBoundary = status !== "deleted" && isCssLikeExt(ext);
+    const collected = graph.collectAffected([file]);
+    const affected = isReactFastRefreshBoundary || isCssBoundary ? [
+      file,
+      ...collected.filter(
+        (absPath) => absPath !== file && isCssLikePath(absPath)
+      )
+    ] : collected;
+    if (!affected.includes(file)) {
+      affected.unshift(file);
+    }
+    const modules = [];
+    for (const absPath of affected) {
+      const reason = absPath === file ? status === "deleted" ? "deleted" : "changed" : "dependent";
+      let hash = null;
+      if (reason !== "deleted") {
+        if (absPath === file) {
+          try {
+            const code = import_fs23.default.readFileSync(absPath, "utf8");
+            hash = getCacheKey(code);
+          } catch {
+            hash = graph.getNode(absPath)?.hash ?? null;
+          }
+        } else {
+          hash = graph.getNode(absPath)?.hash ?? null;
+        }
+      }
+      modules.push({
+        absPath,
+        url: isCssLikePath(absPath) ? `${normalizeUrlFromFs(rootDir, absPath)}?inline` : isAssetExt(import_path25.default.extname(absPath).toLowerCase()) ? `${normalizeUrlFromFs(rootDir, absPath)}?import` : normalizeUrlFromFs(rootDir, absPath),
+        hash,
+        reason
+      });
+    }
+    const summary = hmr.queueUpdate(modules);
+    if (summary) {
+      logInfo(
+        `[HMR] update ${summary.id} -> ${summary.modules.length} module(s) queued`
+      );
+    }
+    if (status === "deleted") {
+      graph.removeFile(file);
+      watcher.unwatchFile(file);
+    }
+  });
+  let closingPromise = null;
+  let cleanedUp = false;
+  let shutdownPrepared = false;
+  const signalHandlers = [];
+  const prepareShutdown = () => {
+    if (shutdownPrepared) return;
+    shutdownPrepared = true;
+    shuttingDown = true;
+    pendingWatchedDeps.clear();
+    pendingWatchFlush = false;
+    try {
+      hmr.close();
+    } catch (err) {
+      logError("Error closing HMR:", err);
+    }
+    if (typeof server.closeIdleConnections === "function") {
+      try {
+        server.closeIdleConnections();
+      } catch (err) {
+        logError("Error closing idle HTTP connections:", err);
+      }
+    }
+  };
+  const cleanup = (force = false) => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (force) {
+      server.getConnections((err, count) => {
+        if (!err && count > 0) {
+          server.closeAllConnections();
+        }
+      });
+    }
+    try {
+      watcher.closeAll();
+    } catch (err) {
+      logError("Error closing watcher:", err);
+    }
+    try {
+      hmr.close();
+    } catch (err) {
+      logError("Error closing HMR:", err);
+    }
+    routeHints.flush();
+    graph.flush();
+    for (const { event, handler } of signalHandlers) {
+      process.off(event, handler);
+    }
+  };
+  server.on("close", () => cleanup(false));
+  const shutdown = async (exitProcess) => {
+    flushVendorPackRequestCounts(true);
+    prepareShutdown();
+    await drainPendingGraphCompletion();
+    if (!closingPromise) {
+      closingPromise = new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          logInfo("Server shutdown taking too long, forcing cleanup...");
+          cleanup(true);
+          resolve();
+        }, 3e3);
+        server.close((err) => {
+          clearTimeout(timeoutId);
+          if (err) {
+            logError("Error during server shutdown:", err);
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+    try {
+      await Promise.race([
+        closingPromise,
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Shutdown timeout")), 5e3)
+        )
+      ]);
+    } catch (err) {
+      logError("Shutdown error:", err);
+      cleanup(true);
+    }
+    try {
+      const pending = Array.from(pendingBaseCas.values());
+      if (pending.length > 0) {
+        await Promise.allSettled(pending);
+      }
+    } catch {
+    }
+    if (baseCasPool) {
+      try {
+        await baseCasPool.drain();
+      } catch {
+      }
+      try {
+        await baseCasPool.close();
+      } catch {
+      }
+      baseCasPool = null;
+    }
+    if (exitProcess) {
+      setTimeout(() => process.exit(0), 100);
+    }
+  };
+  if (enableSignalHandlers) {
+    const onSignal = () => {
+      void shutdown(true);
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+    signalHandlers.push({ event: "SIGINT", handler: onSignal });
+    signalHandlers.push({ event: "SIGTERM", handler: onSignal });
+  }
+  await new Promise((resolve, reject) => {
+    const onError = (err) => reject(err);
+    server.once("error", onError);
+    server.listen(resolvedPort, resolvedHost, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+  const address = server.address();
+  const actualPort = address && typeof address === "object" && address?.port ? address.port : resolvedPort;
+  logInfo(`Ionify Dev Server (Phase 2) at ${protocol}://localhost:${actualPort}`);
+  logInfo(`Ready in ${Date.now() - bootStartMs}ms`);
+  logInfo(`HMR listening at /__ionify_hmr (SSE)`);
+  bumpDevStable();
+  const prewarmLabel = vendorPacksForce ? "vendor pack" : vendorPacksProgressive || vendorPacksManual ? "vendor core" : "vendor deps";
+  const prewarmEntries = vendorPacksForce ? vendorPackEntries : vendorDeps;
+  if (prewarmEntries.length > 0) {
+    if (vendorPacksForce && vendorPackPlan) {
+      logInfo(
+        `[deps] Vendor packs enabled (${vendorPacksMode}) members=${vendorPackEntries.length} maxBytes=${vendorPackMaxBytes} maxMembers=${vendorPackMaxMembers}`
+      );
+    }
+    const labels = prewarmEntries.map((d) => d.packageLabel).join(", ");
+    logInfo(`[deps] ${prewarmLabel} detected (${prewarmEntries.length}): ${labels}`);
+    ensureVendorPackFile();
+    const missing = prewarmEntries.filter((d) => !import_fs23.default.existsSync(import_path25.default.join(depsRoot, d.fileName)));
+    const sharedMissing = vendorPacksForce ? vendorPackSharedFileName ? !import_fs23.default.existsSync(import_path25.default.join(depsRoot, vendorPackSharedFileName)) : false : vendorCoreSharedFileName ? !import_fs23.default.existsSync(import_path25.default.join(depsRoot, vendorCoreSharedFileName)) : false;
+    if (missing.length > 0 || sharedMissing) {
+      const entryCount = missing.length;
+      logInfo(`[deps] Pre-warming ${prewarmLabel} (${entryCount}) in parallel...`);
+      Promise.resolve().then(() => {
+        const canChunk = vendorPacksForce ? canChunkVendorPacks : canChunkVendorCore;
+        if (canChunk) {
+          try {
+            const start = Date.now();
+            const chunked = native?.optimizeDependenciesChunked;
+            if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
+            const result = chunked(
+              prewarmEntries.map((d) => ({ entryPath: d.entryPath, depsHash })),
+              ionifyDir
+            );
+            broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+            const group = result?.chunk_group ?? result?.chunkGroup ?? "unknown";
+            const chunks = result?.chunk_files ?? result?.chunkFiles ?? [];
+            const elapsed = Date.now() - start;
+            logInfo(
+              `[deps] \u2713 Prewarmed (shared chunks) group=${group} (${elapsed}ms, chunks=${Array.isArray(chunks) ? chunks.length : 0})`
+            );
+            refreshDepsManifestIndex();
+            return;
+          } catch (err) {
+            logWarn(`[deps] Prewarm chunked failed (fallback to per-entry): ${String(err)}`);
+          }
+        }
+        if (native?.optimizeDependenciesBatch && !depsSourcemapEnabled && depsBundleEsmEnabled) {
+          const results = native.optimizeDependenciesBatch(
+            missing.map((d) => ({ entryPath: d.entryPath, depsHash })),
+            ionifyDir
+          );
+          results.forEach((r, idx) => {
+            const dep = missing[idx];
+            if (r?.error) {
+              logWarn(`[deps] Prewarm failed ${dep.packageLabel}: ${r.error}`);
+            } else if (r?.out_path || r?.outPath) {
+              const outPath = r.out_path ?? r.outPath;
+              logInfo(
+                `[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path25.default.basename(outPath)}`
+              );
+            }
+          });
+          return;
+        }
+        if (!native?.optimizeDependency) return;
+        for (const dep of missing) {
+          try {
+            const result = native.optimizeDependency(
+              dep.entryPath,
+              depsHash,
+              depsSourcemapEnabled,
+              depsBundleEsmEnabled,
+              ionifyDir
+            );
+            broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+            const outPath = result?.out_path ?? result?.outPath ?? null;
+            if (outPath) {
+              logInfo(`[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path25.default.basename(outPath)}`);
+            }
+          } catch (err) {
+            logWarn(`[deps] Prewarm failed ${dep.packageLabel}: ${String(err)}`);
+          }
+        }
+      }).catch((err) => {
+        logWarn(`[deps] Prewarm error: ${err}`);
+      });
+    }
+  }
+  if (userConfig?.optimizeDeps?.include && Array.isArray(userConfig.optimizeDeps.include)) {
+    const includes = userConfig.optimizeDeps.include;
+    if (includes.length > 0) {
+      logInfo(`[deps] Pre-warming ${includes.length} dependencies: ${includes.join(", ")}`);
+      Promise.all(
+        includes.map(async (pkgName) => {
+          try {
+            if (!native?.resolveModule || !native?.optimizeDependency) {
+              logWarn(`[deps] Cannot pre-warm ${pkgName}: native functions not available`);
+              return;
+            }
+            const resolved = native.resolveModule(pkgName, rootDir);
+            if (!resolved || !resolved.fsPath && !resolved.fs_path) {
+              logWarn(`[deps] Cannot pre-warm ${pkgName}: resolution failed`);
+              return;
+            }
+            const entryPath = resolved.fsPath || resolved.fs_path;
+            const result = native.optimizeDependency(
+              entryPath,
+              depsHash,
+              depsSourcemapEnabled,
+              depsBundleEsmEnabled,
+              ionifyDir
+            );
+            broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
+            if (result?.out_path) {
+              const fileName = import_path25.default.basename(result.out_path);
+              logInfo(`[deps] \u2713 Pre-warmed ${pkgName} \u2192 ${fileName}`);
+            }
+          } catch (err) {
+            logWarn(`[deps] Failed to pre-warm ${pkgName}: ${err}`);
+          }
+        })
+      ).catch((err) => {
+        logWarn(`[deps] Pre-warming error: ${err}`);
+      });
+    }
+  }
+  if (packSlimmingEnabled) {
+    const usageEntries = [];
+    if (resolvedEntries && resolvedEntries.length > 0) {
+      usageEntries.push(...resolvedEntries);
+    } else {
+      for (const candidate of [
+        import_path25.default.join(rootDir, "src", "main.tsx"),
+        import_path25.default.join(rootDir, "src", "main.ts"),
+        import_path25.default.join(rootDir, "src", "index.tsx"),
+        import_path25.default.join(rootDir, "src", "index.ts")
+      ]) {
+        if (import_fs23.default.existsSync(candidate)) usageEntries.push(candidate);
+      }
+    }
+    if (!native?.resolveModule) {
+      logWarn("[deps] packSlimming enabled but native.resolveModule is unavailable; skipping usage scan.");
+    } else if (usageEntries.length === 0) {
+      logWarn("[deps] packSlimming enabled but no entry files were detected; skipping usage scan.");
+    } else if (!depUsageScanRunning) {
+      depUsageScanRunning = true;
+      Promise.resolve().then(async () => {
+        const start = Date.now();
+        if (process.env.DEBUG_DEPS) {
+          logInfo(`[deps] Usage scan (Phase 5.5) starting from ${usageEntries.length} entry file(s)...`);
+        }
+        const index = canonicalizeDepUsageIndex(
+          await scanDepUsage({ rootDir, entries: usageEntries, allowedRoots }),
+          depsManifestCanonicalFileNames
+        );
+        depUsageIndex = index;
+        setDirectDepUsageFileNames(index);
+        saveDepUsageIndexToDisk2(index);
+        const usageIndexHash = computeUsageIndexHash(index);
+        vendorPackV2.setUsageIndexHash(usageIndexHash);
+        const elapsed = Date.now() - start;
+        let safe = 0;
+        for (const item of index.values()) {
+          if (item.hasNamespace || item.hasExportStar) continue;
+          if (!Array.isArray(item.usedExports) || item.usedExports.length === 0) continue;
+          safe += 1;
+        }
+        const skipped = Math.max(0, index.size - safe);
+        if (process.env.DEBUG_DEPS) {
+          logInfo(`[deps] Usage scan completed in ${elapsed}ms.`);
+        }
+        logInfo(`Usage scan complete (safe: ${safe}, skipped: ${skipped})`);
+        if (featurePacksEnabled) {
+          seedFeatureCandidatesFromUsageIndex(index);
+        }
+        if (manualPacksEnabled) {
+          for (const def of vendorPacksManualDefs) {
+            const group = def.group;
+            const state = manualState.get(group);
+            if (state?.status === "ready") {
+              scheduleManualSlimBuild(group);
+            }
+          }
+        }
+        if (featurePacksEnabled) {
+          for (const group of listFeaturePackGroups()) {
+            const state = featureState.get(group);
+            if (state?.status === "ready") scheduleFeatureSlimBuild(group);
+          }
+        }
+      }).catch((err) => {
+        logWarn(`[deps] WARN: Usage scan failed (Phase 5.5): ${String(err)}`);
+      }).finally(() => {
+        depUsageScanRunning = false;
+      });
+    }
+  }
+  return {
+    server,
+    port: actualPort,
+    close: async () => {
+      await shutdown(false);
+    }
+  };
+}
+
+// src/cli/commands/analyze.ts
+init_cjs_shims();
+var import_fs24 = __toESM(require("fs"), 1);
+var import_path26 = __toESM(require("path"), 1);
+var import_chalk2 = __toESM(require("chalk"), 1);
+init_logger();
+init_config();
+init_minifier();
+init_parser();
+init_scope_hoist();
+init_treeshake();
+init_reactRefreshInstrumentation();
+init_workspace();
+init_native();
+var GRAPH_TREE_MAX_DEPTH = 4;
+var HEAVY_DEP_SUGGESTION_MIN_BYTES = 50 * 1024;
+var HEAVY_DEP_SUGGESTION_MIN_IMPORTERS = 2;
+function sectionTitle(label) {
+  return import_chalk2.default.bold.cyan(label);
+}
+function subSectionTitle(label) {
+  return import_chalk2.default.bold(label);
+}
+function dimText(value) {
+  return import_chalk2.default.dim(value);
+}
+function accent(value) {
+  return import_chalk2.default.bold.white(value);
+}
+function metric(value) {
+  return import_chalk2.default.bold(value);
+}
+function colorSeverity(severity) {
+  switch (severity) {
+    case "high":
+      return import_chalk2.default.bold.red("High");
+    case "medium":
+      return import_chalk2.default.bold.yellow("Medium");
+    case "low":
+      return import_chalk2.default.bold.blue("Low");
+  }
+}
+function colorConfidence(confidence) {
+  switch (confidence) {
+    case "high":
+      return import_chalk2.default.bold.green("High");
+    case "medium":
+      return import_chalk2.default.bold.yellow("Medium");
+    case "low":
+      return import_chalk2.default.bold.gray("Low");
+  }
+}
+function colorHealth(level) {
+  switch (level) {
+    case "high":
+    case "present":
+      return import_chalk2.default.bold.green(formatHealth(level));
+    case "medium":
+      return import_chalk2.default.bold.yellow(formatHealth(level));
+    case "low":
+      return import_chalk2.default.bold.blue(formatHealth(level));
+    case "missing":
+      return import_chalk2.default.bold.red(formatHealth(level));
+  }
+}
+function bullet(value) {
+  return `  ${import_chalk2.default.gray("\u2022")} ${value}`;
+}
+function compareSeverity(a, b) {
+  const rank = { high: 3, medium: 2, low: 1 };
+  return rank[b] - rank[a];
+}
+function compareCertainty(a, b) {
+  const rank = { high: 3, medium: 2, low: 1 };
+  return rank[b] - rank[a];
+}
+function classifyDuplicateSeverity(versionCount, totalDepArtifacts) {
+  if (versionCount >= 3 || totalDepArtifacts >= 6) return "high";
+  if (versionCount >= 2) return "medium";
+  return "low";
+}
+function classifyChunkSeverity(totalBytes, shared) {
+  if (shared && totalBytes >= 5 * 1024 * 1024) return "high";
+  if (!shared && totalBytes >= 2 * 1024 * 1024) return "high";
+  if (shared && totalBytes >= 1 * 1024 * 1024) return "medium";
+  if (!shared && totalBytes >= 512 * 1024) return "medium";
+  return "low";
+}
+function classifyDependencySeverity(bytes, importerCount, entryRootCount, packed) {
+  const reach = Math.max(importerCount, entryRootCount);
+  if (!packed && bytes >= 512 * 1024) return "high";
+  if (!packed && bytes >= 128 * 1024 && reach >= 2) return "medium";
+  if (packed && bytes >= 512 * 1024) return "medium";
+  return "low";
+}
+function resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, specifier) {
+  if (typeof specifier !== "string" || specifier.length === 0) return null;
+  if (/^(?:https?:)?\/\//.test(specifier)) return null;
+  const withoutHash = specifier.split("#", 1)[0] ?? specifier;
+  const withoutQuery = withoutHash.split("?", 1)[0] ?? withoutHash;
+  if (!withoutQuery) return null;
+  if (withoutQuery.startsWith("/")) {
+    return import_path26.default.join(rootDir, withoutQuery);
+  }
+  return import_path26.default.resolve(import_path26.default.dirname(htmlInput), withoutQuery);
+}
+function inferAnalyzeEntriesFromHtml(rootDir) {
+  const htmlInput = import_path26.default.join(rootDir, "index.html");
+  if (!import_fs24.default.existsSync(htmlInput)) return [];
+  let html = "";
+  try {
+    html = import_fs24.default.readFileSync(htmlInput, "utf8");
+  } catch {
+    return [];
+  }
+  const moduleScriptRe = /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>/gi;
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const match of html.matchAll(moduleScriptRe)) {
+    const src = typeof match[1] === "string" ? match[1] : "";
+    const resolved = resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, src);
+    if (!resolved || !import_fs24.default.existsSync(resolved) || seen.has(resolved)) continue;
+    seen.add(resolved);
+    entries.push(resolved);
+  }
+  return entries;
+}
+function readJson(filePath) {
+  if (!import_fs24.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs24.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function statSize(filePath) {
+  try {
+    return import_fs24.default.statSync(filePath).size;
+  } catch {
+    return null;
+  }
+}
+function normalizeUrlPath(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return "";
+  const queryIndex = trimmed.indexOf("?");
+  const hashIndex = trimmed.indexOf("#");
+  let end = trimmed.length;
+  if (queryIndex >= 0) end = Math.min(end, queryIndex);
+  if (hashIndex >= 0) end = Math.min(end, hashIndex);
+  return trimmed.slice(0, end);
+}
+function getDepFileNameFromUrl(url2) {
+  const normalized = normalizeUrlPath(url2);
+  if (!normalized.startsWith("/@deps/")) return null;
+  const fileName = normalized.slice("/@deps/".length);
+  return fileName && fileName.endsWith(".js") ? fileName : null;
+}
+function resolveRouteSourceAssetPath(projectRoot, url2) {
+  const normalized = normalizeUrlPath(url2);
+  if (!normalized.startsWith("/")) return null;
+  const relative = normalized.slice(1);
+  if (!relative) return null;
+  return import_path26.default.join(projectRoot, relative);
+}
+function formatBytes(bytes) {
+  if (bytes === null) return "n/a";
+  const value = Math.max(0, Math.floor(bytes));
+  if (value < 1024) return `${value}B`;
+  const kb = value / 1024;
+  if (kb < 1024) return `${Math.round(kb)}KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)}MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)}GB`;
+}
+function loadVendorPackRoutingIndex(depsRoot, depsHash) {
+  const index = readJson(import_path26.default.join(depsRoot, "vendor-pack.v2.index.json"));
+  if (!index || index.version !== 1 || index.depsHash !== depsHash) return null;
+  return index;
+}
+function getSelectedSurfaces(options) {
+  if (options.section) {
+    switch (options.section) {
+      case "graph":
+        return ["graph"];
+      case "build":
+        return ["build", "findings"];
+      case "deps":
+        return ["findings"];
+      case "packs":
+        return ["packs", "findings"];
+      case "routes":
+        return ["routes"];
+      case "findings":
+        return ["findings"];
+      default:
+        return [options.section];
+    }
+  }
+  const selected = [];
+  if (options.graph || options.tree || options.deps) selected.push("graph");
+  if (options.build) selected.push("build");
+  if (options.packs) selected.push("packs");
+  if (options.routes) selected.push("routes");
+  if (options.findings) selected.push("findings");
+  return selected.length > 0 ? selected : ["graph", "build", "packs", "routes", "findings"];
+}
+function listDepsRootCandidates(ionifyDir) {
+  const depsDir = import_path26.default.join(ionifyDir, "deps");
+  if (!import_fs24.default.existsSync(depsDir)) return [];
+  return import_fs24.default.readdirSync(depsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+    const depsHash = entry.name;
+    const depsRoot = import_path26.default.join(depsDir, depsHash);
+    const indexPath = import_path26.default.join(depsRoot, "vendor-pack.v2.index.json");
+    const manifestPath = import_path26.default.join(depsRoot, "manifest.json");
+    const usagePath = import_path26.default.join(depsRoot, "deps-usage.v2.json");
+    const legacyUsagePath = import_path26.default.join(depsRoot, "deps-usage.v1.json");
+    const statPath = import_fs24.default.existsSync(indexPath) ? indexPath : depsRoot;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = import_fs24.default.statSync(statPath).mtimeMs;
+    } catch {
+      mtimeMs = 0;
+    }
+    const completeness = Number(import_fs24.default.existsSync(indexPath)) + Number(import_fs24.default.existsSync(manifestPath)) + Number(import_fs24.default.existsSync(usagePath) || import_fs24.default.existsSync(legacyUsagePath));
+    return { depsHash, depsRoot, mtimeMs, completeness };
+  }).sort((a, b) => b.completeness - a.completeness || b.mtimeMs - a.mtimeMs || a.depsHash.localeCompare(b.depsHash));
+}
+function selectDepsRoot(ionifyDir, depsHash, envDepsHash) {
+  const candidates = listDepsRootCandidates(ionifyDir);
+  if (candidates.length === 0) return null;
+  const explicit = typeof depsHash === "string" && depsHash.trim().length > 0 ? depsHash.trim() : null;
+  if (explicit) {
+    const match = candidates.find((item) => item.depsHash === explicit);
+    if (match) return { depsHash: match.depsHash, depsRoot: match.depsRoot, selectionMode: "explicit" };
+  }
+  const env = typeof envDepsHash === "string" && envDepsHash.trim().length > 0 ? envDepsHash.trim() : null;
+  if (env) {
+    const match = candidates.find((item) => item.depsHash === env);
+    if (match) return { depsHash: match.depsHash, depsRoot: match.depsRoot, selectionMode: "env" };
+  }
+  if (candidates.length === 1) {
+    const only = candidates[0];
+    return { depsHash: only.depsHash, depsRoot: only.depsRoot, selectionMode: "single-dir" };
+  }
+  const best = candidates[0];
+  return best ? { depsHash: best.depsHash, depsRoot: best.depsRoot, selectionMode: "latest-mtime-fallback" } : null;
+}
+function computeInboundCounts(nodes) {
+  const dependentCounts = /* @__PURE__ */ new Map();
+  for (const node of nodes) {
+    for (const dep of node.deps) {
+      dependentCounts.set(dep, (dependentCounts.get(dep) ?? 0) + 1);
+    }
+  }
+  return dependentCounts;
+}
+function buildGraphTree(nodesById, roots, limit, maxDepth = GRAPH_TREE_MAX_DEPTH) {
+  const childLimit = Math.max(1, limit);
+  const visit = (id, depth, stack) => {
+    const node = nodesById.get(id);
+    const deps = node?.deps ?? [];
+    const summary = {
+      id,
+      depCount: deps.length
+    };
+    if (depth >= maxDepth || deps.length === 0) {
+      if (deps.length > 0 && depth >= maxDepth) summary.truncated = true;
+      return summary;
+    }
+    const sortedDeps = deps.slice().sort();
+    const limitedDeps = sortedDeps.slice(0, childLimit);
+    const nextStack = new Set(stack);
+    nextStack.add(id);
+    summary.deps = limitedDeps.map((depId) => {
+      if (stack.has(depId)) {
+        return {
+          id: depId,
+          depCount: nodesById.get(depId)?.deps.length ?? 0,
+          cycle: true
+        };
+      }
+      return visit(depId, depth + 1, nextStack);
+    });
+    if (sortedDeps.length > limitedDeps.length) summary.truncated = true;
+    return summary;
+  };
+  return roots.slice(0, Math.max(1, limit)).map((root) => visit(root, 0, /* @__PURE__ */ new Set()));
+}
+function computeGraphSummary(nodes, limit = 10, includeTree = false) {
+  const modules = nodes.length;
+  let edgeCount = 0;
+  const dependentCounts = computeInboundCounts(nodes);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  for (const node of nodes) {
+    edgeCount += node.deps.length;
+  }
+  const densest = [...nodes].sort((a, b) => b.deps.length - a.deps.length || a.id.localeCompare(b.id)).slice(0, limit).map((node) => ({ id: node.id, deps: node.deps.length }));
+  const mostDepended = [...dependentCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([id, count]) => ({ id, dependents: count }));
+  const orphanSet = new Set(nodes.map((n) => n.id));
+  for (const node of nodes) {
+    for (const dep of node.deps) orphanSet.delete(dep);
+  }
+  const roots = Array.from(orphanSet).sort();
+  return {
+    modules,
+    edges: edgeCount,
+    averageDeps: modules === 0 ? 0 : edgeCount / modules,
+    roots,
+    densest,
+    mostDepended,
+    orphans: roots,
+    tree: includeTree ? buildGraphTree(nodesById, roots, limit) : void 0
+  };
+}
+function readGraphFromDisk(ionifyDir) {
+  const file = import_path26.default.join(ionifyDir, "graph.json");
+  if (!import_fs24.default.existsSync(file)) return null;
+  try {
+    const snapshot = JSON.parse(import_fs24.default.readFileSync(file, "utf8"));
+    if (snapshot?.version !== 1 || !snapshot?.nodes) return null;
+    return Object.entries(snapshot.nodes).map(([id, node]) => ({
+      id,
+      hash: node.hash ?? null,
+      deps: Array.isArray(node.deps) ? node.deps : []
+    }));
+  } catch (err) {
+    logError("Failed to read graph snapshot", err);
+    return null;
+  }
+}
+async function loadGraphSnapshot(ionifyDir) {
+  if (native?.graphLoad) {
+    try {
+      const nodes = native.graphLoad();
+      if (Array.isArray(nodes)) {
+        return nodes.map((node) => ({
+          id: node.id,
+          hash: node.hash ?? null,
+          deps: Array.isArray(node.deps) ? node.deps : []
+        }));
+      }
+    } catch {
+    }
+  }
+  return readGraphFromDisk(ionifyDir);
+}
+async function resolveAnalyzeWorkspace() {
+  const envMode = process.env.IONIFY_MODE ?? process.env.MODE ?? process.env.NODE_ENV ?? "development";
+  const config = await loadIonifyConfig(process.cwd(), envMode);
+  const projectRootOverride = config?.root ? import_path26.default.resolve(config.root) : null;
+  const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
+    projectRootOverride
+  });
+  const rootDir = workspace.projectRoot;
+  const parserMode = resolveParser(config, { envMode: process.env.IONIFY_PARSER });
+  applyParserEnv(parserMode);
+  const minifier = resolveMinifier(config, { envVar: process.env.IONIFY_MINIFIER });
+  const treeshake = resolveTreeshake(config?.treeshake, {
+    envMode: process.env.IONIFY_TREESHAKE,
+    includeEnv: process.env.IONIFY_TREESHAKE_INCLUDE,
+    excludeEnv: process.env.IONIFY_TREESHAKE_EXCLUDE
+  });
+  const scopeHoist = resolveScopeHoist(config?.scopeHoist, {
+    envMode: process.env.IONIFY_SCOPE_HOIST,
+    inlineEnv: process.env.IONIFY_SCOPE_HOIST_INLINE,
+    constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
+    combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
+  });
+  const configuredEntries = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? import_path26.default.join(rootDir, entry) : import_path26.default.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
+  const entries = configuredEntries.length > 0 ? configuredEntries : inferAnalyzeEntriesFromHtml(rootDir);
+  const pluginNames = Array.isArray(config?.plugins) ? config.plugins.map((plugin) => typeof plugin === "string" ? plugin : plugin?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
+  const configHash = computeGraphVersion({
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    plugins: pluginNames,
+    entry: entries.length > 0 ? entries : null,
+    cssOptions: config?.css,
+    assetOptions: config?.assets ?? config?.asset,
+    runtimeContracts: {
+      reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE
+    }
+  });
+  process.env.IONIFY_CONFIG_HASH = configHash;
+  ensureNativeGraph(import_path26.default.join(workspace.ionifyDir, "graph.db"), configHash);
+  return workspace;
+}
+function summarizeBuildOutputs(outDir, limit) {
+  const absOutDir = import_path26.default.resolve(outDir);
+  const manifestPath = import_path26.default.join(absOutDir, "manifest.json");
+  const statsPath = import_path26.default.join(absOutDir, "build.stats.json");
+  const manifest = readJson(manifestPath);
+  const stats = readJson(statsPath);
+  if (!manifest && !stats) return null;
+  const chunkEntries = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+  const topFiles = [];
+  const files = {
+    js: 0,
+    css: 0,
+    assets: 0,
+    maps: 0,
+    publicAssets: 0,
+    totalTracked: 0
+  };
+  const bytes = {
+    js: 0,
+    css: 0,
+    assets: 0,
+    maps: 0,
+    publicAssets: 0,
+    totalTracked: 0
+  };
+  if (stats && typeof stats === "object") {
+    for (const [file, meta] of Object.entries(stats)) {
+      if (file === "publicAssets" || file.startsWith("__")) continue;
+      if (!meta || typeof meta !== "object") continue;
+      const type = typeof meta.type === "string" ? meta.type : "unknown";
+      const size = typeof meta.bytes === "number" && Number.isFinite(meta.bytes) ? meta.bytes : 0;
+      files.totalTracked += 1;
+      bytes.totalTracked += size;
+      if (type === "js") {
+        files.js += 1;
+        bytes.js += size;
+      } else if (type === "css") {
+        files.css += 1;
+        bytes.css += size;
+      } else if (type === "asset") {
+        files.assets += 1;
+        bytes.assets += size;
+      } else if (type === "map") {
+        files.maps += 1;
+        bytes.maps += size;
+      }
+      topFiles.push({ file, bytes: size, type });
+    }
+    const publicAssets = Array.isArray(stats.publicAssets) ? stats.publicAssets : [];
+    for (const asset of publicAssets) {
+      const file = typeof asset?.file === "string" ? asset.file : null;
+      const size = typeof asset?.bytes === "number" && Number.isFinite(asset.bytes) ? asset.bytes : 0;
+      if (!file) continue;
+      files.publicAssets += 1;
+      bytes.publicAssets += size;
+      topFiles.push({ file, bytes: size, type: "public-asset" });
+    }
+  }
+  topFiles.sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file));
+  return {
+    outDir: absOutDir,
+    hasManifest: !!manifest,
+    hasStats: !!stats,
+    entries: Array.isArray(manifest?.entries) ? manifest.entries.length : 0,
+    chunks: {
+      total: chunkEntries.length,
+      entry: chunkEntries.filter((chunk) => chunk?.entry === true).length,
+      shared: chunkEntries.filter((chunk) => chunk?.shared === true).length
+    },
+    files,
+    bytes,
+    topFiles: topFiles.slice(0, Math.max(1, limit))
+  };
+}
+function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
+  const index = loadVendorPackRoutingIndex(depsRoot, depsHash);
+  if (!index) return null;
+  const derivedPackIndexHash = typeof index.outputVersion === "number" ? hashVendorPackV2RoutingIndex(index, depsHash, index.outputVersion) : null;
+  const packIndexHash = typeof index.packIndexHash === "string" ? index.packIndexHash : derivedPackIndexHash;
+  const usageIndexHash = typeof index.usageIndexHash === "string" ? index.usageIndexHash : null;
+  const routing = index.fileNameToPackFile && typeof index.fileNameToPackFile === "object" ? index.fileNameToPackFile : {};
+  const packToChunks = index.packFileToChunkFiles && typeof index.packFileToChunkFiles === "object" ? index.packFileToChunkFiles : {};
+  const membersByPack = /* @__PURE__ */ new Map();
+  for (const [fileName, packFileName] of Object.entries(routing)) {
+    if (typeof fileName !== "string" || typeof packFileName !== "string") continue;
+    const list = membersByPack.get(packFileName) ?? [];
+    list.push(fileName);
+    membersByPack.set(packFileName, list);
+  }
+  const packs = [];
+  for (const [packFileName, members] of membersByPack.entries()) {
+    const chunkFilesRaw = Array.isArray(packToChunks[packFileName]) ? packToChunks[packFileName] : [];
+    const chunkFiles = chunkFilesRaw.filter((v) => typeof v === "string" && v.endsWith(".js"));
+    const uniqueChunks = Array.from(new Set(chunkFiles)).sort();
+    const requestsPacked = 1 + uniqueChunks.length;
+    const requestsUnpacked = members.length;
+    const requestsSaved = Math.max(0, requestsUnpacked - requestsPacked);
+    const packBytes = statSize(import_path26.default.join(depsRoot, packFileName));
+    let chunksBytes = 0;
+    let chunksKnown = true;
+    for (const chunk of uniqueChunks) {
+      const b = statSize(import_path26.default.join(depsRoot, chunk));
+      if (b === null) chunksKnown = false;
+      chunksBytes += b ?? 0;
+    }
+    const bytesPacked = packBytes === null || !chunksKnown ? null : packBytes + chunksBytes;
+    let wrappersBytes = 0;
+    let wrappersKnown = true;
+    for (const fileName of members) {
+      const b = statSize(import_path26.default.join(depsRoot, fileName));
+      if (b === null) wrappersKnown = false;
+      wrappersBytes += b ?? 0;
+    }
+    const bytesWrappers = wrappersKnown ? wrappersBytes : null;
+    packs.push({
+      packFileName,
+      members: members.length,
+      chunkFiles: uniqueChunks,
+      requestsPacked,
+      requestsUnpacked,
+      requestsSaved,
+      bytesPacked,
+      bytesWrappers
+    });
+  }
+  packs.sort((a, b) => b.requestsSaved - a.requestsSaved || b.members - a.members || a.packFileName.localeCompare(b.packFileName));
+  const slimGroups = [];
+  const files = import_fs24.default.existsSync(depsRoot) ? import_fs24.default.readdirSync(depsRoot) : [];
+  const stateFiles = files.filter((f) => f.startsWith("vendor-pack.") && f.endsWith(".json"));
+  for (const file of stateFiles) {
+    if (file.endsWith(".slim.json")) continue;
+    const base = readJson(import_path26.default.join(depsRoot, file));
+    if (!base || base.version !== 1 || base.depsHash !== depsHash) continue;
+    const slimFile = file.replace(/\.json$/, ".slim.json");
+    const slim = readJson(import_path26.default.join(depsRoot, slimFile));
+    if (!slim || slim.version !== 1 || slim.depsHash !== depsHash) continue;
+    if (base.status !== "ready" || slim.status !== "ready") continue;
+    const baseShared = typeof base.sharedFileName === "string" ? base.sharedFileName : null;
+    const slimShared = typeof slim.sharedFileName === "string" ? slim.sharedFileName : null;
+    const baseBytes = baseShared ? statSize(import_path26.default.join(depsRoot, baseShared)) : null;
+    const slimBytes = slimShared ? statSize(import_path26.default.join(depsRoot, slimShared)) : null;
+    const savedBytes = baseBytes !== null && slimBytes !== null && baseBytes > 0 && slimBytes > 0 ? baseBytes - slimBytes : null;
+    const label = file.replace(/^vendor-pack\./, "").replace(/\.json$/, "");
+    slimGroups.push({ label, baseSharedBytes: baseBytes, slimSharedBytes: slimBytes, savedBytes });
+  }
+  slimGroups.sort((a, b) => (b.savedBytes ?? -1) - (a.savedBytes ?? -1) || a.label.localeCompare(b.label));
+  return {
+    depsHash,
+    depsRoot,
+    selectionMode,
+    packIndexHash,
+    usageIndexHash,
+    packs: packs.slice(0, Math.max(1, limit)),
+    slimGroups: slimGroups.slice(0, Math.max(1, limit))
+  };
+}
+function buildRouteFirstRouteBytes(projectRoot, routeAssets, depsSelection) {
+  if (!projectRoot || routeAssets.length === 0) return null;
+  let depObservedBytes = 0;
+  let sourceObservedBytes = 0;
+  let observedAssets = 0;
+  let unresolvedAssets = 0;
+  for (const asset of routeAssets) {
+    let bytes = null;
+    if (asset.kind === "dep") {
+      const fileName = getDepFileNameFromUrl(asset.url);
+      if (fileName && depsSelection) {
+        bytes = statSize(import_path26.default.join(depsSelection.depsRoot, fileName));
+      }
+    } else {
+      const filePath = resolveRouteSourceAssetPath(projectRoot, asset.url);
+      if (filePath) bytes = statSize(filePath);
+    }
+    if (bytes === null) {
+      unresolvedAssets += 1;
+      continue;
+    }
+    observedAssets += 1;
+    if (asset.kind === "dep") depObservedBytes += bytes;
+    else sourceObservedBytes += bytes;
+  }
+  return {
+    totalObservedBytes: depObservedBytes + sourceObservedBytes,
+    depObservedBytes,
+    sourceObservedBytes,
+    observedAssets,
+    unresolvedAssets
+  };
+}
+function buildRoutePackCoverage(options) {
+  const { routeAssets, depsSelection, limit } = options;
+  const depAssets = routeAssets.filter((asset) => asset.kind === "dep");
+  if (!depsSelection) {
+    return {
+      packCoverage: null,
+      uncoveredHotDeps: [],
+      signals: {
+        routeHints: true,
+        depUsage: false,
+        packRouting: false,
+        manifestOwnership: false
+      }
+    };
+  }
+  const depUsageIndex = loadDepUsageIndex(depsSelection.depsRoot, depsSelection.depsHash);
+  const depsManifestIndex = loadDepsManifestIndex2(depsSelection.depsRoot);
+  const routingIndex = loadVendorPackRoutingIndex(depsSelection.depsRoot, depsSelection.depsHash);
+  const fileNameToPackFile = routingIndex?.fileNameToPackFile && typeof routingIndex.fileNameToPackFile === "object" ? routingIndex.fileNameToPackFile : {};
+  const packFileToChunkFiles = routingIndex?.packFileToChunkFiles && typeof routingIndex.packFileToChunkFiles === "object" ? routingIndex.packFileToChunkFiles : {};
+  const routeDepWrappers = depAssets.map((asset) => {
+    const fileName = getDepFileNameFromUrl(asset.url);
+    if (!fileName) return null;
+    if (!depsManifestIndex.has(fileName) && !depUsageIndex?.has(fileName)) return null;
+    return { ...asset, fileName };
+  }).filter((asset) => !!asset);
+  if (routeDepWrappers.length === 0) {
+    return {
+      packCoverage: {
+        totalDepAssets: 0,
+        coveredDepAssets: 0,
+        uncoveredDepAssets: 0,
+        coverageRate: null,
+        estimatedCurrentRequests: 0,
+        estimatedPackedRequests: 0,
+        estimatedRequestsSaved: 0
+      },
+      uncoveredHotDeps: [],
+      signals: {
+        routeHints: true,
+        depUsage: !!depUsageIndex,
+        packRouting: !!routingIndex,
+        manifestOwnership: depsManifestIndex.size > 0
+      }
+    };
+  }
+  const uniqueCurrentFiles = /* @__PURE__ */ new Set();
+  const uniquePackRequests = /* @__PURE__ */ new Set();
+  const uncoveredHotDeps = [];
+  let coveredDepAssets = 0;
+  let uncoveredDepAssets = 0;
+  for (const asset of routeDepWrappers) {
+    uniqueCurrentFiles.add(asset.fileName);
+    const packFileName = fileNameToPackFile[asset.fileName];
+    if (typeof packFileName === "string" && packFileName.length > 0) {
+      coveredDepAssets += 1;
+      uniquePackRequests.add(packFileName);
+      const chunkFiles = Array.isArray(packFileToChunkFiles[packFileName]) ? packFileToChunkFiles[packFileName] : [];
+      for (const chunkFile of chunkFiles) {
+        if (typeof chunkFile === "string" && chunkFile.endsWith(".js")) uniquePackRequests.add(chunkFile);
+      }
+      continue;
+    }
+    uncoveredDepAssets += 1;
+    const manifestEntry = depsManifestIndex.get(asset.fileName);
+    const usageEntry = depUsageIndex?.get(asset.fileName);
+    const bytes = manifestEntry?.sizeBytes ?? statSize(import_path26.default.join(depsSelection.depsRoot, asset.fileName));
+    const packageLabel = manifestEntry?.packageLabel ?? (usageEntry ? `${usageEntry.packageName}@${usageEntry.packageVersion}` : null);
+    uncoveredHotDeps.push({
+      url: asset.url,
+      fileName: asset.fileName,
+      packageLabel,
+      totalRequestCount: asset.requestCount,
+      routeRequestCount: asset.requestCount,
+      minDepth: asset.minDepth,
+      bytes,
+      importers: usageEntry?.importerKeys.length ?? 0,
+      entryRoots: usageEntry?.entryRootKeys.length ?? 0
+    });
+  }
+  uncoveredHotDeps.sort(
+    (a, b) => b.routeRequestCount - a.routeRequestCount || a.minDepth - b.minDepth || (b.bytes ?? -1) - (a.bytes ?? -1) || a.fileName.localeCompare(b.fileName)
+  );
+  const estimatedCurrentRequests = uniqueCurrentFiles.size;
+  const estimatedPackedRequests = uncoveredDepAssets + uniquePackRequests.size;
+  return {
+    packCoverage: {
+      totalDepAssets: routeDepWrappers.length,
+      coveredDepAssets,
+      uncoveredDepAssets,
+      coverageRate: routeDepWrappers.length > 0 ? coveredDepAssets / routeDepWrappers.length : null,
+      estimatedCurrentRequests,
+      estimatedPackedRequests,
+      estimatedRequestsSaved: Math.max(0, estimatedCurrentRequests - estimatedPackedRequests)
+    },
+    uncoveredHotDeps: uncoveredHotDeps.slice(0, Math.max(1, limit)),
+    signals: {
+      routeHints: true,
+      depUsage: !!depUsageIndex,
+      packRouting: !!routingIndex,
+      manifestOwnership: depsManifestIndex.size > 0
+    }
+  };
+}
+function buildRoutePolicyVisibility(options) {
+  const { primaryRouteKey, routeAssets, suggestedPreloads, packCoverage, signals, startupPolicy } = options;
+  let criticalAssets = 0;
+  let deferredAssets = 0;
+  let criticalRequests = 0;
+  let deferredRequests = 0;
+  for (const asset of routeAssets) {
+    if (asset.minDepth <= 1) {
+      criticalAssets += 1;
+      criticalRequests += asset.requestCount;
+    } else {
+      deferredAssets += 1;
+      deferredRequests += asset.requestCount;
+    }
+  }
+  const currentEffects = [];
+  if (primaryRouteKey && suggestedPreloads.length > 0) {
+    currentEffects.push(
+      `Route hints currently influence preload selection for ${primaryRouteKey} (${suggestedPreloads.length} candidate${suggestedPreloads.length === 1 ? "" : "s"}).`
+    );
+  }
+  if (packCoverage && packCoverage.totalDepAssets > 0) {
+    currentEffects.push(
+      `Vendor-pack routing currently covers ${packCoverage.coveredDepAssets}/${packCoverage.totalDepAssets} primary-route dep artifacts.`
+    );
+    currentEffects.push(
+      `Estimated route dep requests drop from ${packCoverage.estimatedCurrentRequests ?? 0} to ${packCoverage.estimatedPackedRequests ?? 0} when current routing applies.`
+    );
+  }
+  if (signals.depUsage) {
+    currentEffects.push("Dep-usage evidence is available for route dependency explainability.");
+  }
+  if (startupPolicy) {
+    currentEffects.push(
+      `Startup policy snapshot classifies ${startupPolicy.eagerAssets} eager asset${startupPolicy.eagerAssets === 1 ? "" : "s"} for ${startupPolicy.routeKey}.`
+    );
+  }
+  return {
+    signals,
+    currentEffects,
+    entryCriticalEvidence: routeAssets.length > 0 ? {
+      criticalAssets,
+      deferredAssets,
+      criticalRequests,
+      deferredRequests
+    } : null,
+    policyReuse: {
+      status: startupPolicy ? "available" : "unavailable",
+      reason: startupPolicy ? "Versioned startup-policy snapshot is available for this route." : "Planner-owned history policy hashing is not implemented yet, so reuse vs recompute is not observable."
+    },
+    startupPolicy,
+    missingCapabilities: [
+      "Route history currently influences preload/modulepreload selection more strongly than full history-aware chunk membership.",
+      startupPolicy ? "Startup policy exists, but source-pack-driven startup closure planning is not implemented yet." : "Entry-critical vs deferred is derived from route-hint minDepth only and is not a planner-owned chunk policy verdict.",
+      startupPolicy ? "Policy reuse is visible for startup preload decisions, but build/dev parity is not implemented yet." : "Planner-owned policy reuse reporting is not available until a versioned history policy layer exists."
+    ]
+  };
+}
+function summarizeRoutes(routeHintStatePath, limit, options) {
+  if (!import_fs24.default.existsSync(routeHintStatePath)) return null;
+  const raw = readJson(routeHintStatePath);
+  if (!raw || raw.version !== 1 || !raw.routes || typeof raw.routes !== "object") return null;
+  const index = new RouteHintIndex(routeHintStatePath);
+  const primaryRouteKey = index.getPrimaryRouteKey();
+  const routeEntries = Object.entries(raw.routes).map(([routeKey, route]) => {
+    const assets = route?.assets && typeof route.assets === "object" ? route.assets : {};
+    let depAssets = 0;
+    let sourceAssets = 0;
+    let totalRequests = 0;
+    for (const asset of Object.values(assets)) {
+      const requestCount = typeof asset?.requestCount === "number" && Number.isFinite(asset.requestCount) ? Math.floor(asset.requestCount) : 0;
+      totalRequests += requestCount;
+      if (asset?.kind === "dep") depAssets += 1;
+      else if (asset?.kind === "source") sourceAssets += 1;
+    }
+    return {
+      routeKey,
+      documents: typeof route?.documents === "number" && Number.isFinite(route.documents) ? Math.floor(route.documents) : 0,
+      totalAssets: depAssets + sourceAssets,
+      depAssets,
+      sourceAssets,
+      totalRequests
+    };
+  });
+  routeEntries.sort((a, b) => b.documents - a.documents || b.totalRequests - a.totalRequests || a.routeKey.localeCompare(b.routeKey));
+  const topDepAssets = index.summarizeAssets("dep").slice(0, Math.max(1, limit)).map((item) => ({
+    url: item.url,
+    kind: item.kind,
+    totalRequestCount: item.totalRequestCount,
+    minDepth: item.minDepth,
+    routeKeys: item.routeKeys
+  }));
+  const topSourceAssets = index.summarizeAssets("source").slice(0, Math.max(1, limit)).map((item) => ({
+    url: item.url,
+    kind: item.kind,
+    totalRequestCount: item.totalRequestCount,
+    minDepth: item.minDepth,
+    routeKeys: item.routeKeys
+  }));
+  const suggestedPreloads = index.selectPreloads(primaryRouteKey, {
+    maxEntries: Math.max(1, limit),
+    maxDepEntries: Math.max(1, limit),
+    maxSourceEntries: Math.max(1, limit),
+    minRequestCount: 1
+  });
+  const normalizedPrimaryRouteKey = primaryRouteKey ? normalizeDocumentRouteKey(primaryRouteKey) : null;
+  const primaryRouteRaw = normalizedPrimaryRouteKey && raw.routes[normalizedPrimaryRouteKey] ? raw.routes[normalizedPrimaryRouteKey] : null;
+  const primaryRouteAssets = primaryRouteRaw?.assets && typeof primaryRouteRaw.assets === "object" ? primaryRouteRaw.assets : {};
+  const primaryRouteAssetEntries = Object.entries(primaryRouteAssets).map(([url2, asset]) => ({
+    url: url2,
+    kind: asset?.kind === "dep" ? "dep" : "source",
+    requestCount: typeof asset?.requestCount === "number" && Number.isFinite(asset.requestCount) ? Math.floor(asset.requestCount) : 0,
+    minDepth: typeof asset?.minDepth === "number" && Number.isFinite(asset.minDepth) && asset.minDepth >= 0 ? Math.floor(asset.minDepth) : 0
+  })).filter((asset) => asset.requestCount > 0).sort((a, b) => b.requestCount - a.requestCount || a.minDepth - b.minDepth || a.url.localeCompare(b.url));
+  const firstRouteBytes = options?.projectRoot && normalizedPrimaryRouteKey ? buildRouteFirstRouteBytes(options.projectRoot, primaryRouteAssetEntries, options.depsSelection) : null;
+  const coverage = buildRoutePackCoverage({
+    routeAssets: primaryRouteAssetEntries,
+    depsSelection: options?.depsSelection,
+    limit
+  });
+  const startupPolicyStatePath = import_path26.default.join(import_path26.default.dirname(routeHintStatePath), "startup-policy.v1.json");
+  const startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
+  const startupPolicyRoute = normalizedPrimaryRouteKey ? startupPolicySnapshot?.routes?.[normalizedPrimaryRouteKey] ?? null : null;
+  const startupPolicy = startupPolicyRoute && normalizedPrimaryRouteKey ? {
+    statePath: startupPolicyStatePath,
+    routeKey: normalizedPrimaryRouteKey,
+    policyHash: startupPolicyRoute.policyHash,
+    eagerAssets: startupPolicyRoute.eagerAssets.length,
+    entryCritical: startupPolicyRoute.stats.entryCritical,
+    sharedLater: startupPolicyRoute.stats.sharedLater,
+    routeLazy: startupPolicyRoute.stats.routeLazy,
+    background: startupPolicyRoute.stats.background,
+    preFcpLoadedModules: startupPolicyRoute.stats.preFcpLoadedModules,
+    preFcpEvaluatedModules: startupPolicyRoute.stats.preFcpEvaluatedModules
+  } : null;
+  const policyVisibility = buildRoutePolicyVisibility({
+    primaryRouteKey: normalizedPrimaryRouteKey,
+    routeAssets: primaryRouteAssetEntries,
+    suggestedPreloads,
+    packCoverage: coverage.packCoverage,
+    signals: coverage.signals,
+    startupPolicy
+  });
+  return {
+    statePath: routeHintStatePath,
+    primaryRouteKey,
+    routeCount: routeEntries.length,
+    routes: routeEntries.slice(0, Math.max(1, limit)),
+    topDepAssets,
+    topSourceAssets,
+    suggestedPreloads,
+    firstRouteBytes,
+    packCoverage: coverage.packCoverage,
+    uncoveredHotDeps: coverage.uncoveredHotDeps,
+    policyVisibility
+  };
+}
+function uniqueSorted2(values) {
+  const out = values.filter((value) => typeof value === "string" && value.length > 0).slice().sort();
+  return out.filter((value, index) => index === 0 || out[index - 1] !== value);
+}
+function parsePackageLabel(label) {
+  if (typeof label !== "string" || label.length === 0) return null;
+  const at = label.lastIndexOf("@");
+  if (at <= 0 || at === label.length - 1) return null;
+  const packageName = label.slice(0, at);
+  const packageVersion = label.slice(at + 1);
+  if (!packageName || !packageVersion) return null;
+  return { packageName, packageVersion };
+}
+var packageVersionCache = /* @__PURE__ */ new Map();
+function readPackageVersion(packageRoot) {
+  const normalizedRoot = import_path26.default.resolve(packageRoot);
+  if (packageVersionCache.has(normalizedRoot)) {
+    return packageVersionCache.get(normalizedRoot) ?? null;
+  }
+  const manifest = readJson(import_path26.default.join(normalizedRoot, "package.json"));
+  const version = typeof manifest?.version === "string" && manifest.version.length > 0 ? manifest.version : null;
+  packageVersionCache.set(normalizedRoot, version);
+  return version;
+}
+function extractPackageIdentityFromModuleId(moduleId) {
+  const fsPath = moduleId.startsWith("ws://") ? moduleId.slice("ws://".length) : moduleId;
+  const marker = `${import_path26.default.sep}node_modules${import_path26.default.sep}`;
+  const idx = fsPath.lastIndexOf(marker);
+  if (idx < 0) return null;
+  const packageRootBase = fsPath.slice(0, idx + marker.length);
+  const after = fsPath.slice(idx + marker.length);
+  const parts = after.split(/[\\/]/).filter(Boolean);
+  if (parts.length === 0) return null;
+  const packageName = parts[0].startsWith("@") && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
+  if (!packageName) return null;
+  const pnpmMarker = `${import_path26.default.sep}.pnpm${import_path26.default.sep}`;
+  const pnpmIdx = fsPath.indexOf(pnpmMarker);
+  if (pnpmIdx >= 0) {
+    const segment = fsPath.slice(pnpmIdx + pnpmMarker.length).split(/[\\/]/, 1)[0] ?? "";
+    const encodedName = packageName.replace(/\//g, "+");
+    if (segment.startsWith(`${encodedName}@`)) {
+      const version2 = segment.slice(encodedName.length + 1).split("_", 1)[0] ?? "";
+      if (version2) return { packageName, packageVersion: version2 };
+    }
+  }
+  const packageRoot = parts[0].startsWith("@") && parts.length >= 2 ? import_path26.default.join(packageRootBase, parts[0], parts[1]) : import_path26.default.join(packageRootBase, parts[0]);
+  const version = readPackageVersion(packageRoot);
+  return version ? { packageName, packageVersion: version } : null;
+}
+function loadDepUsageIndex(depsRoot, depsHash) {
+  const depUsagePath = import_path26.default.join(depsRoot, "deps-usage.v2.json");
+  const legacyPath = import_path26.default.join(depsRoot, "deps-usage.v1.json");
+  const raw = readJson(depUsagePath) ?? readJson(legacyPath);
+  if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
+  const entries = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
+  const out = /* @__PURE__ */ new Map();
+  for (const [fileName, item] of Object.entries(entries)) {
+    if (!item || typeof item !== "object") continue;
+    if (typeof item.entryPath !== "string" || typeof item.packageName !== "string") continue;
+    if (typeof item.packageVersion !== "string" || !Array.isArray(item.usedExports)) continue;
+    out.set(fileName, {
+      fileName,
+      entryPath: item.entryPath,
+      packageName: item.packageName,
+      packageVersion: item.packageVersion,
+      usedExports: uniqueSorted2(item.usedExports.filter((value) => typeof value === "string")),
+      hasNamespace: item.hasNamespace === true,
+      hasExportStar: item.hasExportStar === true,
+      importerKeys: uniqueSorted2(Array.isArray(item.importerKeys) ? item.importerKeys.filter((value) => typeof value === "string") : []),
+      entryRootKeys: uniqueSorted2(Array.isArray(item.entryRootKeys) ? item.entryRootKeys.filter((value) => typeof value === "string") : [])
+    });
+  }
+  return out;
+}
+function loadDepsManifestIndex2(depsRoot) {
+  const manifestPath = import_path26.default.join(depsRoot, "manifest.json");
+  const raw = readJson(manifestPath);
+  const entries = raw?.entries && typeof raw.entries === "object" ? raw.entries : {};
+  const out = /* @__PURE__ */ new Map();
+  for (const [entryPath, value] of Object.entries(entries)) {
+    const item = value;
+    if (!item || typeof item !== "object") continue;
+    const fileName = typeof item.outFile === "string" ? item.outFile : typeof item.out_file === "string" ? item.out_file : null;
+    if (!fileName || !fileName.endsWith(".js")) continue;
+    const packageLabel = typeof item.package === "string" ? item.package : "unknown";
+    const parsed = parsePackageLabel(packageLabel) ?? extractPackageIdentityFromModuleId(`ws://${entryPath}`);
+    if (!parsed) continue;
+    const chunkFilesRaw = Array.isArray(item.chunkFiles) ? item.chunkFiles : Array.isArray(item.chunk_files) ? item.chunk_files : [];
+    out.set(fileName, {
+      fileName,
+      entryPath,
+      packageLabel,
+      packageName: parsed.packageName,
+      packageVersion: parsed.packageVersion,
+      sizeBytes: typeof item.sizeBytes === "number" ? item.sizeBytes : typeof item.size_bytes === "number" ? item.size_bytes : 0,
+      moduleCount: typeof item.moduleCount === "number" ? item.moduleCount : typeof item.module_count === "number" ? item.module_count : 0,
+      edgeCount: typeof item.edgeCount === "number" ? item.edgeCount : typeof item.edge_count === "number" ? item.edge_count : 0,
+      externalCount: typeof item.externalCount === "number" ? item.externalCount : typeof item.external_count === "number" ? item.external_count : 0,
+      chunkGroup: typeof item.chunkGroup === "string" ? item.chunkGroup : typeof item.chunk_group === "string" ? item.chunk_group : null,
+      chunkFiles: uniqueSorted2(chunkFilesRaw.filter((value2) => typeof value2 === "string" && value2.endsWith(".js")))
+    });
+  }
+  return out;
+}
+function loadVendorPackRouting(depsRoot, depsHash) {
+  const raw = readJson(import_path26.default.join(depsRoot, "vendor-pack.v2.index.json"));
+  if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return /* @__PURE__ */ new Map();
+  const routing = raw.fileNameToPackFile && typeof raw.fileNameToPackFile === "object" ? raw.fileNameToPackFile : {};
+  return new Map(
+    Object.entries(routing).filter(
+      (entry) => typeof entry[0] === "string" && typeof entry[1] === "string"
+    )
+  );
+}
+function summarizeDuplicateFindings(graphNodes, depUsageIndex, depsManifestIndex, limit) {
+  const packages = /* @__PURE__ */ new Map();
+  const ensureVersion = (packageName, version) => {
+    let versions = packages.get(packageName);
+    if (!versions) {
+      versions = /* @__PURE__ */ new Map();
+      packages.set(packageName, versions);
+    }
+    let aggregate = versions.get(version);
+    if (!aggregate) {
+      aggregate = {
+        graphModules: /* @__PURE__ */ new Set(),
+        depArtifacts: /* @__PURE__ */ new Set(),
+        importers: /* @__PURE__ */ new Set(),
+        entryRoots: /* @__PURE__ */ new Set(),
+        sampleIds: /* @__PURE__ */ new Set(),
+        sources: /* @__PURE__ */ new Set()
+      };
+      versions.set(version, aggregate);
+    }
+    return aggregate;
+  };
+  for (const node of graphNodes ?? []) {
+    const identity = extractPackageIdentityFromModuleId(node.id);
+    if (!identity) continue;
+    const aggregate = ensureVersion(identity.packageName, identity.packageVersion);
+    aggregate.graphModules.add(node.id);
+    aggregate.sampleIds.add(node.id);
+    aggregate.sources.add("graph");
+  }
+  for (const [fileName, usage] of depUsageIndex ?? []) {
+    const aggregate = ensureVersion(usage.packageName, usage.packageVersion);
+    aggregate.depArtifacts.add(fileName);
+    usage.importerKeys.forEach((value) => aggregate.importers.add(value));
+    usage.entryRootKeys.forEach((value) => aggregate.entryRoots.add(value));
+    aggregate.sampleIds.add(fileName);
+    aggregate.sources.add("dep-usage");
+  }
+  for (const [fileName, entry] of depsManifestIndex ?? []) {
+    const aggregate = ensureVersion(entry.packageName, entry.packageVersion);
+    aggregate.depArtifacts.add(fileName);
+    aggregate.sampleIds.add(fileName);
+    aggregate.sources.add("deps-manifest");
+  }
+  return Array.from(packages.entries()).filter(([, versions]) => versions.size > 1).map(([packageName, versions]) => {
+    const versionDetails = Array.from(versions.entries()).map(([version, aggregate]) => ({
+      version,
+      graphModules: aggregate.graphModules.size,
+      depArtifacts: aggregate.depArtifacts.size,
+      importers: aggregate.importers.size,
+      entryRoots: aggregate.entryRoots.size,
+      sampleIds: Array.from(aggregate.sampleIds).sort().slice(0, 5)
+    })).sort(
+      (a, b) => b.depArtifacts - a.depArtifacts || b.graphModules - a.graphModules || b.importers - a.importers || a.version.localeCompare(b.version)
+    );
+    const evidenceSources = Array.from(
+      new Set(Array.from(versions.values()).flatMap((aggregate) => Array.from(aggregate.sources)))
+    ).sort();
+    return {
+      packageName,
+      versions: versionDetails,
+      evidenceSources,
+      totalGraphModules: versionDetails.reduce((sum, value) => sum + value.graphModules, 0),
+      totalDepArtifacts: versionDetails.reduce((sum, value) => sum + value.depArtifacts, 0),
+      totalImporters: versionDetails.reduce((sum, value) => sum + value.importers, 0),
+      severity: classifyDuplicateSeverity(versionDetails.length, versionDetails.reduce((sum, value) => sum + value.depArtifacts, 0)),
+      confidence: "high"
+    };
+  }).sort(
+    (a, b) => b.versions.length - a.versions.length || b.totalDepArtifacts - a.totalDepArtifacts || b.totalGraphModules - a.totalGraphModules || a.packageName.localeCompare(b.packageName)
+  ).slice(0, Math.max(1, limit));
+}
+function summarizeChunkBloatFindings(outDir, limit) {
+  const manifest = readJson(import_path26.default.join(import_path26.default.resolve(outDir), "manifest.json"));
+  const stats = readJson(import_path26.default.join(import_path26.default.resolve(outDir), "build.stats.json"));
+  const chunks = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+  if (!chunks.length || !stats) return [];
+  return chunks.map((chunk) => {
+    const files = chunk.files ?? {};
+    const jsFiles = Array.isArray(files.js) ? files.js.filter((value) => typeof value === "string") : [];
+    const cssFiles = Array.isArray(files.css) ? files.css.filter((value) => typeof value === "string") : [];
+    const assetFiles = Array.isArray(files.assets) ? files.assets.filter((value) => typeof value === "string") : [];
+    const sumBytes = (fileNames) => fileNames.reduce((sum, fileName) => sum + (typeof stats[fileName]?.bytes === "number" ? stats[fileName].bytes ?? 0 : 0), 0);
+    const jsBytes = sumBytes(jsFiles);
+    const cssBytes = sumBytes(cssFiles);
+    const assetBytes = sumBytes(assetFiles);
+    const totalBytes = jsBytes + cssBytes + assetBytes;
+    const modules = Array.isArray(chunk.modules) ? chunk.modules : [];
+    const topModules = modules.map((module2) => ({
+      id: typeof module2?.id === "string" ? module2.id : "unknown",
+      deps: Array.isArray(module2?.deps) ? module2.deps.length : 0
+    })).sort((a, b) => b.deps - a.deps || a.id.localeCompare(b.id)).slice(0, 3);
+    return {
+      kind: "build-chunk",
+      chunkId: typeof chunk.id === "string" ? chunk.id : "unknown",
+      entry: chunk.entry === true,
+      shared: chunk.shared === true,
+      totalBytes,
+      jsBytes,
+      cssBytes,
+      assetBytes,
+      consumerCount: Array.isArray(chunk.consumers) ? chunk.consumers.length : 0,
+      moduleCount: modules.length,
+      depReferenceCount: modules.reduce(
+        (sum, module2) => sum + (Array.isArray(module2?.deps) ? module2.deps.length : 0) + (Array.isArray(module2?.dynamicDeps) ? module2.dynamicDeps.length : 0),
+        0
+      ),
+      topModules,
+      severity: classifyChunkSeverity(totalBytes, chunk.shared === true),
+      confidence: "high"
+    };
+  }).filter((item) => item.totalBytes > 0).sort((a, b) => b.totalBytes - a.totalBytes || b.jsBytes - a.jsBytes || a.chunkId.localeCompare(b.chunkId)).slice(0, Math.max(1, limit));
+}
+function summarizeDependencyBloatFindings(depsRoot, depsHash, limit) {
+  const depsManifestIndex = loadDepsManifestIndex2(depsRoot);
+  if (depsManifestIndex.size === 0) return [];
+  const depUsageIndex = loadDepUsageIndex(depsRoot, depsHash);
+  const packRouting = loadVendorPackRouting(depsRoot, depsHash);
+  return Array.from(depsManifestIndex.values()).map((entry) => {
+    const usage = depUsageIndex?.get(entry.fileName) ?? null;
+    const packFileName = packRouting.get(entry.fileName) ?? null;
+    const confidence = !usage ? "low" : usage.hasNamespace || usage.hasExportStar ? "medium" : "high";
+    const severity = classifyDependencySeverity(
+      entry.sizeBytes,
+      usage?.importerKeys.length ?? 0,
+      usage?.entryRootKeys.length ?? 0,
+      packFileName !== null
+    );
+    return {
+      kind: "dep-artifact",
+      fileName: entry.fileName,
+      packageName: entry.packageName,
+      packageVersion: entry.packageVersion,
+      packageLabel: entry.packageLabel,
+      bytes: entry.sizeBytes,
+      moduleCount: entry.moduleCount,
+      edgeCount: entry.edgeCount,
+      externalCount: entry.externalCount,
+      importerCount: usage?.importerKeys.length ?? 0,
+      entryRootCount: usage?.entryRootKeys.length ?? 0,
+      usedExportCount: usage ? usage.usedExports.length : null,
+      hasNamespace: usage ? usage.hasNamespace : null,
+      hasExportStar: usage ? usage.hasExportStar : null,
+      chunkGroup: entry.chunkGroup,
+      chunkFiles: entry.chunkFiles,
+      packFileName,
+      packed: packFileName !== null,
+      severity,
+      confidence
+    };
+  }).sort(
+    (a, b) => b.bytes - a.bytes || b.importerCount - a.importerCount || Number(a.packed) - Number(b.packed) || a.packageLabel.localeCompare(b.packageLabel)
+  ).slice(0, Math.max(1, limit));
+}
+function buildAnalyzeSuggestions(duplicates, dependencies, limit) {
+  const suggestions = [];
+  for (const duplicate of duplicates) {
+    suggestions.push({
+      kind: "align-package-versions",
+      target: duplicate.packageName,
+      severity: duplicate.severity,
+      confidence: "high",
+      rationale: `${duplicate.packageName} resolves to ${duplicate.versions.length} versions; align versions to reduce duplicate dependency state.`
+    });
+  }
+  for (const dependency of dependencies) {
+    if (dependency.confidence !== "high") continue;
+    if (dependency.packed) continue;
+    if (dependency.bytes < HEAVY_DEP_SUGGESTION_MIN_BYTES) continue;
+    if (Math.max(dependency.importerCount, dependency.entryRootCount) < HEAVY_DEP_SUGGESTION_MIN_IMPORTERS) continue;
+    suggestions.push({
+      kind: "review-pack-coverage",
+      target: `${dependency.packageName}@${dependency.packageVersion}`,
+      severity: dependency.bytes >= 512 * 1024 ? "high" : "medium",
+      confidence: "high",
+      rationale: `${dependency.packageName}@${dependency.packageVersion} emits ${formatBytes(
+        dependency.bytes
+      )} outside vendor-pack coverage across ${Math.max(dependency.importerCount, dependency.entryRootCount)} import roots.`
+    });
+  }
+  const kindPriority = (kind) => kind === "align-package-versions" ? 0 : 1;
+  return suggestions.sort(
+    (a, b) => compareSeverity(a.severity, b.severity) || kindPriority(a.kind) - kindPriority(b.kind) || a.target.localeCompare(b.target)
+  ).slice(0, Math.max(1, limit));
+}
+function summarizeFindings(options) {
+  const { graphNodes, outDir, depsSelection, limit } = options;
+  const depsManifestIndex = depsSelection ? loadDepsManifestIndex2(depsSelection.depsRoot) : null;
+  const depUsageIndex = depsSelection ? loadDepUsageIndex(depsSelection.depsRoot, depsSelection.depsHash) : null;
+  const duplicates = summarizeDuplicateFindings(graphNodes, depUsageIndex, depsManifestIndex, limit);
+  const chunkBloat = summarizeChunkBloatFindings(outDir, limit);
+  const dependencyBloat = depsSelection ? summarizeDependencyBloatFindings(depsSelection.depsRoot, depsSelection.depsHash, limit) : [];
+  const suggestions = buildAnalyzeSuggestions(duplicates, dependencyBloat, limit);
+  if (!graphNodes && chunkBloat.length === 0 && dependencyBloat.length === 0 && duplicates.length === 0) {
+    return null;
+  }
+  return {
+    duplicates,
+    bloat: {
+      chunks: chunkBloat,
+      dependencies: dependencyBloat
+    },
+    suggestions
+  };
+}
+function countPackSavings(summary) {
+  if (!summary) return null;
+  return summary.packs.reduce((sum, pack) => sum + pack.requestsSaved, 0);
+}
+function deriveAnalyzeOverview(input) {
+  return {
+    modules: input.graph?.modules ?? null,
+    dependencies: input.graph?.edges ?? null,
+    entries: input.build?.entries ?? null,
+    chunks: input.build?.chunks.total ?? null,
+    jsBytes: input.build?.bytes.js ?? null,
+    cssBytes: input.build?.bytes.css ?? null,
+    packSavingsRequests: countPackSavings(input.packs)
+  };
+}
+function deriveAnalyzeHealth(input) {
+  const maxChunkBytes = input.findings?.bloat.chunks[0]?.totalBytes ?? 0;
+  const jsBytes = input.build?.bytes.js ?? 0;
+  let bundlePressure = "missing";
+  if (input.build || (input.findings?.bloat.chunks.length ?? 0) > 0) {
+    if (maxChunkBytes >= 2 * 1024 * 1024 || jsBytes >= 5 * 1024 * 1024) bundlePressure = "high";
+    else if (maxChunkBytes >= 512 * 1024 || jsBytes >= 1 * 1024 * 1024) bundlePressure = "medium";
+    else bundlePressure = "low";
+  }
+  let duplicatePressure = "missing";
+  if (input.findings) {
+    if (input.findings.duplicates.some((item) => item.severity === "high")) duplicatePressure = "high";
+    else if (input.findings.duplicates.length > 0) duplicatePressure = "medium";
+    else duplicatePressure = "low";
+  }
+  let packCoverage = "missing";
+  if (input.routes?.packCoverage && input.routes.packCoverage.coverageRate !== null) {
+    const ratio = input.routes.packCoverage.coverageRate;
+    if (ratio >= 0.67) packCoverage = "high";
+    else if (ratio >= 0.34) packCoverage = "medium";
+    else packCoverage = "low";
+  } else if (input.findings) {
+    const relevantDeps = input.findings.bloat.dependencies.filter((item) => item.confidence !== "low");
+    if (relevantDeps.length > 0) {
+      const packedCount = relevantDeps.filter((item) => item.packed).length;
+      const ratio = packedCount / relevantDeps.length;
+      if (ratio >= 0.67) packCoverage = "high";
+      else if (ratio >= 0.34) packCoverage = "medium";
+      else packCoverage = "low";
+    }
+  }
+  return {
+    bundlePressure,
+    duplicatePressure,
+    packCoverage,
+    routeVisibility: input.routes && input.routes.routeCount > 0 ? "present" : "missing"
+  };
+}
+function getTopModuleLabel(module2) {
+  return module2?.id ?? null;
+}
+function buildTopFindingScore(finding) {
+  const severityWeight = finding.severity === "high" ? 1e9 : finding.severity === "medium" ? 1e8 : 1e7;
+  const confidenceWeight = finding.confidence === "high" ? 1e6 : finding.confidence === "medium" ? 1e5 : 1e4;
+  const numericEvidence = typeof finding.evidence.bytes === "number" ? finding.evidence.bytes : typeof finding.evidence.versions === "number" ? finding.evidence.versions * 1e4 : typeof finding.evidence.totalDepArtifacts === "number" ? finding.evidence.totalDepArtifacts * 1e3 : 0;
+  return severityWeight + confidenceWeight + numericEvidence;
+}
+function buildTopFindings(findings, limit) {
+  if (!findings) return [];
+  const normalized = [];
+  for (const duplicate of findings.duplicates) {
+    normalized.push({
+      id: `duplicate:${duplicate.packageName}`,
+      severity: duplicate.severity,
+      title: `Duplicate ${duplicate.packageName} versions detected`,
+      why: "Duplicate dependency state increases emitted waste and package divergence.",
+      action: "Align versions across the workspace dependency graph.",
+      confidence: duplicate.confidence,
+      evidence: {
+        packageName: duplicate.packageName,
+        versions: duplicate.versions.length,
+        totalDepArtifacts: duplicate.totalDepArtifacts,
+        totalGraphModules: duplicate.totalGraphModules
+      },
+      source: "duplicate"
+    });
+  }
+  for (const chunk of findings.bloat.chunks) {
+    normalized.push({
+      id: `chunk:${chunk.chunkId}`,
+      severity: chunk.severity,
+      title: chunk.shared ? "Oversized shared chunk" : "Oversized entry chunk",
+      why: "Large emitted chunks increase parse and first-load pressure.",
+      action: "Revisit chunk policy or reduce imported surface for this chunk.",
+      confidence: chunk.confidence,
+      evidence: {
+        chunkId: chunk.chunkId,
+        bytes: chunk.totalBytes,
+        modules: chunk.moduleCount,
+        topModule: getTopModuleLabel(chunk.topModules[0])
+      },
+      source: "chunk-bloat"
+    });
+  }
+  for (const dependency of findings.bloat.dependencies) {
+    normalized.push({
+      id: `dep:${dependency.fileName}`,
+      severity: dependency.severity,
+      title: dependency.packed ? "Heavy dependency artifact" : "Heavy unpacked dependency artifact",
+      why: dependency.packed ? "Large dependency artifacts still add byte and parse pressure." : "Large unpacked dependency artifacts increase request and transfer pressure.",
+      action: dependency.packed ? "Reduce the imported surface or review whether this dependency should stay this large." : "Review pack coverage or reduce the imported surface for this dependency.",
+      confidence: dependency.confidence,
+      evidence: {
+        packageName: dependency.packageName,
+        packageVersion: dependency.packageVersion,
+        bytes: dependency.bytes,
+        importers: dependency.importerCount,
+        packed: dependency.packed
+      },
+      source: "dep-bloat"
+    });
+  }
+  return normalized.sort(
+    (a, b) => buildTopFindingScore(b) - buildTopFindingScore(a) || compareSeverity(a.severity, b.severity) || compareCertainty(a.confidence, b.confidence) || a.id.localeCompare(b.id)
+  ).slice(0, Math.max(1, limit));
+}
+function compactWorkspaceLabel(projectRoot) {
+  const base = import_path26.default.basename(projectRoot);
+  return base || projectRoot;
+}
+function uniquePreservingOrder(values) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+function formatSeverity(severity) {
+  return severity[0].toUpperCase() + severity.slice(1);
+}
+function formatHealth(level) {
+  return level[0].toUpperCase() + level.slice(1);
+}
+function collectNextActions(summary, limit) {
+  const actions = [];
+  for (const finding of summary.topFindings) {
+    if (finding.action) actions.push(finding.action);
+  }
+  for (const suggestion of summary.findings?.suggestions ?? []) {
+    actions.push(suggestion.rationale);
+  }
+  const unique = uniquePreservingOrder(actions);
+  return unique.slice(0, Math.max(1, limit));
+}
+function printCompactSectionStatus(label, available, detail) {
+  const state = available ? accent(detail ?? "available") : import_chalk2.default.bold.red("unavailable");
+  console.log(` ${import_chalk2.default.bold(label)}: ${state}`);
+}
+function printDefaultSummary(summary, options, limit) {
+  logInfo("Ionify Analyzer");
+  console.log(` ${import_chalk2.default.bold("Workspace")}: ${accent(compactWorkspaceLabel(summary.workspace.projectRoot))}`);
+  printCompactSectionStatus(
+    "Graph",
+    !!summary.graph,
+    summary.summary.modules !== null && summary.summary.dependencies !== null ? `${summary.summary.modules} modules \u2022 ${summary.summary.dependencies} deps` : null
+  );
+  printCompactSectionStatus(
+    "Build",
+    !!summary.build,
+    summary.build ? `${summary.build.chunks.total} chunks \u2022 ${formatBytes(summary.build.bytes.js)} JS \u2022 ${formatBytes(summary.build.bytes.css)} CSS` : null
+  );
+  printCompactSectionStatus(
+    "Packs",
+    !!summary.packs,
+    summary.summary.packSavingsRequests !== null ? `${summary.packs?.packs.length ?? 0} active packs \u2022 ~${summary.summary.packSavingsRequests} requests saved` : null
+  );
+  printCompactSectionStatus(
+    "Routes",
+    !!summary.routes,
+    summary.routes ? `${summary.routes.routeCount} tracked route${summary.routes.routeCount === 1 ? "" : "s"}` : null
+  );
+  console.log(`
+ ${sectionTitle("Health")}`);
+  console.log(` ${dimText("-")} Bundle size pressure: ${colorHealth(summary.health.bundlePressure)}`);
+  console.log(` ${dimText("-")} Duplicate dependency pressure: ${colorHealth(summary.health.duplicatePressure)}`);
+  console.log(` ${dimText("-")} Pack coverage: ${colorHealth(summary.health.packCoverage)}`);
+  console.log(` ${dimText("-")} Route visibility: ${colorHealth(summary.health.routeVisibility)}`);
+  console.log(`
+ ${sectionTitle("Top Issues")}`);
+  if (summary.topFindings.length === 0) {
+    console.log(` ${dimText("No high-signal findings from the current engine state.")}`);
+  } else {
+    const topIssueCount = options.verbose ? Math.max(1, Math.min(5, limit)) : Math.max(1, Math.min(3, limit));
+    for (const [index, finding] of summary.topFindings.slice(0, topIssueCount).entries()) {
+      const evidenceParts = Object.entries(finding.evidence).filter(([, value]) => value !== null && value !== false && value !== "").slice(0, 3).map(([key, value]) => `${key}=${typeof value === "number" && key === "bytes" ? formatBytes(value) : value}`);
+      console.log(`${accent(`${index + 1}.`)} [${colorSeverity(finding.severity)}] ${import_chalk2.default.bold(finding.title)}`);
+      console.log(`   ${dimText("Why:")} ${finding.why}`);
+      if (evidenceParts.length > 0) console.log(`   ${dimText("Evidence:")} ${evidenceParts.join(` ${import_chalk2.default.gray("\u2022")} `)}`);
+      if (finding.action) console.log(`   ${dimText("Action:")} ${import_chalk2.default.green(finding.action)}`);
+      console.log(`   ${dimText("Confidence:")} ${colorConfidence(finding.confidence)}`);
+    }
+  }
+  console.log(`
+ ${sectionTitle("Key Metrics")}`);
+  console.log(
+    ` ${dimText("-")} Largest chunk: ${metric(
+      summary.findings?.bloat.chunks[0] ? `${formatBytes(summary.findings.bloat.chunks[0].totalBytes)} (${summary.findings.bloat.chunks[0].chunkId})` : "n/a"
+    )}`
+  );
+  console.log(
+    ` ${dimText("-")} Largest dependency artifact: ${metric(
+      summary.findings?.bloat.dependencies[0] ? `${summary.findings.bloat.dependencies[0].packageLabel} (${formatBytes(summary.findings.bloat.dependencies[0].bytes)})` : "n/a"
+    )}`
+  );
+  console.log(` ${dimText("-")} Duplicate families: ${metric(String(summary.findings?.duplicates.length ?? 0))}`);
+  console.log(` ${dimText("-")} Vendor pack request savings: ${metric(String(summary.summary.packSavingsRequests ?? "n/a"))}`);
+  const nextActions = collectNextActions(summary, 3);
+  if (nextActions.length > 0) {
+    console.log(`
+ ${sectionTitle("Recommended Next Steps")}`);
+    for (const action of nextActions) console.log(` ${dimText("-")} ${import_chalk2.default.green(action)}`);
+  }
+  if (!options.verbose) {
+    console.log(`
+ ${dimText("Use --verbose for full findings, --json for stable machine output, or --section <name> for focused analysis.")}`);
+  }
+}
+function printDepsSection(summary) {
+  console.log(`
+ ${sectionTitle("Dependencies")}`);
+  if (!summary.findings) {
+    console.log(` ${dimText("Duplicate and bloat findings are unavailable for the current engine state.")}`);
+    return;
+  }
+  if (summary.findings.duplicates.length > 0) {
+    console.log(` ${subSectionTitle("Duplicate versions:")}`);
+    for (const duplicate of summary.findings.duplicates) {
+      console.log(bullet(`[${colorSeverity(duplicate.severity)}] ${duplicate.packageName} ${import_chalk2.default.gray("\u2192")} ${duplicate.versions.map((item) => item.version).join(", ")}`));
+    }
+  } else {
+    console.log(` ${subSectionTitle("Duplicate versions:")} ${dimText("none detected")}`);
+  }
+  if (summary.findings.bloat.dependencies.length > 0) {
+    console.log(`
+ ${subSectionTitle("Heavy dependency artifacts:")}`);
+    for (const dependency of summary.findings.bloat.dependencies) {
+      console.log(
+        bullet(
+          `[${colorSeverity(dependency.severity)}] ${dependency.packageLabel} ${metric(formatBytes(dependency.bytes))} ${dimText(
+            `packed=${dependency.packed ? "yes" : "no"} confidence=`
+          )}${colorConfidence(dependency.confidence)}`
+        )
+      );
+    }
+  } else {
+    console.log(`
+ ${subSectionTitle("Heavy dependency artifacts:")} ${dimText("unavailable")}`);
+  }
+  if (summary.findings.suggestions.length > 0) {
+    console.log(`
+ ${subSectionTitle("Suggestions:")}`);
+    for (const suggestion of summary.findings.suggestions) {
+      console.log(bullet(`[${colorSeverity(suggestion.severity)}] ${import_chalk2.default.green(suggestion.rationale)}`));
+    }
+  }
+}
+function printFocusedSection(section, summary, options) {
+  switch (section) {
+    case "graph":
+      if (summary.graph) printGraphSummary(summary.graph, !!(options.tree || options.deps));
+      else console.log("\n Graph\n No cached graph found. Run `ionify dev` to generate dependency data.");
+      return;
+    case "build":
+      if (summary.build) printBuildSummary(summary.build);
+      else console.log("\n Build\n No build outputs found. Run `ionify build` to generate manifest and build stats.");
+      if (summary.findings?.bloat.chunks.length) {
+        console.log("\n Chunk findings:");
+        for (const chunk of summary.findings.bloat.chunks) {
+          console.log(
+            `  \u2022 [${formatSeverity(chunk.severity)}] ${chunk.chunkId} ${formatBytes(chunk.totalBytes)} modules=${chunk.moduleCount} depRefs=${chunk.depReferenceCount}`
+          );
+        }
+      }
+      return;
+    case "deps":
+      printDepsSection(summary);
+      return;
+    case "packs":
+      if (summary.packs) printPackSummary(summary.packs);
+      else console.log("\n Vendor packs (v2)\n No deps pack index found.");
+      return;
+    case "routes":
+      if (summary.routes) printRouteSummary(summary.routes);
+      else console.log("\n Routes\n Routes: unavailable (no route-hint state found)");
+      return;
+    case "findings":
+      if (summary.findings) printFindingsSummary(summary.findings);
+      else console.log("\n Findings\n No duplicate-version or bloat findings available.");
+      return;
+  }
+}
+function printGraphTree(nodes, prefix = "") {
+  nodes.forEach((node, index) => {
+    const isLast = index === nodes.length - 1;
+    const branch = prefix ? isLast ? "\u2514\u2500 " : "\u251C\u2500 " : "";
+    const suffixParts = [];
+    if (node.cycle) suffixParts.push("cycle");
+    if (node.truncated) suffixParts.push("truncated");
+    suffixParts.push(`${node.depCount} deps`);
+    console.log(`${prefix}${branch}${node.id} (${suffixParts.join(", ")})`);
+    if (node.deps && node.deps.length > 0) {
+      printGraphTree(node.deps, `${prefix}${prefix ? isLast ? "   " : "\u2502  " : ""}`);
+    }
+  });
+}
+function printGraphSummary(summary, includeTree) {
+  console.log(`
+ ${sectionTitle("Graph")}`);
+  console.log(` ${import_chalk2.default.bold("Modules")}: ${metric(String(summary.modules))}`);
+  console.log(` ${import_chalk2.default.bold("Dependencies")}: ${metric(String(summary.edges))}`);
+  console.log(` ${import_chalk2.default.bold("Avg deps / module")}: ${metric(summary.averageDeps.toFixed(2))}`);
+  console.log(` ${import_chalk2.default.bold("Roots")}: ${metric(String(summary.roots.length))}`);
+  if (summary.densest.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top modules by dependency count:")}`);
+    for (const entry of summary.densest) console.log(bullet(`${entry.id} ${dimText(`(${entry.deps})`)}`));
+  }
+  if (summary.mostDepended.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top modules by inbound dependents:")}`);
+    for (const entry of summary.mostDepended) console.log(bullet(`${entry.id} ${dimText(`(${entry.dependents})`)}`));
+  }
+  if (summary.orphans.length > 0) {
+    console.log(`
+ ${subSectionTitle("Root/orphan modules:")}`);
+    for (const file of summary.orphans.slice(0, 10)) console.log(bullet(file));
+    if (summary.orphans.length > 10) console.log(bullet(dimText(`...and ${summary.orphans.length - 10} more`)));
+  }
+  if (includeTree && summary.tree && summary.tree.length > 0) {
+    console.log(`
+ ${subSectionTitle("Dependency tree:")}`);
+    printGraphTree(summary.tree);
+  }
+}
+function printBuildSummary(summary) {
+  console.log(`
+ ${sectionTitle("Build")}`);
+  console.log(` ${import_chalk2.default.bold("Out dir")}: ${summary.outDir}`);
+  console.log(` ${import_chalk2.default.bold("Manifest")}: ${summary.hasManifest ? import_chalk2.default.green("yes") : import_chalk2.default.red("no")}`);
+  console.log(` ${import_chalk2.default.bold("Build stats")}: ${summary.hasStats ? import_chalk2.default.green("yes") : import_chalk2.default.red("no")}`);
+  console.log(` ${import_chalk2.default.bold("Entries")}: ${metric(String(summary.entries))}`);
+  console.log(` ${import_chalk2.default.bold("Chunks")}: ${metric(String(summary.chunks.total))} ${dimText(`(entry ${summary.chunks.entry}, shared ${summary.chunks.shared})`)}`);
+  console.log(
+    ` ${import_chalk2.default.bold("Files")}: ${dimText(`js ${summary.files.js}, css ${summary.files.css}, assets ${summary.files.assets}, maps ${summary.files.maps}, public ${summary.files.publicAssets}`)}`
+  );
+  console.log(
+    ` ${import_chalk2.default.bold("Bytes")}: ${dimText(`js ${formatBytes(summary.bytes.js)}, css ${formatBytes(summary.bytes.css)}, assets ${formatBytes(
+      summary.bytes.assets
+    )}, maps ${formatBytes(summary.bytes.maps)}, public ${formatBytes(summary.bytes.publicAssets)}`)}`
+  );
+  if (summary.topFiles.length > 0) {
+    console.log(`
+ ${subSectionTitle("Largest tracked files:")}`);
+    for (const file of summary.topFiles) console.log(bullet(`${file.file} ${dimText(`(${file.type}, ${formatBytes(file.bytes)})`)}`));
+  }
+}
+function printPackSummary(summary) {
+  console.log(`
+ ${sectionTitle("Vendor packs (v2)")}`);
+  console.log(` ${import_chalk2.default.bold("depsHash")}: ${accent(summary.depsHash)}`);
+  console.log(` ${import_chalk2.default.bold("selection")}: ${summary.selectionMode}`);
+  if (summary.packIndexHash) console.log(` ${import_chalk2.default.bold("packIndexHash")}: ${dimText(summary.packIndexHash)}`);
+  if (summary.usageIndexHash) console.log(` ${import_chalk2.default.bold("usageIndexHash")}: ${dimText(summary.usageIndexHash)}`);
+  if (summary.packs.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top packs by request savings (approx):")}`);
+    for (const p of summary.packs) {
+      const reqLabel = `${p.requestsUnpacked}\u2192${p.requestsPacked} (saved ${p.requestsSaved})`;
+      const bytesLabel = p.bytesWrappers !== null && p.bytesPacked !== null ? `${formatBytes(p.bytesWrappers)}\u2192${formatBytes(p.bytesPacked)}` : "n/a";
+      console.log(bullet(`${p.packFileName} ${dimText(`members=${p.members} requests=${reqLabel} bytes=${bytesLabel}`)}`));
+    }
+  }
+  if (summary.slimGroups.length > 0) {
+    console.log(`
+ ${subSectionTitle("Slimming (base \u2192 slim shared bytes):")}`);
+    for (const g of summary.slimGroups) {
+      const saved = g.savedBytes !== null && g.savedBytes > 0 ? `saved ${formatBytes(g.savedBytes)}` : "saved n/a";
+      console.log(bullet(`${g.label}: ${formatBytes(g.baseSharedBytes)}\u2192${formatBytes(g.slimSharedBytes)} ${dimText(`(${saved})`)}`));
+    }
+  }
+}
+function printRouteSummary(summary) {
+  console.log(`
+ ${sectionTitle("Routes")}`);
+  console.log(` ${import_chalk2.default.bold("State")}: ${summary.statePath}`);
+  console.log(` ${import_chalk2.default.bold("Routes tracked")}: ${metric(String(summary.routeCount))}`);
+  console.log(` ${import_chalk2.default.bold("Primary route")}: ${accent(summary.primaryRouteKey ?? "n/a")}`);
+  if (summary.routes.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top routes:")}`);
+    for (const route of summary.routes) {
+      console.log(bullet(`${route.routeKey} ${dimText(`documents=${route.documents} requests=${route.totalRequests} assets=${route.totalAssets} (dep ${route.depAssets}, source ${route.sourceAssets})`)}`));
+    }
+  }
+  if (summary.topDepAssets.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top dep assets:")}`);
+    for (const item of summary.topDepAssets) {
+      console.log(bullet(`${item.url} ${dimText(`requests=${item.totalRequestCount} depth=${item.minDepth} routes=${item.routeKeys.length}`)}`));
+    }
+  }
+  if (summary.topSourceAssets.length > 0) {
+    console.log(`
+ ${subSectionTitle("Top source assets:")}`);
+    for (const item of summary.topSourceAssets) {
+      console.log(bullet(`${item.url} ${dimText(`requests=${item.totalRequestCount} depth=${item.minDepth} routes=${item.routeKeys.length}`)}`));
+    }
+  }
+  if (summary.suggestedPreloads.length > 0) {
+    console.log(`
+ ${subSectionTitle("Suggested preloads:")}`);
+    for (const item of summary.suggestedPreloads) {
+      console.log(bullet(`${item.url} ${dimText(`(${item.kind}) route=${item.routeRequestCount} total=${item.totalRequestCount} depth=${item.minDepth}`)}`));
+    }
+  }
+  if (summary.firstRouteBytes) {
+    console.log(`
+ ${subSectionTitle("Primary route observed bytes:")}`);
+    console.log(
+      bullet(
+        `total=${formatBytes(summary.firstRouteBytes.totalObservedBytes)} dep=${formatBytes(summary.firstRouteBytes.depObservedBytes)} source=${formatBytes(summary.firstRouteBytes.sourceObservedBytes)} ${dimText(`resolved=${summary.firstRouteBytes.observedAssets} unresolved=${summary.firstRouteBytes.unresolvedAssets}`)}`
+      )
+    );
+  }
+  if (summary.packCoverage) {
+    console.log(`
+ ${subSectionTitle("Pack coverage:")}`);
+    console.log(
+      bullet(
+        `covered=${summary.packCoverage.coveredDepAssets}/${summary.packCoverage.totalDepAssets} uncovered=${summary.packCoverage.uncoveredDepAssets} estimated requests ${summary.packCoverage.estimatedCurrentRequests ?? 0}\u2192${summary.packCoverage.estimatedPackedRequests ?? 0} ${dimText(`saved=${summary.packCoverage.estimatedRequestsSaved ?? 0}`)}`
+      )
+    );
+  }
+  if (summary.uncoveredHotDeps.length > 0) {
+    console.log(`
+ ${subSectionTitle("Uncovered hot deps:")}`);
+    for (const dep of summary.uncoveredHotDeps) {
+      const label = dep.packageLabel ?? dep.fileName;
+      console.log(
+        bullet(
+          `${label} ${dimText(`requests=${dep.routeRequestCount} depth=${dep.minDepth} bytes=${formatBytes(dep.bytes)} importers=${dep.importers} roots=${dep.entryRoots}`)}`
+        )
+      );
+    }
+  }
+  console.log(`
+ ${subSectionTitle("History and policy visibility:")}`);
+  const signals = summary.policyVisibility.signals;
+  console.log(
+    bullet(
+      `signals routeHints=${signals.routeHints ? "yes" : "no"} depUsage=${signals.depUsage ? "yes" : "no"} packRouting=${signals.packRouting ? "yes" : "no"} manifestOwnership=${signals.manifestOwnership ? "yes" : "no"}`
+    )
+  );
+  if (summary.policyVisibility.entryCriticalEvidence) {
+    const evidence = summary.policyVisibility.entryCriticalEvidence;
+    console.log(
+      bullet(
+        `entry-critical evidence assets=${evidence.criticalAssets} deferred=${evidence.deferredAssets} requests=${evidence.criticalRequests}/${evidence.deferredRequests} ${dimText(summary.policyVisibility.startupPolicy ? "(startup policy + history)" : "(derived from minDepth)")}`
+      )
+    );
+  }
+  if (summary.policyVisibility.startupPolicy) {
+    const startupPolicy = summary.policyVisibility.startupPolicy;
+    console.log(
+      bullet(
+        `startup-policy route=${startupPolicy.routeKey} eager=${startupPolicy.eagerAssets} preFcpLoaded=${startupPolicy.preFcpLoadedModules} preFcpEvaluated=${startupPolicy.preFcpEvaluatedModules} ${dimText(`hash=${startupPolicy.policyHash.slice(0, 12)}`)}`
+      )
+    );
+    console.log(
+      bullet(
+        `classifications entry-critical=${startupPolicy.entryCritical} shared-later=${startupPolicy.sharedLater} route-lazy=${startupPolicy.routeLazy} background=${startupPolicy.background}`
+      )
+    );
+  }
+  console.log(
+    bullet(
+      `policy reuse=${summary.policyVisibility.policyReuse.status} ${dimText(`(${summary.policyVisibility.policyReuse.reason})`)}`
+    )
+  );
+  for (const effect of summary.policyVisibility.currentEffects) {
+    console.log(bullet(effect));
+  }
+  for (const missing of summary.policyVisibility.missingCapabilities) {
+    console.log(bullet(dimText(`Not yet: ${missing}`)));
+  }
+}
+function printFindingsSummary(summary) {
+  console.log(`
+ ${sectionTitle("Findings")}`);
+  if (summary.duplicates.length > 0) {
+    console.log(`
+ ${subSectionTitle("Duplicate versions:")}`);
+    for (const duplicate of summary.duplicates) {
+      const versions = duplicate.versions.map((item) => item.version).join(", ");
+      console.log(bullet(`[${colorSeverity(duplicate.severity)}] ${duplicate.packageName} ${import_chalk2.default.gray("\u2192")} ${versions} ${dimText(`(${duplicate.confidence})`)}`));
+    }
+  }
+  if (summary.bloat.chunks.length > 0) {
+    console.log(`
+ ${subSectionTitle("Largest emitted chunks:")}`);
+    for (const chunk of summary.bloat.chunks) {
+      const role = chunk.entry ? "entry" : chunk.shared ? "shared" : "chunk";
+      console.log(
+        bullet(`[${colorSeverity(chunk.severity)}] ${chunk.chunkId} ${dimText(`(${role})`)} ${metric(formatBytes(chunk.totalBytes))} ${dimText(`modules=${chunk.moduleCount} depRefs=${chunk.depReferenceCount}`)}`)
+      );
+    }
+  }
+  if (summary.bloat.dependencies.length > 0) {
+    console.log(`
+ ${subSectionTitle("Heaviest dependency artifacts:")}`);
+    for (const dependency of summary.bloat.dependencies) {
+      const usageLabel = dependency.importerCount > 0 ? `importers=${dependency.importerCount} roots=${dependency.entryRootCount}` : "usage=n/a";
+      const packLabel = dependency.packed ? `packed via ${dependency.packFileName}` : "not packed";
+      console.log(
+        bullet(`[${colorSeverity(dependency.severity)}] ${dependency.packageLabel} ${metric(formatBytes(dependency.bytes))} ${dimText(`${usageLabel} ${packLabel} certainty=`)}${colorConfidence(dependency.confidence)}`)
+      );
+    }
+  }
+  if (summary.suggestions.length > 0) {
+    console.log(`
+ ${subSectionTitle("Conservative suggestions:")}`);
+    for (const suggestion of summary.suggestions) {
+      console.log(bullet(`[${colorSeverity(suggestion.severity)}] ${suggestion.target}: ${import_chalk2.default.green(suggestion.rationale)} ${dimText(`(${suggestion.confidence})`)}`));
+    }
+  }
+  if (summary.duplicates.length === 0 && summary.bloat.chunks.length === 0 && summary.bloat.dependencies.length === 0 && summary.suggestions.length === 0) {
+    console.log(` ${dimText("No duplicate-version or bloat findings from the current engine state.")}`);
+  }
+}
+async function withSuppressedConsole(enabled, work) {
+  if (!enabled) return await work();
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.log = () => {
+  };
+  console.warn = () => {
+  };
+  console.error = () => {
+  };
+  try {
+    return await work();
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+}
+async function runAnalyzeCommand(options = {}) {
+  const limit = Math.max(1, options.limit ?? 10);
+  const selected = getSelectedSurfaces(options);
+  const ws = await withSuppressedConsole(!!options.json, () => resolveAnalyzeWorkspace());
+  const outDir = options.outDir ? import_path26.default.resolve(options.outDir) : import_path26.default.join(ws.projectRoot, "dist");
+  const needsGraphState = selected.includes("graph") || selected.includes("findings");
+  const needsDepsState = selected.includes("packs") || selected.includes("findings") || selected.includes("routes");
+  const nodes = needsGraphState ? await withSuppressedConsole(!!options.json, () => loadGraphSnapshot(ws.ionifyDir)) : null;
+  const depsInfo = needsDepsState ? selectDepsRoot(ws.ionifyDir, options.depsHash, process.env.IONIFY_DEPS_HASH) : null;
+  const summary = {
+    version: 1,
+    workspace: {
+      projectRoot: ws.projectRoot,
+      workspaceRoot: ws.workspaceRoot,
+      ionifyDir: ws.ionifyDir
+    },
+    selected,
+    summary: {
+      modules: null,
+      dependencies: null,
+      entries: null,
+      chunks: null,
+      jsBytes: null,
+      cssBytes: null,
+      packSavingsRequests: null
+    },
+    health: {
+      bundlePressure: "missing",
+      duplicatePressure: "missing",
+      packCoverage: "missing",
+      routeVisibility: "missing"
+    },
+    topFindings: []
+  };
+  if (selected.includes("graph")) {
+    summary.graph = nodes && nodes.length > 0 ? computeGraphSummary(nodes, limit, !!(options.tree || options.deps)) : null;
+  }
+  if (selected.includes("build")) {
+    summary.build = summarizeBuildOutputs(outDir, limit);
+  }
+  if (selected.includes("packs")) {
+    summary.packs = depsInfo ? analyzeVendorPacks(depsInfo.depsRoot, depsInfo.depsHash, depsInfo.selectionMode, limit) : null;
+  }
+  if (selected.includes("routes")) {
+    const routeHintStatePath = import_path26.default.join(ws.ionifyDir, "route-hints.v1.json");
+    summary.routes = summarizeRoutes(routeHintStatePath, limit, {
+      projectRoot: ws.projectRoot,
+      depsSelection: depsInfo
+    });
+  }
+  if (selected.includes("findings")) {
+    summary.findings = summarizeFindings({
+      graphNodes: nodes,
+      outDir,
+      depsSelection: depsInfo,
+      limit
+    });
+  }
+  summary.summary = deriveAnalyzeOverview({
+    graph: summary.graph,
+    build: summary.build,
+    packs: summary.packs
+  });
+  summary.health = deriveAnalyzeHealth({
+    build: summary.build,
+    routes: summary.routes,
+    findings: summary.findings
+  });
+  summary.topFindings = buildTopFindings(summary.findings, Math.min(limit, 5));
+  if (options.json) {
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+  if (options.section) {
+    printFocusedSection(options.section, summary, options);
+    return;
+  }
+  printDefaultSummary(summary, options, limit);
+  if (!options.verbose) {
+    return;
+  }
+  if (selected.includes("graph")) {
+    if (summary.graph) printGraphSummary(summary.graph, !!(options.tree || options.deps));
+    else console.log("\n Graph\n No cached graph found. Run `ionify dev` to generate dependency data.");
+  }
+  if (selected.includes("build")) {
+    if (summary.build) printBuildSummary(summary.build);
+    else console.log("\n Build\n No build outputs found. Run `ionify build` to generate manifest and build stats.");
+  }
+  if (selected.includes("packs")) {
+    if (summary.packs) {
+      if (summary.packs.selectionMode === "latest-mtime-fallback") {
+        logInfo("[Analyze] Using latest deps directory by mtime fallback; pass `--deps-hash` to pin a specific deps state.");
+      }
+      printPackSummary(summary.packs);
+    } else {
+      console.log("\n Vendor packs (v2)\n No deps pack index found.");
+    }
+  }
+  if (selected.includes("routes")) {
+    if (summary.routes) printRouteSummary(summary.routes);
+    else console.log("\n Routes\n Routes: unavailable (no route-hint state found)");
+  }
+  if (selected.includes("findings")) {
+    if (summary.findings) printFindingsSummary(summary.findings);
+    else console.log("\n Findings\n No duplicate-version or bloat findings available.");
+  }
+}
+
+// src/cli/index.ts
+init_build();
+
+// src/cli/commands/publish.ts
+init_cjs_shims();
+var import_fs31 = __toESM(require("fs"), 1);
+var import_path33 = __toESM(require("path"), 1);
+init_config();
+init_env();
+init_logger();
+init_lockfile();
+init_deps_hash();
+init_minifier();
+init_parser();
+init_treeshake();
+init_scope_hoist();
+init_native();
+init_bundler();
+init_workspace();
+init_define();
+init_external_policy();
+init_federation();
+init_module_id();
+init_build_entry_inference();
+init_production_build_identity();
+init_dep_stops();
+
+// src/core/production-transform-publication.ts
+init_cjs_shims();
+var import_fs30 = __toESM(require("fs"), 1);
+var import_path32 = __toESM(require("path"), 1);
+init_native();
+init_cache();
+init_module_id();
+init_cas();
+init_define();
+init_define_signature();
+init_css_ext();
+init_css();
+init_pool();
+async function publishProductionTransformCas(options) {
+  const startedAt = Date.now();
+  const moduleMetaById = collectModuleMeta(options.plan, options.workspaceRoot);
+  const defineSignature = computeDefineSignature(options.defineConfig);
+  const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
+  const getArtifactHash = (baseHash, kind) => {
+    if (kind !== "js") return baseHash;
+    if (!defineHash) return baseHash;
+    return getCacheKey(`${baseHash}|define:${defineHash}`);
+  };
+  let hits = 0;
+  let defineDerived = 0;
+  const jobs = [];
+  const artifactHashById = /* @__PURE__ */ new Map();
+  for (const [id, meta] of moduleMetaById.entries()) {
+    const baseHashFromPlan = meta.hash;
+    const cssNeedsJsWrapper = meta.kind === "css" && isCssModuleLikePath(meta.fsPath);
+    let artifactHashFromPlan = baseHashFromPlan ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
+    if (meta.kind === "css" && baseHashFromPlan) {
+      const baseDir = getCasArtifactPath(options.casRoot, options.configHash, baseHashFromPlan);
+      const cssMeta = readJsonFile6(import_path32.default.join(baseDir, "meta.json"));
+      if (cssMeta && cssMeta.version === 1 && cssMeta.baseHash === baseHashFromPlan && typeof cssMeta.pipelineHash === "string" && cssMeta.pipelineHash.length > 0) {
+        const depsAbs = Array.from(
+          new Set(
+            [...cssMeta.deps ?? [], ...cssMeta.urlDeps ?? []].filter(
+              (p) => typeof p === "string" && p.length > 0
+            )
+          )
+        );
+        const depsStampHash = computeDepsContentStampHash2(depsAbs, moduleMetaById, options.workspaceRoot);
+        artifactHashFromPlan = getCacheKey(
+          `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`
+        );
+      }
+    }
+    const casDir = artifactHashFromPlan ? getCasArtifactPath(options.casRoot, options.configHash, artifactHashFromPlan) : null;
+    const casJsFile = casDir ? import_path32.default.join(casDir, "transformed.js") : null;
+    const casCssFile = casDir ? import_path32.default.join(casDir, "transformed.css") : null;
+    if (artifactHashFromPlan) {
+      artifactHashById.set(id, artifactHashFromPlan);
+    }
+    if (meta.kind === "js" && casJsFile && import_fs30.default.existsSync(casJsFile)) {
+      hits++;
+      continue;
+    }
+    if (meta.kind === "css" && casCssFile && import_fs30.default.existsSync(casCssFile)) {
+      hits++;
+      if (cssNeedsJsWrapper && casJsFile && !import_fs30.default.existsSync(casJsFile)) {
+        const tokens = readJsonFile6(import_path32.default.join(casDir, "tokens.json"));
+        if (tokens) writeTextFile(import_path32.default.join(casDir, "transformed.js"), renderCssTokensModule(tokens));
+      }
+      continue;
+    }
+    if (meta.kind === "js" && baseHashFromPlan && defineHash) {
+      const baseDir = getCasArtifactPath(options.casRoot, options.configHash, baseHashFromPlan);
+      const baseFile = import_path32.default.join(baseDir, "transformed.js");
+      if (import_fs30.default.existsSync(baseFile)) {
+        const artifactHash = getArtifactHash(baseHashFromPlan, "js");
+        const artifactDir = getCasArtifactPath(options.casRoot, options.configHash, artifactHash);
+        writeTextFile(import_path32.default.join(artifactDir, "transformed.js"), applyDefineReplacements(import_fs30.default.readFileSync(baseFile, "utf8"), options.defineConfig));
+        defineDerived++;
+        continue;
+      }
+    }
+    if (!import_fs30.default.existsSync(meta.fsPath)) {
+      throw new Error(`Module missing on disk: ${meta.fsPath}`);
+    }
+    const code = import_fs30.default.readFileSync(meta.fsPath, "utf8");
+    const baseHash = baseHashFromPlan ?? getCacheKey(code);
+    jobs.push({
+      id,
+      filePath: meta.fsPath,
+      ext: import_path32.default.extname(meta.fsPath),
+      code,
+      kind: meta.kind,
+      baseHash,
+      artifactHash: meta.kind === "js" ? getArtifactHash(baseHash, "js") : baseHash,
+      cssNeedsJsWrapper
+    });
+  }
+  if (jobs.length > 0) {
+    const resultsById = await runTransformJobs(jobs, options.parserMode);
+    for (const job of jobs) {
+      const result = resultsById.get(job.id);
+      if (!result) throw new Error(`Transform failed for ${job.filePath}: no transform result returned`);
+      if (result.error) throw new Error(`Transform failed for ${result.filePath}: ${result.error}`);
+      const isJs = (result.type ?? "js") === "js";
+      if (isJs) {
+        const baseDir2 = getCasArtifactPath(options.casRoot, options.configHash, job.baseHash);
+        const artifactDir2 = getCasArtifactPath(options.casRoot, options.configHash, job.artifactHash);
+        writeTextFile(import_path32.default.join(baseDir2, "transformed.js"), result.code);
+        if (result.map) writeTextFile(import_path32.default.join(baseDir2, "transformed.js.map"), result.map);
+        const finalCode = applyDefineReplacements(result.code, options.defineConfig);
+        writeTextFile(import_path32.default.join(artifactDir2, "transformed.js"), finalCode);
+        if (result.map && finalCode === result.code) {
+          writeTextFile(import_path32.default.join(artifactDir2, "transformed.js.map"), result.map);
+        }
+        artifactHashById.set(job.id, job.artifactHash);
+        continue;
+      }
+      const deps = Array.isArray(result.deps) ? result.deps.filter((p) => typeof p === "string" && p.length > 0) : [];
+      const urlDeps = Array.isArray(result.urlDeps) ? result.urlDeps.filter((p) => typeof p === "string" && p.length > 0) : [];
+      const pipelineHash = typeof result.pipelineHash === "string" && result.pipelineHash.length > 0 ? result.pipelineHash : "0";
+      const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => import_path32.default.resolve(p))));
+      const depsStampHash = computeDepsContentStampHash2(depsAbs, moduleMetaById, options.workspaceRoot);
+      const artifactHash = getCacheKey(
+        `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${job.cssNeedsJsWrapper ? 1 : 0}`
+      );
+      artifactHashById.set(job.id, artifactHash);
+      const baseDir = getCasArtifactPath(options.casRoot, options.configHash, job.baseHash);
+      writeJsonFile6(import_path32.default.join(baseDir, "meta.json"), {
+        version: 1,
+        baseHash: job.baseHash,
+        pipelineHash,
+        deps: depsAbs.sort(),
+        urlDeps: Array.from(new Set(urlDeps.map((p) => import_path32.default.resolve(p)))).sort(),
+        modules: job.cssNeedsJsWrapper === true,
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      const artifactDir = getCasArtifactPath(options.casRoot, options.configHash, artifactHash);
+      writeTextFile(import_path32.default.join(artifactDir, "transformed.css"), result.code);
+      if (job.cssNeedsJsWrapper) {
+        const tokens = result.tokens && typeof result.tokens === "object" ? result.tokens : {};
+        writeTextFile(import_path32.default.join(artifactDir, "transformed.js"), renderCssTokensModule(tokens));
+        writeJsonFile6(import_path32.default.join(artifactDir, "tokens.json"), tokens);
+      }
+    }
+  }
+  if (artifactHashById.size) {
+    for (const chunk of options.plan.chunks) {
+      for (const mod of chunk.modules) {
+        const artifactHash = artifactHashById.get(mod.id);
+        if (artifactHash) mod.hash = artifactHash;
+      }
+    }
+  }
+  const js = Array.from(moduleMetaById.values()).filter((meta) => meta.kind === "js").length;
+  const css = Array.from(moduleMetaById.values()).filter((meta) => meta.kind === "css").length;
+  return {
+    modules: moduleMetaById.size,
+    hits,
+    transformed: jobs.length,
+    defineDerived,
+    js,
+    css,
+    ms: Date.now() - startedAt
+  };
+}
+function collectModuleMeta(plan, workspaceRoot) {
+  const out = /* @__PURE__ */ new Map();
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js" && mod.kind !== "css") continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, workspaceRoot);
+      }
+      if (!fsPath || !import_path32.default.isAbsolute(fsPath)) continue;
+      if (out.has(mod.id)) continue;
+      out.set(mod.id, {
+        fsPath,
+        kind: mod.kind,
+        hash: typeof mod.hash === "string" && mod.hash.length > 0 ? mod.hash : null
+      });
+    }
+  }
+  return out;
+}
+async function runTransformJobs(jobs, parserMode) {
+  const resultsById = /* @__PURE__ */ new Map();
+  const nativeHandledIds = /* @__PURE__ */ new Set();
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const jsJobs = jobs.filter((job) => job.kind === "js");
+  if (typeof native?.nativeTransformBatch === "function" && jsJobs.length > 0) {
+    try {
+      const nativeResults = native.nativeTransformBatch(
+        jsJobs.map((job) => ({
+          id: job.id,
+          filePath: job.filePath,
+          ext: job.ext,
+          code: job.code
+        })),
+        parserMode
+      );
+      for (const result of nativeResults) {
+        const job = jobById.get(result.id);
+        if (!job) continue;
+        nativeHandledIds.add(result.id);
+        resultsById.set(result.id, {
+          id: result.id,
+          filePath: result.filePath ?? result.file_path ?? job.filePath,
+          code: result.code,
+          map: result.map ?? void 0,
+          type: result.type ?? result.kind ?? "js",
+          error: result.error ?? void 0
+        });
+      }
+    } catch {
+      nativeHandledIds.clear();
+    }
+  }
+  const workerJobs = jobs.filter((job) => job.kind !== "js" || !nativeHandledIds.has(job.id));
+  if (workerJobs.length > 0) {
+    const pool = new TransformWorkerPool();
+    try {
+      const workerResults = await pool.runMany(
+        workerJobs.map((job) => ({
+          id: job.id,
+          filePath: job.filePath,
+          ext: job.ext,
+          code: job.code
+        }))
+      );
+      for (const result of workerResults) resultsById.set(result.id, result);
+    } finally {
+      await pool.close();
+    }
+  }
+  return resultsById;
+}
+function computeDepsContentStampHash2(depsAbs, moduleMetaById, workspaceRoot) {
+  if (!depsAbs.length) return "0";
+  const entries = [];
+  for (const depAbs of depsAbs) {
+    const abs = import_path32.default.resolve(depAbs);
+    let hash = null;
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId) hash = moduleMetaById.get(depId)?.hash ?? null;
+    if (!hash) {
+      try {
+        hash = getCacheKey(import_fs30.default.readFileSync(abs));
+      } catch {
+        hash = "missing";
+      }
+    }
+    entries.push(`${depId ?? abs.replace(/\\+/g, "/")}:${hash}`);
+  }
+  entries.sort();
+  return getCacheKey(entries.join("|"));
+}
+function readJsonFile6(filePath) {
+  if (!import_fs30.default.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(import_fs30.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJsonFile6(filePath, data) {
+  import_fs30.default.mkdirSync(import_path32.default.dirname(filePath), { recursive: true });
+  import_fs30.default.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}
+`, "utf8");
+}
+function writeTextFile(filePath, contents) {
+  import_fs30.default.mkdirSync(import_path32.default.dirname(filePath), { recursive: true });
+  import_fs30.default.writeFileSync(filePath, contents, "utf8");
+}
+
+// src/core/production-chunk-publication.ts
+init_cjs_shims();
+init_native();
+function publishProductionChunkCas(options) {
+  if (!native?.buildChunks) {
+    throw new Error("Production Artifacts publication requires the native buildChunks binding to publish chunk artifacts.");
+  }
+  const start = Date.now();
+  const rawArtifacts = native.buildChunks(options.plan, options.casRoot, options.configHash, options.nativeOptions ?? null) ?? [];
+  let codeBytes = 0;
+  let mapBytes = 0;
+  for (const artifact of rawArtifacts) {
+    codeBytes += typeof artifact.code_bytes === "number" ? artifact.code_bytes : Buffer.byteLength(artifact.code ?? "", "utf8");
+    mapBytes += typeof artifact.map_bytes === "number" ? artifact.map_bytes : artifact.map ? Buffer.byteLength(artifact.map, "utf8") : 0;
+  }
+  return {
+    chunks: options.plan.chunks.length,
+    artifacts: rawArtifacts.length,
+    codeBytes,
+    mapBytes,
+    ms: Date.now() - start
+  };
+}
+
+// src/cli/commands/publish.ts
+init_production_artifact_publishing();
+init_build();
+var DEPS_OPTIMIZER_OUTPUT_VERSION3 = getDepsOptimizerOutputVersion();
+async function runPublishCommand(options = {}) {
+  const phase = resolvePublicationPhase(options);
+  if (!phase) {
+    throw new Error("Unsupported Production Publishing target. Use `ionify publish --contracts` or `ionify publish --artifacts`.");
+  }
+  const targetLabel = phase === "B" ? "Production Artifacts" : "Production Contracts";
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousMode = process.env.MODE;
+  const previousIonifyMode = process.env.IONIFY_MODE;
+  const previousConfigHash = process.env.IONIFY_CONFIG_HASH;
+  const previousDepsHash = process.env.IONIFY_DEPS_HASH;
+  try {
+    process.env.NODE_ENV = "production";
+    const mode = options.mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "production";
+    process.env.MODE = mode;
+    process.env.IONIFY_MODE = mode;
+    const config = await loadIonifyConfig(process.cwd(), mode);
+    const projectRootOverride = config?.root ? import_path33.default.resolve(config.root) : null;
+    const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
+      projectRootOverride
+    });
+    const rootDir = workspace.projectRoot;
+    const ionifyDir = workspace.ionifyDir;
+    import_fs31.default.mkdirSync(ionifyDir, { recursive: true });
+    process.env.IONIFY_PROJECT_ROOT = rootDir;
+    process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
+    process.env.IONIFY_STATE_DIR = ionifyDir;
+    process.env.IONIFY_WORKSPACE_ID = workspace.workspaceId;
+    process.env.IONIFY_PROJECT_ID = workspace.projectId;
+    const minifier = resolveMinifier(config, { envVar: process.env.IONIFY_MINIFIER });
+    const parserMode = resolveParser(config, { envMode: process.env.IONIFY_PARSER });
+    applyParserEnv(parserMode);
+    const treeshake = resolveTreeshake(config?.treeshake, {
+      envMode: process.env.IONIFY_TREESHAKE,
+      includeEnv: process.env.IONIFY_TREESHAKE_INCLUDE,
+      excludeEnv: process.env.IONIFY_TREESHAKE_EXCLUDE
+    });
+    const scopeHoist = resolveScopeHoist(config?.scopeHoist, {
+      envMode: process.env.IONIFY_SCOPE_HOIST,
+      inlineEnv: process.env.IONIFY_SCOPE_HOIST_INLINE,
+      constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
+      combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
+    });
+    const envFromFiles = loadEnv(mode, rootDir);
+    const envPrefix = config?.envPrefix || ["VITE_", "IONIFY_"];
+    const defineConfig = buildDefineConfig(config?.define, {
+      ...envFromFiles,
+      NODE_ENV: "production",
+      MODE: mode
+    }, envPrefix);
+    logInfo(`[publish] Production define contract: ${Object.keys(defineConfig).length} replacement(s)`);
+    const resolvedEntries = resolveProductionBuildEntries(config, rootDir, (message) => logWarn(message));
+    const rawVersionInputs = createProductionGraphVersionInputs({
+      config,
+      parserMode,
+      minifier,
+      treeshake,
+      scopeHoist,
+      entries: resolvedEntries.entries
+    });
+    const configHash = computeGraphVersion(rawVersionInputs);
+    process.env.IONIFY_CONFIG_HASH = configHash;
+    const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
+    const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
+    const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false;
+    const depsSharedChunksRaw = config?.optimizeDeps?.sharedChunks;
+    const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
+    const depsHash = computeDepsHash(configHash, lockfile, {
+      nodeEnv: "production",
+      sourcemap: depsSourcemapEnabled,
+      bundleEsm: depsBundleEsmEnabled,
+      sharedChunks: depsSharedChunksMode,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION3
+    });
+    process.env.IONIFY_DEPS_HASH = depsHash;
+    const identity = {
+      mode,
+      nodeEnv: "production",
+      configHash,
+      depsHash,
+      depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION3,
+      entries: resolvedEntries.entries ?? [],
+      entrySource: resolvedEntries.source
+    };
+    const state = createProductionPublicationState(identity, phase, "publishing");
+    writeProductionPublicationState(ionifyDir, state);
+    logInfo(
+      `[publish] Publishing ${targetLabel} (configHash=${configHash}, depsHash=${depsHash})`
+    );
+    const depsStart = Date.now();
+    await runBuildCommand({ depsOnly: true, mode });
+    const depsRoot = import_path33.default.join(ionifyDir, "deps", depsHash);
+    state.tiers.deps = {
+      state: "published",
+      artifactCount: countManifestEntries(depsRoot),
+      ms: Date.now() - depsStart
+    };
+    state.timingsMs.deps = state.tiers.deps.ms ?? 0;
+    writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    const planStart = Date.now();
+    const federationExposeEntries = collectFederationExposeEntryPaths(config, rootDir);
+    const buildEntries = Array.from(/* @__PURE__ */ new Set([...resolvedEntries.entries ?? [], ...federationExposeEntries]));
+    const plan = await generateBuildPlan(
+      buildEntries.length > 0 ? buildEntries : void 0,
+      rawVersionInputs,
+      loadDepStopsFromManifest(depsRoot),
+      collectConfiguredExternalSpecifiers(config)
+    );
+    writeProductionPublicationPlan(
+      ionifyDir,
+      identity,
+      JSON.parse(JSON.stringify(plan))
+    );
+    const casRoot = import_path33.default.join(ionifyDir, "cas");
+    rerouteDepsArtifacts({
+      plan,
+      depsRoot,
+      casRoot,
+      configHash,
+      workspaceRoot: workspace.workspaceRoot
+    });
+    const planSummary = summarizePlanForPublication(plan);
+    state.tiers.graph = {
+      state: "published",
+      artifactCount: planSummary.modules,
+      ms: Date.now() - planStart
+    };
+    state.tiers.plan = {
+      state: "published",
+      artifactCount: planSummary.chunks,
+      ms: state.tiers.graph.ms
+    };
+    state.timingsMs.plan = state.tiers.plan.ms ?? 0;
+    state.tiers.transforms = { state: "publishing" };
+    writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    const transformResult = await publishProductionTransformCas({
+      plan,
+      casRoot,
+      configHash,
+      workspaceRoot: workspace.workspaceRoot,
+      parserMode,
+      defineConfig
+    });
+    state.tiers.transforms = {
+      state: "published",
+      artifactCount: transformResult.transformed + transformResult.defineDerived,
+      ms: transformResult.ms,
+      reason: `modules=${transformResult.modules}, hits=${transformResult.hits}, js=${transformResult.js}, css=${transformResult.css}`
+    };
+    state.timingsMs.transforms = transformResult.ms;
+    if (phase === "B") {
+      state.tiers.chunks = { state: "publishing" };
+      state.tiers.compression = { state: "skipped", reason: "Compression artifact publication is not implemented yet" };
+      writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const buildMinifyRaw = config?.build?.minify;
+      const minifyEnabled = buildMinifyRaw === false ? false : true;
+      const federationExposeEntryIds = federationExposeEntries.map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
+      const chunkResult = publishProductionChunkCas({
+        plan,
+        casRoot,
+        configHash,
+        nativeOptions: {
+          minifier,
+          minify: minifyEnabled,
+          mangle: minifyEnabled,
+          treeshake,
+          scopeHoist,
+          externalModules: collectNativeExternalModules(plan, collectConfiguredExternalSpecifiers(config)),
+          federationExposeEntries: federationExposeEntryIds
+        }
+      });
+      state.tiers.chunks = {
+        state: "published",
+        artifactCount: chunkResult.artifacts,
+        byteCount: chunkResult.codeBytes + chunkResult.mapBytes,
+        ms: chunkResult.ms,
+        reason: `chunks=${chunkResult.chunks}, codeBytes=${chunkResult.codeBytes}, mapBytes=${chunkResult.mapBytes}`
+      };
+      state.timingsMs.chunks = chunkResult.ms;
+    }
+    state.state = "published";
+    state.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    writeProductionPublicationState(ionifyDir, state);
+    logInfo(
+      `[publish] Published ${targetLabel} (${planSummary.entries} entries, ${planSummary.chunks} chunks, ${planSummary.modules} modules, transform artifacts=${transformResult.transformed}, hits=${transformResult.hits}${phase === "B" ? ", chunk artifacts=yes" : ""}); no build output written.`
+    );
+  } catch (err) {
+    logError("ionify publish failed", err);
+    throw err;
+  } finally {
+    if (previousNodeEnv === void 0) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousMode === void 0) delete process.env.MODE;
+    else process.env.MODE = previousMode;
+    if (previousIonifyMode === void 0) delete process.env.IONIFY_MODE;
+    else process.env.IONIFY_MODE = previousIonifyMode;
+    if (previousConfigHash === void 0) delete process.env.IONIFY_CONFIG_HASH;
+    else process.env.IONIFY_CONFIG_HASH = previousConfigHash;
+    if (previousDepsHash === void 0) delete process.env.IONIFY_DEPS_HASH;
+    else process.env.IONIFY_DEPS_HASH = previousDepsHash;
+  }
+}
+function resolvePublicationPhase(options) {
+  if (options.contracts && options.artifacts) {
+    throw new Error("Choose either `ionify publish --contracts` or `ionify publish --artifacts`, not both.");
+  }
+  if (options.artifacts) return "B";
+  if (options.contracts) return "A";
+  return normalizePublicationPhase(options.phase);
+}
+function normalizePublicationPhase(phase) {
+  if (phase === void 0) return "A";
+  const normalized = String(phase ?? "A").trim().toUpperCase();
+  if (normalized === "A" || normalized === "CONTRACTS" || normalized === "PRODUCTION_CONTRACTS") return "A";
+  if (normalized === "B" || normalized === "ARTIFACTS" || normalized === "PRODUCTION_ARTIFACTS") return "B";
+  return null;
+}
+function countManifestEntries(depsRoot) {
+  try {
+    const manifest = JSON.parse(import_fs31.default.readFileSync(import_path33.default.join(depsRoot, "manifest.json"), "utf8"));
+    return Object.keys(manifest?.entries ?? {}).length;
+  } catch {
+    return 0;
+  }
+}
+
+// src/cli/commands/add.ts
+init_cjs_shims();
+var import_fs32 = __toESM(require("fs"), 1);
+var import_path34 = __toESM(require("path"), 1);
+init_logger();
+
+// src/cli/components/registry.ts
+init_cjs_shims();
+function normalizeNewlines(value) {
+  return value.replace(/\r\n/g, "\n");
+}
+var BUTTON_TSX = normalizeNewlines(`import * as React from "react";
+
+export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "default" | "secondary" | "ghost";
+};
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ variant = "default", className = "", ...props }, ref) => {
+    const base = "ionify-button";
+    const v =
+      variant === "secondary"
+        ? "ionify-button--secondary"
+        : variant === "ghost"
+          ? "ionify-button--ghost"
+          : "";
+    const cn = [base, v, className].filter(Boolean).join(" ");
+    return <button ref={ref} className={cn} {...props} />;
+  },
+);
+Button.displayName = "Button";
+`);
+var BUTTON_JSX = normalizeNewlines(`import * as React from "react";
+
+export const Button = React.forwardRef(function Button(
+  { variant = "default", className = "", ...props },
+  ref,
+) {
+  const base = "ionify-button";
+  const v =
+    variant === "secondary"
+      ? "ionify-button--secondary"
+      : variant === "ghost"
+        ? "ionify-button--ghost"
+        : "";
+  const cn = [base, v, className].filter(Boolean).join(" ");
+  return <button ref={ref} className={cn} {...props} />;
+});
+`);
+var CARD_TSX = normalizeNewlines(`import * as React from "react";
+
+export function Card({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={["ionify-card", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardHeader({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={["ionify-card__header", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardTitle({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLHeadingElement>) {
+  return <h3 className={["ionify-card__title", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardContent({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={["ionify-card__content", className].filter(Boolean).join(" ")} {...props} />;
+}
+`);
+var CARD_JSX = normalizeNewlines(`import * as React from "react";
+
+export function Card({ className = "", ...props }) {
+  return <div className={["ionify-card", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardHeader({ className = "", ...props }) {
+  return <div className={["ionify-card__header", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardTitle({ className = "", ...props }) {
+  return <h3 className={["ionify-card__title", className].filter(Boolean).join(" ")} {...props} />;
+}
+
+export function CardContent({ className = "", ...props }) {
+  return <div className={["ionify-card__content", className].filter(Boolean).join(" ")} {...props} />;
+}
+`);
+var DIALOG_TSX = normalizeNewlines(`import * as React from "react";
+
+type DialogContextValue = {
+  open: boolean;
+  setOpen(next: boolean): void;
+};
+
+const DialogContext = React.createContext<DialogContextValue | null>(null);
+
+function useDialogContext(): DialogContextValue {
+  const ctx = React.useContext(DialogContext);
+  if (!ctx) throw new Error("Dialog components must be used inside <Dialog />");
+  return ctx;
+}
+
+export function Dialog({
+  open,
+  onOpenChange,
+  children,
+}: {
+  open: boolean;
+  onOpenChange(next: boolean): void;
+  children: React.ReactNode;
+}) {
+  const value = React.useMemo(
+    () => ({ open, setOpen: onOpenChange }),
+    [open, onOpenChange],
+  );
+  return <DialogContext.Provider value={value}>{children}</DialogContext.Provider>;
+}
+
+export function DialogTrigger({
+  children,
+}: {
+  children: React.ReactElement;
+}) {
+  const { open, setOpen } = useDialogContext();
+  return React.cloneElement(children, {
+    onClick: (e: any) => {
+      children.props.onClick?.(e);
+      setOpen(!open);
+    },
+  });
+}
+
+export function DialogOverlay({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  const { open, setOpen } = useDialogContext();
+  if (!open) return null;
+  return (
+    <div
+      className={["ionify-dialog__overlay", className].filter(Boolean).join(" ")}
+      onClick={() => setOpen(false)}
+      {...props}
+    />
+  );
+}
+
+export function DialogContent({
+  className = "",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  const { open } = useDialogContext();
+  if (!open) return null;
+  return <div className={["ionify-dialog__content", className].filter(Boolean).join(" ")} {...props} />;
+}
+`);
+var DIALOG_JSX = normalizeNewlines(`import * as React from "react";
+
+const DialogContext = React.createContext(null);
+
+function useDialogContext() {
+  const ctx = React.useContext(DialogContext);
+  if (!ctx) throw new Error("Dialog components must be used inside <Dialog />");
+  return ctx;
+}
+
+export function Dialog({ open, onOpenChange, children }) {
+  const value = React.useMemo(
+    () => ({ open, setOpen: onOpenChange }),
+    [open, onOpenChange],
+  );
+  return <DialogContext.Provider value={value}>{children}</DialogContext.Provider>;
+}
+
+export function DialogTrigger({ children }) {
+  const { open, setOpen } = useDialogContext();
+  return React.cloneElement(children, {
+    onClick: (e) => {
+      children.props.onClick?.(e);
+      setOpen(!open);
+    },
+  });
+}
+
+export function DialogOverlay({ className = "", ...props }) {
+  const { open, setOpen } = useDialogContext();
+  if (!open) return null;
+  return (
+    <div
+      className={["ionify-dialog__overlay", className].filter(Boolean).join(" ")}
+      onClick={() => setOpen(false)}
+      {...props}
+    />
+  );
+}
+
+export function DialogContent({ className = "", ...props }) {
+  const { open } = useDialogContext();
+  if (!open) return null;
+  return <div className={["ionify-dialog__content", className].filter(Boolean).join(" ")} {...props} />;
+}
+`);
+var IONIFY_COMPONENTS = {
+  button: {
+    name: "button",
+    description: "Basic <Button /> with variants (no external deps)",
+    fileBase: "button",
+    tsx: BUTTON_TSX,
+    jsx: BUTTON_JSX
+  },
+  card: {
+    name: "card",
+    description: "Card primitives (<Card />, <CardHeader />, etc.)",
+    fileBase: "card",
+    tsx: CARD_TSX,
+    jsx: CARD_JSX
+  },
+  dialog: {
+    name: "dialog",
+    description: "Lightweight dialog primitives (context-based, no external deps)",
+    fileBase: "dialog",
+    tsx: DIALOG_TSX,
+    jsx: DIALOG_JSX
+  }
+};
+
+// src/cli/commands/add.ts
+function findProjectRoot2(startDir) {
+  let dir = import_path34.default.resolve(startDir);
+  for (let i = 0; i < 15; i++) {
+    const pkg = import_path34.default.join(dir, "package.json");
+    if (import_fs32.default.existsSync(pkg) && import_fs32.default.statSync(pkg).isFile()) return dir;
+    const parent = import_path34.default.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+function isTypeScriptProject(projectRoot) {
+  const tsconfig = import_path34.default.join(projectRoot, "tsconfig.json");
+  if (import_fs32.default.existsSync(tsconfig) && import_fs32.default.statSync(tsconfig).isFile()) return true;
+  try {
+    const pkg = JSON.parse(import_fs32.default.readFileSync(import_path34.default.join(projectRoot, "package.json"), "utf8"));
+    const deps = { ...pkg?.dependencies ?? {}, ...pkg?.devDependencies ?? {} };
+    return typeof deps.typescript === "string";
+  } catch {
+    return false;
+  }
+}
+async function runAddCommand(componentName, options = {}) {
+  const { list, force } = options;
+  const templates = IONIFY_COMPONENTS;
+  if (list || !componentName) {
+    const names = Object.keys(templates).sort();
+    logInfo(`Available components (${names.length}):`);
+    for (const name of names) {
+      const t = templates[name];
+      console.log(`- ${t.name}: ${t.description}`);
+    }
+    if (!componentName) return;
+  }
+  const normalized = String(componentName ?? "").trim().toLowerCase();
+  const template = templates[normalized];
+  if (!template) {
+    logError(`Unknown component '${componentName}'. Use 'ionify add --list' to see available components.`);
+    process.exitCode = 1;
+    return;
+  }
+  const projectRoot = findProjectRoot2(process.cwd());
+  if (!projectRoot) {
+    logError("Could not find project root (package.json). Run this inside a project directory.");
+    process.exitCode = 1;
+    return;
+  }
+  const ts = isTypeScriptProject(projectRoot);
+  const targetDir = import_path34.default.resolve(projectRoot, options.dir ?? "src/components/ui");
+  const ext = ts ? "tsx" : "jsx";
+  const outFile = import_path34.default.join(targetDir, `${template.fileBase}.${ext}`);
+  import_fs32.default.mkdirSync(targetDir, { recursive: true });
+  if (import_fs32.default.existsSync(outFile) && !force) {
+    logError(`File already exists: ${outFile} (use --force to overwrite)`);
+    process.exitCode = 1;
+    return;
+  }
+  const code = ts ? template.tsx : template.jsx;
+  import_fs32.default.writeFileSync(outFile, code, "utf8");
+  logInfo(`Added ${template.name} \u2192 ${import_path34.default.relative(projectRoot, outFile)}`);
+}
+
+// src/cli/commands/push.ts
+init_cjs_shims();
+var import_fs36 = __toESM(require("fs"), 1);
+var import_path38 = __toESM(require("path"), 1);
+init_config();
+init_env();
+init_cloud_auth();
+
+// src/cli/utils/cloud-binding.ts
+init_cjs_shims();
+var import_child_process2 = __toESM(require("child_process"), 1);
+var import_crypto11 = __toESM(require("crypto"), 1);
+var import_fs34 = __toESM(require("fs"), 1);
+var import_os5 = __toESM(require("os"), 1);
+var import_path36 = __toESM(require("path"), 1);
+var BINDINGS_FILE = import_path36.default.join(import_os5.default.homedir(), ".ionify", "bindings.json");
+function normalizeProjectSlug(input) {
+  const cleaned = input.trim().replace(/^@/, "").replace(/\//g, "-").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-");
+  return cleaned || "ionify-project";
+}
+function normalizeGitRemoteUrl(input) {
+  let raw = input.trim();
+  if (!raw) return "";
+  raw = raw.replace(/\/+$/, "");
+  const scpLike = raw.match(/^(?:([^@/:]+)@)?([^/:]+):(.+)$/);
+  if (scpLike && !raw.includes("://")) {
+    const host = scpLike[2].toLowerCase();
+    const repoPath = normalizeRemotePath(scpLike[3]);
+    return `https://${host}/${repoPath}`;
+  }
+  try {
+    const url2 = new URL(raw);
+    url2.username = "";
+    url2.password = "";
+    const host = url2.host.toLowerCase();
+    const repoPath = normalizeRemotePath(url2.pathname);
+    return `https://${host}/${repoPath}`;
+  } catch {
+    return normalizeRemotePath(raw).toLowerCase();
+  }
+}
+function normalizeRemotePath(input) {
+  return input.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/{2,}/g, "/");
+}
+function computeFingerprintV1(parts) {
+  const canonical = `ionify:fingerprint:v1
+remote=${parts.normalizedRemote}
+workspace=${parts.workspaceRelPath}
+slug=${normalizeProjectSlug(parts.projectSlug)}
+`;
+  return import_crypto11.default.createHash("sha256").update(canonical).digest("hex");
+}
+function resolveBindingContext(workspace, opts = {}) {
+  const git = readGitRepositoryInfo(workspace.projectRoot);
+  const projectSlug = normalizeProjectSlug(opts.projectSlug ?? inferProjectSlug(workspace.projectRoot));
+  const workspaceRelPath = normalizeWorkspaceRelPath(
+    git?.repositoryRoot ? import_path36.default.relative(git.repositoryRoot, workspace.projectRoot) : workspace.projectRelPath
+  );
+  const normalizedRemote = git?.normalizedRemote ?? null;
+  const fingerprint = normalizedRemote ? computeFingerprintV1({ normalizedRemote, workspaceRelPath, projectSlug }) : null;
+  return {
+    normalizedRemote,
+    repositoryRoot: git?.repositoryRoot ?? null,
+    workspaceRelPath,
+    projectSlug,
+    fingerprint,
+    localPathHash: computeLocalPathHash(workspace.projectRoot)
+  };
+}
+function bindProject(workspace, opts) {
+  const context = resolveBindingContext(workspace, { projectSlug: opts.projectSlug });
+  if (!context.normalizedRemote && !opts.allowLocal) {
+    throw stacklessError(
+      "bind: no git remote was found for this folder.\n  Ionify will not create a trusted binding automatically.\n  For local experiments, run `ionify bind --project <project-id> --allow-local`."
+    );
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const binding = {
+    version: 1,
+    projectId: opts.projectId,
+    apiUrl: opts.apiUrl,
+    projectSlug: context.projectSlug,
+    bindingType: context.normalizedRemote ? "git_verified" : "local_unverified",
+    fingerprint: context.fingerprint,
+    normalizedRemote: context.normalizedRemote,
+    workspaceRelPath: context.workspaceRelPath,
+    localProjectRelPath: workspace.projectRelPath,
+    localPathHash: context.localPathHash,
+    createdAt: now,
+    updatedAt: now
+  };
+  writeProjectBinding(binding);
+  return binding;
+}
+function resolveProjectBinding(workspace) {
+  const bindings = readBindingsFile()?.bindings ?? [];
+  if (bindings.length === 0) return null;
+  for (const entry of bindings) {
+    if (entry.bindingType !== "git_verified") continue;
+    const context2 = resolveBindingContext(workspace, { projectSlug: entry.projectSlug });
+    if (context2.fingerprint && entry.fingerprint === context2.fingerprint) {
+      return { binding: entry, context: context2 };
+    }
+  }
+  const context = resolveBindingContext(workspace);
+  const localMatch = bindings.find((entry) => entry.localPathHash === context.localPathHash);
+  if (localMatch) {
+    return {
+      binding: localMatch,
+      context: resolveBindingContext(workspace, { projectSlug: localMatch.projectSlug })
+    };
+  }
+  return null;
+}
+function assertValidProjectBinding(resolved, command, expectedProjectId) {
+  if (!resolved) {
+    throw stacklessError(
+      `${command}: this folder is not bound to an Ionify Cloud project.
+  Run \`ionify bind --project <project-id>\` from the project root.
+  For local experiments without a git remote, use \`--allow-local\` explicitly.`
+    );
+  }
+  const { binding, context } = resolved;
+  if (expectedProjectId && expectedProjectId !== binding.projectId) {
+    throw stacklessError(
+      `${command}: cloud.projectId does not match this folder's binding.
+  binding project : ${binding.projectId}
+  config project  : ${expectedProjectId}
+  Re-bind this folder or update the config before pushing.`
+    );
+  }
+  if (binding.bindingType === "local_unverified" && binding.localPathHash !== context.localPathHash) {
+    throw stacklessError(
+      `${command}: the saved local binding is invalid for this folder.
+  Local unverified bindings are path-scoped and must be recreated after moving a project.`
+    );
+  }
+  return binding;
+}
+function bindingWarning(resolved) {
+  const { binding, context } = resolved;
+  if (binding.bindingType === "git_verified" && context.fingerprint && binding.fingerprint !== context.fingerprint) {
+    return "[cloud] Fingerprint V1 changed for this bound folder. Continuing because authorization is token/RBAC/project-binding based; audit metadata will be sent.";
+  }
+  if (binding.bindingType === "local_unverified") {
+    return "[cloud] local_unverified project binding in use. Allowed for local experiments; do not use this binding for CI/team workflows.";
+  }
+  return null;
+}
+function writeProjectBinding(binding) {
+  const dir = import_path36.default.dirname(BINDINGS_FILE);
+  import_fs34.default.mkdirSync(dir, { recursive: true });
+  const existing = readBindingsFile()?.bindings ?? [];
+  const next = existing.filter((entry) => {
+    if (binding.bindingType === "git_verified" && entry.fingerprint === binding.fingerprint) return false;
+    if (entry.localPathHash === binding.localPathHash) return false;
+    return true;
+  });
+  next.push(binding);
+  import_fs34.default.writeFileSync(
+    BINDINGS_FILE,
+    JSON.stringify({ bindings: next }, null, 2) + "\n",
+    { encoding: "utf8", mode: 384 }
+  );
+}
+function readBindingsFile() {
+  if (!import_fs34.default.existsSync(BINDINGS_FILE)) return null;
+  try {
+    const raw = import_fs34.default.readFileSync(BINDINGS_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function readGitRepositoryInfo(startDir) {
+  const repositoryRoot = execGit(startDir, ["rev-parse", "--show-toplevel"]);
+  if (!repositoryRoot) return null;
+  const remote = execGit(repositoryRoot, ["config", "--get", "remote.origin.url"]);
+  return {
+    repositoryRoot: import_path36.default.resolve(repositoryRoot),
+    normalizedRemote: remote ? normalizeGitRemoteUrl(remote) : null
+  };
+}
+function execGit(cwd, args) {
+  try {
+    return import_child_process2.default.execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function inferProjectSlug(projectRoot) {
+  const pkgPath = import_path36.default.join(projectRoot, "package.json");
+  try {
+    const pkg = JSON.parse(import_fs34.default.readFileSync(pkgPath, "utf8"));
+    if (typeof pkg.name === "string" && pkg.name.trim()) return pkg.name;
+  } catch {
+  }
+  return import_path36.default.basename(projectRoot);
+}
+function normalizeWorkspaceRelPath(input) {
+  const normalized = input.split(import_path36.default.sep).join("/").replace(/^\.\/?$/, "");
+  return normalized && normalized !== "." ? normalized : "root";
+}
+function computeLocalPathHash(projectRoot) {
+  return import_crypto11.default.createHash("sha256").update(`ionify:local-binding:v1:${import_path36.default.resolve(projectRoot)}`).digest("hex");
+}
+function stacklessError(message) {
+  const error = new Error(message);
+  error.stack = void 0;
+  return error;
+}
+
+// src/cli/utils/cloud-client.ts
+init_cjs_shims();
+var import_https2 = __toESM(require("https"), 1);
+var import_http2 = __toESM(require("http"), 1);
+var import_url8 = require("url");
+var import_crypto12 = __toESM(require("crypto"), 1);
+var CloudApiError = class extends Error {
+  constructor(statusCode, body, message, parsedBody = parseCloudApiErrorBody(body)) {
+    super(message);
+    this.statusCode = statusCode;
+    this.body = body;
+    this.parsedBody = parsedBody;
+    this.name = "CloudApiError";
+  }
+};
+function parseCloudApiErrorBody(body) {
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object") return {};
+    const record = parsed;
+    return {
+      error: typeof record.error === "string" ? record.error : void 0,
+      message: typeof record.message === "string" ? record.message : void 0,
+      limit_kind: typeof record.limit_kind === "string" ? record.limit_kind : void 0,
+      scope: typeof record.scope === "string" ? record.scope : void 0,
+      current_value: typeof record.current_value === "number" ? record.current_value : void 0,
+      limit_value: typeof record.limit_value === "number" ? record.limit_value : void 0,
+      retry_after_secs: typeof record.retry_after_secs === "number" ? record.retry_after_secs : void 0,
+      retryable: typeof record.retryable === "boolean" ? record.retryable : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+var CloudUnreachableError = class extends Error {
+  constructor(cause) {
+    super(
+      `Cloud unreachable: ${cause instanceof Error ? cause.message : String(cause)}`
+    );
+    this.name = "CloudUnreachableError";
+    if (cause instanceof Error) this.cause = cause;
+  }
+};
+var CloudClient = class {
+  baseUrl;
+  token;
+  projectId;
+  binding;
+  intent;
+  constructor(opts) {
+    this.baseUrl = opts.apiUrl.replace(/\/$/, "");
+    this.token = opts.token;
+    this.projectId = opts.projectId;
+    this.binding = opts.binding ?? null;
+    this.intent = opts.intent ?? "read";
+  }
+  // ── CDC (Tier-2) ─────────────────────────────────────────────────────────
+  async createSession(depsHash, optimizerVersion, nodeEnv) {
+    const body = JSON.stringify({
+      deps_hash: depsHash,
+      optimizer_version: optimizerVersion,
+      node_env: nodeEnv
+    });
+    const res = await this._request(
+      "POST",
+      `/v1/deps-cache/sessions?project_id=${this.projectId}`,
+      body,
+      { "Content-Type": "application/json" }
+    );
+    return res.json;
+  }
+  async uploadArtifact(sessionId, artifactType, cacheKey, bytes, contentHash) {
+    const resolvedContentHash = contentHash ?? computeContentHash(bytes);
+    const encodedKey = encodeURIComponent(cacheKey);
+    const res = await this._request(
+      "PUT",
+      `/v1/deps-cache/sessions/${sessionId}/artifacts/${artifactType}/${encodedKey}?project_id=${this.projectId}`,
+      bytes,
+      {
+        "Content-Type": "application/octet-stream",
+        "x-content-hash": resolvedContentHash
+      }
+    );
+    return res.json;
+  }
+  async attachArtifact(sessionId, artifactType, cacheKey, contentHash) {
+    const encodedKey = encodeURIComponent(cacheKey);
+    const res = await this._request(
+      "POST",
+      `/v1/deps-cache/sessions/${sessionId}/artifact-links/${artifactType}/${encodedKey}?project_id=${this.projectId}`,
+      JSON.stringify({ content_hash: contentHash }),
+      { "Content-Type": "application/json" }
+    );
+    return res.json;
+  }
+  async completeSession(sessionId) {
+    const res = await this._request(
+      "POST",
+      `/v1/deps-cache/sessions/${sessionId}/complete?project_id=${this.projectId}`,
+      "",
+      {}
+    );
+    return res.json;
+  }
+  /**
+   * Look up a committed CDC session. Returns null if none exists (cache miss).
+   * This is the hydration entry point.
+   */
+  async lookupSession(depsHash, optimizerVersion, nodeEnv) {
+    const qs = new URLSearchParams({
+      project_id: this.projectId,
+      deps_hash: depsHash,
+      optimizer_version: optimizerVersion,
+      node_env: nodeEnv
+    });
+    try {
+      const res = await this._request(
+        "GET",
+        `/v1/deps-cache/sessions?${qs}`,
+        null,
+        this.writeProbeHeaders()
+      );
+      return res.json;
+    } catch (err) {
+      if (err instanceof CloudApiError && err.statusCode === 404) return null;
+      throw err;
+    }
+  }
+  async downloadArtifact(sessionId, artifactType, cacheKey) {
+    const encodedKey = encodeURIComponent(cacheKey);
+    const res = await this._request(
+      "GET",
+      `/v1/deps-cache/sessions/${sessionId}/artifacts/${artifactType}/${encodedKey}?project_id=${this.projectId}`,
+      null,
+      {}
+    );
+    return res.raw;
+  }
+  async putBlob(bytes) {
+    const res = await this._request(
+      "POST",
+      `/v1/blobs?project_id=${this.projectId}`,
+      bytes,
+      { "Content-Type": "application/octet-stream" }
+    );
+    const raw = res.json;
+    return { blob_hash: raw.hash, size_bytes: raw.size_bytes };
+  }
+  async getNamespace(scope, name) {
+    const res = await this._request(
+      "GET",
+      `/v1/namespaces/${encodeURIComponent(scope)}/${encodeURIComponent(name)}?project_id=${this.projectId}`,
+      null,
+      this.writeProbeHeaders()
+    );
+    const raw = res.json;
+    return { version: raw.version, etag: raw.etag, current_manifest_hash: raw.current_manifest_hash };
+  }
+  /**
+   * Create a namespace. Used by push when the target namespace does not exist
+   * yet (first push for a project). Cloud API requires the namespace to exist
+   * before `publishManifest` will accept entries.
+   */
+  async createNamespace(scope, name) {
+    const body = JSON.stringify({
+      project_id: this.projectId,
+      scope,
+      name
+    });
+    const res = await this._request(
+      "POST",
+      `/v1/namespaces`,
+      body,
+      { "Content-Type": "application/json" }
+    );
+    const raw = res.json;
+    return { version: raw.version, etag: raw.etag, current_manifest_hash: raw.current_manifest_hash };
+  }
+  async getBlobBytes(hash) {
+    const res = await this._request(
+      "GET",
+      `/v1/blobs/${hash}/bytes?project_id=${this.projectId}`,
+      null,
+      {}
+    );
+    return res.raw;
+  }
+  async publishManifest(req) {
+    const body = JSON.stringify({
+      project_id: this.projectId,
+      scope: req.scope,
+      name: req.name,
+      expected_namespace_version: req.expected_namespace_version,
+      entries: req.entries
+    });
+    const res = await this._request(
+      "POST",
+      `/v1/manifests?project_id=${this.projectId}`,
+      body,
+      { "Content-Type": "application/json" }
+    );
+    return res.json;
+  }
+  async getManifest(manifestHash) {
+    const res = await this._request(
+      "GET",
+      `/v1/manifests/${encodeURIComponent(manifestHash)}?project_id=${this.projectId}`,
+      null,
+      {}
+    );
+    const raw = res.json;
+    return { manifest_hash: raw.manifest_hash, entries: raw.entries, version: raw.version };
+  }
+  async getUsage() {
+    const res = await this._request(
+      "GET",
+      `/v1/usage?project_id=${this.projectId}`,
+      null,
+      {}
+    );
+    return res.json;
+  }
+  // ── Internal HTTP ─────────────────────────────────────────────────────────
+  async _request(method, urlPath, body, extraHeaders) {
+    const fullUrl = new import_url8.URL(this.baseUrl + urlPath);
+    const bodyBuf = body === null ? null : typeof body === "string" ? Buffer.from(body, "utf8") : body;
+    const headers = {
+      Authorization: `Bearer ${this.token}`,
+      Accept: "application/json",
+      ...extraHeaders
+    };
+    if (this.binding) {
+      headers["x-ionify-binding-type"] = this.binding.bindingType;
+      headers["x-ionify-project-slug"] = this.binding.projectSlug;
+      if (this.binding.normalizedRemote) {
+        headers["x-ionify-normalized-remote"] = this.binding.normalizedRemote;
+      }
+      if (this.binding.workspaceRelPath) {
+        headers["x-ionify-workspace-rel-path"] = this.binding.workspaceRelPath;
+      }
+      if (this.binding.localProjectRelPath) {
+        headers["x-ionify-local-project-rel-path"] = this.binding.localProjectRelPath;
+      }
+      if (this.binding.fingerprint) {
+        headers["x-ionify-fingerprint-v1"] = this.binding.fingerprint;
+      }
+    }
+    if (bodyBuf !== null) {
+      headers["Content-Length"] = String(bodyBuf.length);
+    }
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const chunks = [];
+      let statusCode = 0;
+      await new Promise((resolve, reject) => {
+        const transport = fullUrl.protocol === "https:" ? import_https2.default : import_http2.default;
+        const req = transport.request(
+          {
+            hostname: fullUrl.hostname,
+            port: fullUrl.port || (fullUrl.protocol === "https:" ? 443 : 80),
+            path: fullUrl.pathname + fullUrl.search,
+            method,
+            headers
+          },
+          (res) => {
+            statusCode = res.statusCode ?? 0;
+            res.on("data", (chunk) => chunks.push(chunk));
+            res.on("end", resolve);
+            res.on("error", reject);
+          }
+        );
+        req.on("error", (err) => reject(new CloudUnreachableError(err)));
+        if (bodyBuf !== null) req.write(bodyBuf);
+        req.end();
+      });
+      const raw = Buffer.concat(chunks);
+      const text = raw.toString("utf8");
+      if (statusCode >= 400) {
+        const parsedBody = parseCloudApiErrorBody(text);
+        if (shouldRetryCloudRateLimit(statusCode, parsedBody, attempt, maxAttempts)) {
+          await sleep((parsedBody.retry_after_secs ?? 1) * 1e3);
+          continue;
+        }
+        const cloudMessage = parsedBody.message ?? text.slice(0, 200);
+        throw new CloudApiError(
+          statusCode,
+          text,
+          `Cloud API ${method} ${urlPath} returned ${statusCode}: ${cloudMessage}`,
+          parsedBody
+        );
+      }
+      let json = null;
+      try {
+        if (text.trim().length > 0) json = JSON.parse(text);
+      } catch {
+      }
+      return { json, raw };
+    }
+    throw new CloudUnreachableError(new Error(`Cloud API ${method} ${urlPath} exhausted retry attempts`));
+  }
+  writeProbeHeaders() {
+    if (this.intent !== "write") return {};
+    return { "x-ionify-quota-intent": "write-probe" };
+  }
+};
+function computeContentHash(bytes) {
+  return import_crypto12.default.createHash("sha256").update(bytes).digest("hex");
+}
+function shouldRetryCloudRateLimit(statusCode, body, attempt, maxAttempts) {
+  return statusCode === 429 && body.retryable === true && typeof body.retry_after_secs === "number" && body.retry_after_secs > 0 && body.retry_after_secs <= 30 && attempt < maxAttempts;
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// src/cli/utils/cloud-errors.ts
+init_cjs_shims();
+function isCloudQuotaError(error) {
+  return error instanceof CloudApiError && error.statusCode === 429;
+}
+function quotaDetails(error) {
+  const body = error.parsedBody;
+  const message = body.message ?? error.body;
+  const kind = inferQuotaKind(body.limit_kind, message);
+  const usage = formatQuotaUsage(body.current_value, body.limit_value) ?? inferQuotaUsage(message);
+  const retry = body.retry_after_secs && body.retry_after_secs > 0 ? `${body.retry_after_secs}s` : extractRetryHint(message);
+  return {
+    kind,
+    scope: body.scope === "workspace" ? "Workspace" : "Project",
+    reason: formatQuotaReason(kind, message),
+    usage,
+    retry,
+    retryable: body.retryable === true
+  };
+}
+function formatCloudQuotaError(command, action, error) {
+  const details = quotaDetails(error);
+  return `${command} stopped: Ionify Cloud limit reached.
+  Action : ${action}
+  Scope  : ${details.scope} quota shared by the owner and members
+  Limit  : ${details.reason}
+` + (details.usage ? `  Usage  : ${details.usage}
+` : "") + (details.retry ? `  Retry  : wait about ${details.retry}, then retry the command.
+` : "  Retry  : this limit does not reset in seconds; free usage or change the workspace plan.\n") + "  Billing: open Usage & billing to see storage, reads, writes, and member limits.";
+}
+function formatCloudAuthError(command) {
+  return `${command} failed: the saved Ionify Cloud session is not authorized.
+  Run \`ionify login\`, then retry \`${command}\` for this project.`;
+}
+function inferQuotaKind(limitKind, message) {
+  if (isKnownQuotaKind(limitKind)) return limitKind;
+  if (/blob_write rate limit exceeded|source\/blob upload burst/i.test(message)) return "blob_write_rate";
+  if (/meta_write rate limit exceeded|metadata write burst/i.test(message)) return "meta_write_rate";
+  if (/monthly write limit exceeded/i.test(message)) return "monthly_write_ops";
+  if (/monthly read limit exceeded/i.test(message)) return "monthly_read_ops";
+  if (/storage limit/i.test(message)) return "storage";
+  if (/member limit/i.test(message)) return "member_count";
+  return "unknown";
+}
+function isKnownQuotaKind(value) {
+  return value === "storage" || value === "monthly_write_ops" || value === "monthly_read_ops" || value === "blob_write_rate" || value === "meta_write_rate" || value === "member_count";
+}
+function formatQuotaReason(kind, message) {
+  if (kind === "blob_write_rate") {
+    return "source/blob upload burst rate exceeded (per-minute writes), not storage.";
+  }
+  if (kind === "meta_write_rate") return "metadata write burst rate exceeded (per-minute metadata ops).";
+  if (kind === "monthly_write_ops") return "monthly write quota exceeded.";
+  if (kind === "monthly_read_ops") return "monthly read quota exceeded.";
+  if (kind === "storage") return "artifact storage quota exceeded.";
+  if (kind === "member_count") return "workspace member limit exceeded.";
+  return message.replace(/^quota exceeded:\s*/i, "").trim() || "plan quota exceeded.";
+}
+function formatQuotaUsage(current, limit) {
+  if (typeof current !== "number" || typeof limit !== "number") return null;
+  return `${current.toLocaleString()} / ${limit.toLocaleString()}`;
+}
+function inferQuotaUsage(message) {
+  const match = message.match(/\((\d[\d,]*)\s*\/\s*(\d[\d,]*)\s+(?:rolling\s+30d\s+)?(?:read|write)?\s*ops?\)/i);
+  if (!match) return null;
+  return `${match[1]} / ${match[2]}`;
+}
+function extractRetryHint(message) {
+  const match = message.match(/retry in ~?(\d+)s/i);
+  if (!match) return null;
+  return `${match[1]}s`;
+}
+
+// src/cli/utils/cloud-env.ts
+init_cjs_shims();
+var NODE_ENV_TAGS = ["development", "production"];
+function readNodeEnv() {
+  const raw = process.env.NODE_ENV;
+  if (raw === "development" || raw === "production") return raw;
+  return null;
+}
+
+// src/cli/utils/deps-identity.ts
+init_cjs_shims();
+var import_fs35 = __toESM(require("fs"), 1);
+var import_path37 = __toESM(require("path"), 1);
+init_native();
+init_production_build_identity();
+init_minifier();
+init_parser();
+init_treeshake();
+init_scope_hoist();
+init_deps_hash();
+var DEPS_OPTIMIZER_OUTPUT_VERSION4 = getDepsOptimizerOutputVersion();
+async function computeStandaloneDepsIdentity(config, workspace, rootDir, nodeEnv) {
+  const lockfile = readCanonicalLockfile(workspace, rootDir);
+  const minifier = resolveMinifier(config, { envVar: process.env.IONIFY_MINIFIER });
+  const parserMode = resolveParser(config, { envMode: process.env.IONIFY_PARSER });
+  const treeshake = resolveTreeshake(config?.treeshake, {
+    envMode: process.env.IONIFY_TREESHAKE,
+    includeEnv: process.env.IONIFY_TREESHAKE_INCLUDE,
+    excludeEnv: process.env.IONIFY_TREESHAKE_EXCLUDE
+  });
+  const scopeHoist = resolveScopeHoist(config?.scopeHoist, {
+    envMode: process.env.IONIFY_SCOPE_HOIST,
+    inlineEnv: process.env.IONIFY_SCOPE_HOIST_INLINE,
+    constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
+    combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
+  });
+  const entries = resolveConfiguredEntries(config, rootDir);
+  const rawVersionInputs = createProductionGraphVersionInputs({
+    config,
+    parserMode,
+    minifier,
+    treeshake,
+    scopeHoist,
+    entries
+  });
+  const configHash = computeGraphVersion(rawVersionInputs);
+  const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
+  const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false;
+  const depsSharedChunksMode = normalizeSharedChunksMode(config?.optimizeDeps?.sharedChunks);
+  return {
+    depsHash: computeDepsHash(configHash, lockfile, {
+      nodeEnv,
+      sourcemap: depsSourcemapEnabled,
+      bundleEsm: depsBundleEsmEnabled,
+      sharedChunks: depsSharedChunksMode,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION4
+    }),
+    configHash
+  };
+}
+function readCanonicalLockfile(workspace, rootDir) {
+  const lockfileOrder = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb"];
+  const roots = [...new Set([workspace.workspaceRoot, rootDir].map((root) => import_path37.default.resolve(root)))];
+  for (const root of roots) {
+    for (const name of lockfileOrder) {
+      const filePath = import_path37.default.join(root, name);
+      if (import_fs35.default.existsSync(filePath)) {
+        return { contents: import_fs35.default.readFileSync(filePath) };
+      }
+    }
+  }
+  return null;
+}
+function resolveConfiguredEntries(config, rootDir) {
+  if (!config?.entry) return void 0;
+  const entries = Array.isArray(config.entry) ? config.entry : [config.entry];
+  return entries.map(
+    (entry) => entry.startsWith("/") ? import_path37.default.join(rootDir, entry) : import_path37.default.resolve(rootDir, entry)
+  );
+}
+function normalizeSharedChunksMode(sharedChunks) {
+  if (sharedChunks === void 0 || sharedChunks === "auto") return "auto";
+  if (sharedChunks === true) return "1";
+  if (sharedChunks === false) return "0";
+  return String(sharedChunks);
+}
+
+// src/cli/commands/push.ts
+init_parser();
+
+// src/cli/utils/push-target-state.ts
+init_cjs_shims();
+function selectPreparedPushTargets(probes) {
+  const out = [];
+  for (const probe of probes) {
+    if (probe.hasCommittedCloudSession) {
+      out.push({
+        nodeEnv: probe.nodeEnv,
+        depsHash: probe.depsHash,
+        configHash: probe.configHash,
+        depsRoot: probe.depsRoot,
+        source: "cloud-committed",
+        tier2Disposition: "reuse-committed-cloud-session",
+        committedCloudSessionId: probe.committedCloudSessionId,
+        committedCloudArtifactCount: probe.committedCloudArtifactCount,
+        committedCloudTotalBytes: probe.committedCloudTotalBytes
+      });
+      continue;
+    }
+    if (probe.hasVerified) {
+      out.push({
+        nodeEnv: probe.nodeEnv,
+        depsHash: probe.depsHash,
+        configHash: probe.configHash,
+        depsRoot: probe.depsRoot,
+        source: "local-verified",
+        tier2Disposition: "upload-local-snapshot",
+        committedCloudSessionId: probe.committedCloudSessionId,
+        committedCloudArtifactCount: probe.committedCloudArtifactCount,
+        committedCloudTotalBytes: probe.committedCloudTotalBytes
+      });
+    }
+  }
+  return out;
+}
+function hasLocalSnapshotEvidence(probes) {
+  return probes.some((probe) => probe.hasVerified || probe.hasDevStable);
+}
+
+// src/cli/commands/push.ts
+init_native();
+
+// src/core/cloud/dev-tier1-manifest.ts
+init_cjs_shims();
+init_native();
+
+// src/core/cloud/tier1-publish-source.ts
+init_cjs_shims();
+function inferTier1ModuleKind(moduleId) {
+  const normalized = moduleId.startsWith("ws://") ? moduleId.slice("ws://".length) : moduleId;
+  const lower = normalized.toLowerCase();
+  if (lower.endsWith(".css")) return "css";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs") || lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+    return "js";
+  }
+  return "asset";
+}
+function isTier1SourceTransformModule(moduleId, kind) {
+  const resolvedKind = typeof kind === "string" && kind.length > 0 ? kind.toLowerCase() : inferTier1ModuleKind(moduleId);
+  return resolvedKind === "js" || resolvedKind.startsWith("css");
+}
+function collectTier1ModulesFromBuildManifest(buildManifest) {
+  const modules = [];
+  const seen = /* @__PURE__ */ new Set();
+  let skippedNonWs = 0;
+  let skippedDeps = 0;
+  if (!buildManifest?.chunks) {
+    return { modules, skippedNonWs, skippedDeps };
+  }
+  for (const chunk of buildManifest.chunks) {
+    const chunkModules = Array.isArray(chunk?.modules) ? chunk.modules : [];
+    for (const mod of chunkModules) {
+      if (typeof mod?.artifactHash !== "string" || mod.artifactHash.length === 0) continue;
+      if (typeof mod?.id !== "string" || mod.id.length === 0 || seen.has(mod.id)) continue;
+      seen.add(mod.id);
+      if (mod.kind === "dep") {
+        skippedDeps++;
+        continue;
+      }
+      if (!mod.id.startsWith("ws://")) {
+        skippedNonWs++;
+        continue;
+      }
+      if (!isTier1SourceTransformModule(mod.id, mod.kind)) {
+        continue;
+      }
+      modules.push({
+        moduleId: mod.id,
+        artifactHash: mod.artifactHash,
+        kind: typeof mod.kind === "string" && mod.kind.length > 0 ? mod.kind : "js"
+      });
+    }
+  }
+  return { modules, skippedNonWs, skippedDeps };
+}
+function chooseTier1PublicationSource(graphModules, buildManifestModules) {
+  if (graphModules.length > 0) {
+    return { source: "graph", modules: graphModules };
+  }
+  if (buildManifestModules.length > 0) {
+    return { source: "build", modules: buildManifestModules };
+  }
+  return { source: "none", modules: [] };
+}
+
+// src/core/cloud/dev-tier1-manifest.ts
+function enumerateTier1ModulesFromGraph(options) {
+  if (!native?.graphLoad) return [];
+  ensureNativeGraph(options.graphDbPath, options.configHash);
+  const nodes = native.graphLoad();
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const node of nodes) {
+    if (!node || typeof node.id !== "string") continue;
+    if (typeof node.hash !== "string" || node.hash.length === 0) continue;
+    if (node.origin === "dep") continue;
+    if (node.kind === "dep") continue;
+    if (!isTier1SourceTransformModule(node.id, node.kind)) continue;
+    if (seen.has(node.id)) continue;
+    seen.add(node.id);
+    out.push({
+      moduleId: node.id,
+      artifactHash: node.hash,
+      kind: node.kind ?? "js"
+    });
+  }
+  out.sort((a, b) => a.moduleId < b.moduleId ? -1 : a.moduleId > b.moduleId ? 1 : 0);
+  return out;
+}
+
+// src/cli/commands/push.ts
+init_cache();
+init_module_id();
+init_define();
+init_logger();
+init_workspace();
+init_prompt();
+var import_chalk4 = __toESM(require("chalk"), 1);
+var DEPS_OPTIMIZER_OUTPUT_VERSION5 = getDepsOptimizerOutputVersion();
+var EMPTY_PROJECT_ID = "00000000-0000-0000-0000-000000000000";
+function classifyArtifact(filename) {
+  if (filename === ".verified") return null;
+  if (filename === "manifest.json") return "manifest";
+  if (filename === "vendor-pack.v2.index.json") return "pack_index";
+  if (filename.endsWith(".json")) return null;
+  if (filename.startsWith("shared.") && filename.endsWith(".js")) return "shared_chunk";
+  if (filename.startsWith("vendor-core.") && filename.endsWith(".js")) return "shared_chunk";
+  if (filename.startsWith("vendor-pack.") && filename.endsWith(".js")) return "vendor_pack";
+  if (filename.endsWith(".js")) return "dep_wrapper";
+  return null;
+}
+function createConcurrencyLimiter(limit) {
+  let running = 0;
+  const queue = [];
+  function next() {
+    if (running >= limit || queue.length === 0) return;
+    running++;
+    const fn = queue.shift();
+    fn();
+  }
+  return function run(task) {
+    return new Promise((resolve, reject) => {
+      queue.push(() => {
+        task().then((val) => {
+          running--;
+          resolve(val);
+          next();
+        }).catch((err) => {
+          running--;
+          reject(err);
+          next();
+        });
+      });
+      next();
+    });
+  };
+}
+async function runPushCommand(options = {}) {
+  const doBoth = !options.tier1 && !options.tier2;
+  const doTier1 = doBoth || !!options.tier1;
+  const doTier2 = doBoth || !!options.tier2;
+  const config = await loadIonifyConfig();
+  const cloud = config?.cloud;
+  const profile = resolveCloudProfile();
+  const cwd = process.cwd();
+  const rootDir = config?.root ? import_path38.default.resolve(cwd, config.root) : cwd;
+  const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
+  const resolvedBinding = resolveProjectBinding(workspace);
+  const configuredProjectId = cloud?.projectId === EMPTY_PROJECT_ID ? void 0 : cloud?.projectId;
+  const binding = assertValidProjectBinding(resolvedBinding, "push", configuredProjectId);
+  const bindingWarn = resolvedBinding ? bindingWarning(resolvedBinding) : null;
+  if (bindingWarn) logWarn(bindingWarn);
+  const projectId = binding.projectId;
+  const apiUrl = binding.apiUrl ?? profile?.apiUrl ?? cloud?.apiUrl ?? "https://api.ionify.cloud";
+  if (!projectId) {
+    logError(
+      "push: cloud project is not configured.\n  Run `ionify bind --project <project-id>` from the project root."
+    );
+    process.exit(1);
+  }
+  let token = resolveCloudToken();
+  if (!token) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      const choice = await selectMenu({
+        title: import_chalk4.default.yellow("No cloud token found."),
+        subtitle: "Pick how to authenticate before pushing:",
+        options: [
+          {
+            label: "Run `ionify login` now",
+            description: "Interactively saves a token to ~/.ionify/credentials.json.",
+            value: "login",
+            recommended: true
+          },
+          {
+            label: "Cancel",
+            description: "Set IONIFY_CLOUD_TOKEN env var or run `ionify login` separately.",
+            value: "cancel"
+          }
+        ],
+        initial: 0
+      });
+      if (choice !== "login") {
+        logInfo(import_chalk4.default.dim("[push] Cancelled \u2014 no token."));
+        return;
+      }
+      const { runLoginCommand: runLoginCommand2 } = await Promise.resolve().then(() => (init_login(), login_exports));
+      await runLoginCommand2();
+      logInfo(import_chalk4.default.dim("[push] Login complete. Re-run `ionify bind --project <project-id>` if this folder is not bound yet."));
+      token = resolveCloudToken();
+      if (!token) {
+        logError("push: login did not produce a token. Aborting.");
+        process.exit(1);
+      }
+    } else {
+      logError(
+        "push: no cloud token found.\n  Set IONIFY_CLOUD_TOKEN env var (CI/CD) or run `ionify login` (developer machine)."
+      );
+      process.exit(1);
+    }
+  }
+  const concurrency = options.concurrency ?? cloud?.uploadConcurrency ?? 8;
+  const client = new CloudClient({ apiUrl, token, projectId, binding, intent: "write" });
+  const ionifyDir = workspace.ionifyDir;
+  const loadTargetProbes = () => resolvePushTargetProbes(
+    config,
+    workspace,
+    rootDir,
+    options.env,
+    doTier2 ? client : null,
+    projectId
+  );
+  let targetProbes = await loadTargetProbes();
+  let targets = selectPreparedPushTargets(targetProbes);
+  const tier1Only = doTier1 && !doTier2;
+  if (targets.length === 0 && !tier1Only) {
+    const requested = options.env ? ` for env=${options.env}` : "";
+    const depsDir = import_path38.default.join(ionifyDir, "deps");
+    const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true && !process.env.CI;
+    const partialCandidates = extractPartialTargets(targetProbes);
+    const localSnapshotEvidence = hasLocalSnapshotEvidence(targetProbes);
+    if (!interactive) {
+      logError(
+        `push: no prepared dependency snapshot found${requested} under ${depsDir}, and cloud does not have the exact committed deps tuple.
+  Run \`ionify build\`, \`ionify optimize-all\`, or \`ionify dev\` to prepare deps first, then retry \`ionify push\`.
+` + (partialCandidates.length > 0 ? `  (${partialCandidates.length} partial dev-stable snapshot(s) detected \u2014 re-run interactively to choose complete snapshot prep or partial push.)
+` : "") + "  Tip: NODE_ENV during the build determines which env snapshot is produced."
+      );
+      process.exit(1);
+    }
+    logWarn(
+      `push: no prepared dependency snapshot found${requested} under ${depsDir}, and cloud does not have the exact committed deps tuple.`
+    );
+    if (partialCandidates.length === 0) {
+      const choice = await promptStateANoSnapshot(options.env, localSnapshotEvidence);
+      if (choice === null || choice === "cancel") {
+        logInfo(import_chalk4.default.dim("[push] Cancelled by user."));
+        return;
+      }
+      if (choice === "run-dev") {
+        await runDevInteractiveAndWait(rootDir);
+        targetProbes = await loadTargetProbes();
+        targets = selectPreparedPushTargets(targetProbes);
+        if (targets.length === 0) {
+          const partialAfter = extractPartialTargets(targetProbes);
+          if (partialAfter.length === 0) {
+            logError(
+              `push: dev session exited but no snapshot was produced${requested}. Aborting.`
+            );
+            process.exit(1);
+          }
+          const followup = await promptStateBPartialOnly(partialAfter);
+          if (followup === null || followup === "cancel") {
+            logInfo(import_chalk4.default.dim("[push] Cancelled by user."));
+            return;
+          }
+          if (followup === "optimize-all") {
+            const { runOptimizeAllCommand: runOptimizeAllCommand2 } = await Promise.resolve().then(() => (init_optimize_all(), optimize_all_exports));
+            await runOptimizeAllCommand2({ env: options.env });
+            targetProbes = await loadTargetProbes();
+            targets = selectPreparedPushTargets(targetProbes);
+            if (targets.length === 0) {
+              logError(
+                `push: dependency snapshot preparation ran but produced no complete local snapshot${requested}. Aborting.`
+              );
+              process.exit(1);
+            }
+          } else {
+            logPartialPushBanner();
+            targets = partialAfter.map((target) => ({
+              ...target,
+              source: "local-verified",
+              tier2Disposition: "upload-local-snapshot",
+              committedCloudSessionId: null
+            }));
+          }
+        }
+      } else if (choice === "optimize-all") {
+        const { runOptimizeAllCommand: runOptimizeAllCommand2 } = await Promise.resolve().then(() => (init_optimize_all(), optimize_all_exports));
+        await runOptimizeAllCommand2({ env: options.env });
+        targetProbes = await loadTargetProbes();
+        targets = selectPreparedPushTargets(targetProbes);
+        if (targets.length === 0) {
+          logError(
+            `push: dependency snapshot preparation ran but produced no complete local snapshot${requested}. Aborting.`
+          );
+          process.exit(1);
+        }
+      }
+    } else {
+      const choice = await promptStateBPartialOnly(partialCandidates);
+      if (choice === null || choice === "cancel") {
+        logInfo(import_chalk4.default.dim("[push] Cancelled by user."));
+        return;
+      }
+      if (choice === "optimize-all") {
+        const { runOptimizeAllCommand: runOptimizeAllCommand2 } = await Promise.resolve().then(() => (init_optimize_all(), optimize_all_exports));
+        await runOptimizeAllCommand2({ env: options.env });
+        targetProbes = await loadTargetProbes();
+        targets = selectPreparedPushTargets(targetProbes);
+        if (targets.length === 0) {
+          logError(
+            `push: dependency snapshot preparation ran but produced no complete local snapshot${requested}. Aborting.`
+          );
+          process.exit(1);
+        }
+      } else {
+        logPartialPushBanner();
+        targets = partialCandidates.map((target) => ({
+          ...target,
+          source: "local-verified",
+          tier2Disposition: "upload-local-snapshot",
+          committedCloudSessionId: null
+        }));
+      }
+    }
+  }
+  const effectiveTier2Mode = doTier2 ? targets.some((target) => target.tier2Disposition === "upload-local-snapshot") ? "sync" : "reuse" : null;
+  const activeWork = [doTier1 && "Tier-1", effectiveTier2Mode === "sync" && "Tier-2 sync", effectiveTier2Mode === "reuse" && "Tier-2 reuse"].filter(Boolean).join(" + ");
+  logInfo(
+    `[push] Targets: ${targets.length > 0 ? targets.map((t) => `${t.nodeEnv}(${t.depsHash})${t.source === "cloud-committed" ? "[cloud]" : "[local]"}`).join(", ") : "none"}${activeWork ? ` \u2022 Active work: ${activeWork}` : ""}`
+  );
+  const tier2Results = [];
+  for (const target of targets) {
+    logInfo(`[push] \u2500\u2500 env=${target.nodeEnv} depsHash=${target.depsHash} \u2500\u2500`);
+    if (doTier2) {
+      if (target.tier2Disposition === "reuse-committed-cloud-session") {
+        logInfo(
+          `[push:tier2] Dependency snapshot already exists in cloud (${target.committedCloudSessionId ?? "exact tuple"}). Skipping artifact upload.`
+        );
+        tier2Results.push({
+          status: "reused-cloud",
+          nodeEnv: target.nodeEnv,
+          depsHash: target.depsHash,
+          sessionId: target.committedCloudSessionId,
+          artifactCount: target.committedCloudArtifactCount ?? 0,
+          logicalBytes: target.committedCloudTotalBytes ?? 0,
+          linkedArtifacts: 0,
+          linkedBytes: 0,
+          uploadedArtifacts: 0,
+          uploadedBytes: 0
+        });
+        logInfo(
+          import_chalk4.default.dim(
+            "[push:tier2] Tip: run `ionify hydrate` if you want the local dependency files before dev/build on this machine."
+          )
+        );
+      } else {
+        tier2Results.push(
+          await pushTier2(client, target.depsRoot, target.depsHash, target.nodeEnv, concurrency, projectId)
+        );
+      }
+    }
+  }
+  let tier1Result = null;
+  if (doTier1) {
+    const namespace = await resolveTier1Namespace({
+      explicitNamespace: options.namespace,
+      fixedConfigNamespace: cloud?.namespace,
+      rootDir
+    });
+    if (!namespace) {
+      logError(
+        "push: Tier-1 requires a namespace.\n  Use --namespace, add cloud.namespace only if you want a fixed namespace,\n  or run from a named git branch or workspace folder."
+      );
+      process.exit(1);
+    }
+    const tier1ConfigHash = targets.length > 0 ? targets[0].configHash : await computeStandaloneConfigHash(config, workspace, rootDir, options.env);
+    for (const t of targets) {
+      if (t.configHash !== tier1ConfigHash) {
+        logWarn(
+          `[push:tier1] configHash mismatch across env targets (${tier1ConfigHash} vs ${t.configHash}); Tier-1 only pushes once per invocation \u2014 using the first target.`
+        );
+        break;
+      }
+    }
+    const outDir = import_path38.default.resolve(rootDir, config?.build?.outDir ?? "dist");
+    const tier1Mode = targets.find((target) => target.nodeEnv === "production")?.nodeEnv ?? targets[0]?.nodeEnv ?? options.env ?? "production";
+    tier1Result = await pushTier1({
+      client,
+      ionifyDir,
+      configHash: tier1ConfigHash,
+      outDir,
+      namespace,
+      concurrency,
+      rootDir,
+      workspaceRoot: workspace.workspaceRoot,
+      config,
+      nodeEnv: tier1Mode
+    });
+  }
+  logPushSummary(tier1Result, tier2Results, { doTier1, doTier2 });
+}
+async function resolvePushTargetProbes(config, workspace, rootDir, envFilter, client, projectId) {
+  const envDepsHash = process.env.IONIFY_DEPS_HASH;
+  const envConfigHash = process.env.IONIFY_CONFIG_HASH;
+  const envNodeEnv = process.env.IONIFY_NODE_ENV;
+  if (envDepsHash && envConfigHash && (envNodeEnv === "development" || envNodeEnv === "production")) {
+    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? import_path38.default.join(workspace.ionifyDir, "deps", envDepsHash);
+    if (!import_fs36.default.existsSync(import_path38.default.join(depsRoot, ".verified"))) {
+      logError(
+        `push: deps at ${depsRoot} are not verified (env=${envNodeEnv}).
+  The build that invoked --push did not complete the deps optimizer.`
+      );
+      process.exit(1);
+    }
+    logInfo(`[push] Using handoff from build: env=${envNodeEnv} depsHash=${envDepsHash}`);
+    return [
+      {
+        nodeEnv: envNodeEnv,
+        depsHash: envDepsHash,
+        configHash: envConfigHash,
+        depsRoot,
+        hasVerified: true,
+        hasDevStable: false,
+        hasCommittedCloudSession: false,
+        committedCloudSessionId: null,
+        committedCloudArtifactCount: null,
+        committedCloudTotalBytes: null
+      }
+    ];
+  }
+  const envsToProbe = envFilter ? [envFilter] : [...NODE_ENV_TAGS];
+  const candidates = [];
+  for (const nodeEnv of envsToProbe) {
+    const { depsHash, configHash } = await computeStandaloneDepsHash(
+      config,
+      workspace,
+      rootDir,
+      nodeEnv
+    );
+    const depsRoot = import_path38.default.join(workspace.ionifyDir, "deps", depsHash);
+    const hasVerified = import_fs36.default.existsSync(import_path38.default.join(depsRoot, ".verified"));
+    const hasDevStable = import_fs36.default.existsSync(import_path38.default.join(depsRoot, ".dev-stable"));
+    let hasCommittedCloudSession = false;
+    let committedCloudSessionId = null;
+    let committedCloudArtifactCount = null;
+    let committedCloudTotalBytes = null;
+    if (client) {
+      const existing = await client.lookupSession(depsHash, String(DEPS_OPTIMIZER_OUTPUT_VERSION5), nodeEnv).catch((err) => throwPushCloudError(err, "lookup CDC session"));
+      if (existing && existing.status === "committed") {
+        hasCommittedCloudSession = true;
+        committedCloudSessionId = existing.session_id;
+        committedCloudArtifactCount = existing.artifact_count;
+        committedCloudTotalBytes = existing.artifacts.reduce((sum, artifact) => sum + artifact.size_bytes, 0);
+      }
+    }
+    candidates.push({
+      nodeEnv,
+      depsHash,
+      configHash,
+      depsRoot,
+      hasVerified,
+      hasDevStable,
+      hasCommittedCloudSession,
+      committedCloudSessionId,
+      committedCloudArtifactCount,
+      committedCloudTotalBytes
+    });
+  }
+  return candidates;
+}
+function extractPartialTargets(probes) {
+  return probes.filter((probe) => !probe.hasVerified && probe.hasDevStable).map(({ nodeEnv, depsHash, configHash, depsRoot }) => ({
+    nodeEnv,
+    depsHash,
+    configHash,
+    depsRoot
+  }));
+}
+async function pushTier2(client, depsRoot, depsHash, nodeEnv, concurrency, projectId) {
+  const optimizerVersion = String(DEPS_OPTIMIZER_OUTPUT_VERSION5);
+  logInfo(`[push:tier2] Local verified dependency snapshot found for env=${nodeEnv}.`);
+  logInfo("[push:tier2] Checking cloud for reusable artifact bytes\u2026");
+  const existing = await client.lookupSession(depsHash, optimizerVersion, nodeEnv).catch((err) => throwPushCloudError(err, "lookup CDC session"));
+  if (existing && existing.status === "committed") {
+    const logicalBytes = existing.artifacts.reduce((sum, artifact) => sum + artifact.size_bytes, 0);
+    logInfo(`[push:tier2] Exact dependency snapshot already committed in cloud (${existing.session_id}).`);
+    return {
+      status: "reused-cloud",
+      nodeEnv,
+      depsHash,
+      sessionId: existing.session_id,
+      artifactCount: existing.artifact_count,
+      logicalBytes,
+      linkedArtifacts: 0,
+      linkedBytes: 0,
+      uploadedArtifacts: 0,
+      uploadedBytes: 0
+    };
+  }
+  logInfo(`[push:tier2] Creating snapshot session (env=${nodeEnv})\u2026`);
+  const session = await client.createSession(depsHash, optimizerVersion, nodeEnv).catch((err) => throwPushCloudError(err, "create CDC session"));
+  logInfo(`[push:tier2] Session ${session.session_id} (${session.status})`);
+  const manifestPath = import_path38.default.join(depsRoot, "manifest.json");
+  let manifestRaw;
+  try {
+    manifestRaw = JSON.parse(import_fs36.default.readFileSync(manifestPath, "utf8"));
+  } catch {
+    logError(`[push:tier2] Failed to parse manifest.json at ${manifestPath}`);
+    process.exit(1);
+  }
+  const manifestEntries = manifestRaw?.entries ?? {};
+  const authorizedFiles = /* @__PURE__ */ new Set();
+  authorizedFiles.add("manifest.json");
+  for (const entry of Object.values(manifestEntries)) {
+    const outFile = entry?.outFile ?? entry?.out_file;
+    if (typeof outFile === "string" && outFile.endsWith(".js") && import_fs36.default.existsSync(import_path38.default.join(depsRoot, outFile))) {
+      authorizedFiles.add(outFile);
+    }
+    const sharedImports = Array.isArray(entry?.sharedImports) ? entry.sharedImports : [];
+    for (const shared of sharedImports) {
+      if (typeof shared === "string" && shared.endsWith(".js") && import_fs36.default.existsSync(import_path38.default.join(depsRoot, shared))) {
+        authorizedFiles.add(shared);
+      }
+    }
+  }
+  const packIndexPath = import_path38.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (import_fs36.default.existsSync(packIndexPath)) {
+    authorizedFiles.add("vendor-pack.v2.index.json");
+    try {
+      const packIndex = JSON.parse(import_fs36.default.readFileSync(packIndexPath, "utf8"));
+      const packToShared = packIndex?.packFileToSharedFile ?? {};
+      const packToChunks = packIndex?.packFileToChunkFiles ?? {};
+      for (const [packFile, sharedFile] of Object.entries(packToShared)) {
+        if (typeof packFile === "string" && packFile.endsWith(".js") && import_fs36.default.existsSync(import_path38.default.join(depsRoot, packFile))) {
+          authorizedFiles.add(packFile);
+        }
+        if (typeof sharedFile === "string" && sharedFile.endsWith(".js") && import_fs36.default.existsSync(import_path38.default.join(depsRoot, sharedFile))) {
+          authorizedFiles.add(sharedFile);
+        }
+      }
+      for (const chunkFiles of Object.values(packToChunks)) {
+        if (!Array.isArray(chunkFiles)) continue;
+        for (const chunkFile of chunkFiles) {
+          if (typeof chunkFile === "string" && chunkFile.endsWith(".js") && import_fs36.default.existsSync(import_path38.default.join(depsRoot, chunkFile))) {
+            authorizedFiles.add(chunkFile);
+          }
+        }
+      }
+    } catch {
+      logWarn("[push:tier2] Failed to parse vendor-pack.v2.index.json; pack files collected from manifest only.");
+    }
+  }
+  const packIndexFiles = [...authorizedFiles].filter((f) => classifyArtifact(f) === "pack_index");
+  const uploadFirstFiles = [...authorizedFiles].filter((f) => classifyArtifact(f) !== "pack_index");
+  logInfo(
+    `[push:tier2] Syncing ${authorizedFiles.size} authorized artifacts (attach-or-upload, concurrency=${concurrency})\u2026`
+  );
+  const limit = createConcurrencyLimiter(concurrency);
+  let completed = 0;
+  let uploaded = 0;
+  let uploadedBytes = 0;
+  let linked = 0;
+  let linkedBytes = 0;
+  let failed = 0;
+  const uploadFile = (filename) => limit(async () => {
+    const artifactType = classifyArtifact(filename);
+    const filePath = import_path38.default.join(depsRoot, filename);
+    if (artifactType === "vendor_pack") {
+      if (!validatePackHeader(filePath)) {
+        logWarn(`[push:tier2] Skipping ${filename}: missing or invalid vendor-pack-v2 header (corrupt or partial file)`);
+        return;
+      }
+    }
+    const bytes = import_fs36.default.readFileSync(filePath);
+    const contentHash = computeContentHash(bytes);
+    try {
+      const linkedArtifact = await client.attachArtifact(session.session_id, artifactType, filename, contentHash);
+      linked++;
+      linkedBytes += linkedArtifact.size_bytes;
+      completed++;
+      if (completed % 50 === 0) {
+        logInfo(
+          `[push:tier2] ${completed}/${authorizedFiles.size} synced\u2026 (${linked} linked, ${uploaded} uploaded)`
+        );
+      }
+    } catch (err) {
+      if (err instanceof CloudApiError && err.statusCode === 404) {
+        try {
+          const uploadedArtifact = await client.uploadArtifact(session.session_id, artifactType, filename, bytes, contentHash);
+          uploaded++;
+          uploadedBytes += uploadedArtifact.size_bytes;
+          completed++;
+          if (completed % 50 === 0) {
+            logInfo(
+              `[push:tier2] ${completed}/${authorizedFiles.size} synced\u2026 (${linked} linked, ${uploaded} uploaded)`
+            );
+          }
+        } catch (uploadErr) {
+          if (uploadErr instanceof CloudApiError && (uploadErr.statusCode === 403 || uploadErr.statusCode === 429)) {
+            throwPushCloudError(uploadErr, `upload CDC artifact ${filename}`);
+          } else if (uploadErr instanceof CloudApiError && uploadErr.statusCode === 409) {
+            completed++;
+          } else {
+            failed++;
+            logWarn(
+              `[push:tier2] Failed to upload ${filename}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`
+            );
+          }
+        }
+        return;
+      }
+      if (err instanceof CloudApiError && (err.statusCode === 403 || err.statusCode === 429)) {
+        throwPushCloudError(err, `attach CDC artifact ${filename}`);
+      }
+      if (err instanceof CloudApiError && err.statusCode === 409) {
+        completed++;
+        return;
+      }
+      failed++;
+      logWarn(`[push:tier2] Failed to link ${filename}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+  await Promise.all(uploadFirstFiles.map(uploadFile));
+  if (failed > 0) {
+    logError(`[push:tier2] ${failed} artifact(s) failed to sync. Session not completed.`);
+    process.exit(1);
+  }
+  for (const filename of packIndexFiles) {
+    await uploadFile(filename);
+  }
+  if (failed > 0) {
+    logError(`[push:tier2] pack_index sync failed. Session not completed.`);
+    process.exit(1);
+  }
+  logInfo(
+    `[push:tier2] Completing session (${completed} artifacts: ${linked} linked, ${uploaded} uploaded)\u2026`
+  );
+  const completedSession = await client.completeSession(session.session_id).catch((err) => throwPushCloudError(err, "complete CDC session"));
+  logInfo(
+    `[push:tier2] Session committed. artifacts=${completedSession.artifact_count} total_bytes=${completedSession.total_bytes}`
+  );
+  return {
+    status: "synced",
+    nodeEnv,
+    depsHash,
+    sessionId: completedSession.session_id,
+    artifactCount: completedSession.artifact_count,
+    logicalBytes: completedSession.total_bytes,
+    linkedArtifacts: linked,
+    linkedBytes,
+    uploadedArtifacts: uploaded,
+    uploadedBytes
+  };
+}
+function validatePackHeader(filePath) {
+  try {
+    const fd = import_fs36.default.openSync(filePath, "r");
+    const buf = Buffer.alloc(256);
+    const n = import_fs36.default.readSync(fd, buf, 0, 256, 0);
+    import_fs36.default.closeSync(fd);
+    const firstLine = buf.subarray(0, n).toString("utf8").split("\n")[0];
+    return /^\/\/ ionify:vendor-pack-v2 [0-9a-fA-F]{32,}$/.test(firstLine);
+  } catch {
+    return false;
+  }
+}
+var TIER1_RESOLVER_VERSION = "0.1.0";
+async function pushTier1(options) {
+  const {
+    client,
+    ionifyDir,
+    configHash,
+    outDir,
+    namespace,
+    concurrency,
+    rootDir,
+    workspaceRoot,
+    config,
+    nodeEnv
+  } = options;
+  const casRoot = import_path38.default.join(ionifyDir, "cas");
+  const casVersionDir = import_path38.default.join(casRoot, configHash);
+  const envSignature = "shared";
+  const limiter = createConcurrencyLimiter(concurrency);
+  const manifestPath = import_path38.default.join(outDir, "manifest.json");
+  let buildManifest = null;
+  if (import_fs36.default.existsSync(manifestPath)) {
+    try {
+      buildManifest = JSON.parse(import_fs36.default.readFileSync(manifestPath, "utf8"));
+    } catch {
+      logWarn("[push:tier1] Failed to parse dist/manifest.json; build-guided candidates unavailable.");
+    }
+  }
+  const buildManifestResult = collectTier1ModulesFromBuildManifest(buildManifest);
+  let graphModules = [];
+  try {
+    graphModules = enumerateTier1ModulesFromGraph({
+      graphDbPath: import_path38.default.join(ionifyDir, "graph.db"),
+      configHash
+    });
+  } catch (err) {
+    logWarn(`[push:tier1] Graph-walk failed: ${err.message}; falling back to build/CAS data.`);
+  }
+  const selection = chooseTier1PublicationSource(graphModules, buildManifestResult.modules);
+  let modules = selection.modules;
+  if (selection.source === "graph") {
+    logInfo(`[push:tier1] Graph-authoritative mode: ${modules.length} source module(s) from .ionify/graph.db.`);
+    if (buildManifestResult.modules.length > 0) {
+      logInfo(
+        `[push:tier1] Ignoring ${buildManifestResult.modules.length} build-guided module(s) from dist/manifest.json because the persistent graph is authoritative.`
+      );
+    }
+  } else if (selection.source === "build") {
+    logInfo(`[push:tier1] Build-fallback mode: ${modules.length} source module(s) from dist/manifest.json.`);
+    if (buildManifestResult.skippedNonWs > 0 || buildManifestResult.skippedDeps > 0) {
+      logInfo(
+        `[push:tier1] Excluded from Tier-1: ${buildManifestResult.skippedDeps} dep artifact(s), ${buildManifestResult.skippedNonWs} non-ws:// module(s).`
+      );
+    }
+  }
+  if (selection.source === "graph" || selection.source === "build") {
+    modules = await refreshTier1SourceTransforms({
+      modules,
+      casRoot,
+      configHash,
+      rootDir,
+      workspaceRoot,
+      config,
+      nodeEnv
+    });
+  }
+  if (selection.source === "none") {
+    if (!import_fs36.default.existsSync(casVersionDir)) {
+      logWarn(
+        `[push:tier1] No CAS found at ${casVersionDir}.
+  Run \`ionify dev\` or \`ionify build\` to populate the CAS first.`
+      );
+      return {
+        status: "no-cas",
+        verifiedBlobCount: 0,
+        publishedEntryCount: 0,
+        namespace,
+        manifestHash: null
+      };
+    }
+    const artifactDirs = import_fs36.default.readdirSync(casVersionDir).filter((d) => import_fs36.default.statSync(import_path38.default.join(casVersionDir, d)).isDirectory());
+    if (artifactDirs.length === 0) {
+      logWarn("[push:tier1] CAS directory is empty. Nothing to push.");
+      return {
+        status: "empty-cas",
+        verifiedBlobCount: 0,
+        publishedEntryCount: 0,
+        namespace,
+        manifestHash: null
+      };
+    }
+    logInfo(
+      `[push:tier1] CAS-scan mode: ${artifactDirs.length} artifact(s) found.
+  Uploading blobs... (no manifest published \u2014 run \`ionify build && ionify push\` to publish)`
+    );
+    let uploaded = 0;
+    let skipped = 0;
+    await Promise.all(
+      artifactDirs.map(
+        (artifactHash) => limiter(async () => {
+          const jsPath = import_path38.default.join(casVersionDir, artifactHash, "transformed.js");
+          const cssPath = import_path38.default.join(casVersionDir, artifactHash, "transformed.css");
+          const blobPath = import_fs36.default.existsSync(jsPath) ? jsPath : import_fs36.default.existsSync(cssPath) ? cssPath : null;
+          if (!blobPath) {
+            skipped++;
+            return;
+          }
+          await client.putBlob(import_fs36.default.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
+          uploaded++;
+        })
+      )
+    );
+    logInfo(`[push:tier1] CAS-scan: ${uploaded} blob reference(s) verified, ${skipped} skipped.`);
+    return {
+      status: "prewarmed-blobs",
+      verifiedBlobCount: uploaded,
+      publishedEntryCount: 0,
+      namespace,
+      manifestHash: null
+    };
+  }
+  const results = [];
+  let cassMisses = 0;
+  await Promise.all(
+    modules.map(
+      (mod) => limiter(async () => {
+        const casDir = import_path38.default.join(casVersionDir, mod.artifactHash);
+        const jsPath = import_path38.default.join(casDir, "transformed.js");
+        const cssPath = import_path38.default.join(casDir, "transformed.css");
+        const blobPath = import_fs36.default.existsSync(jsPath) ? jsPath : import_fs36.default.existsSync(cssPath) ? cssPath : null;
+        if (!blobPath) {
+          logWarn(
+            `[push:tier1] CAS miss: ${mod.moduleId} (${mod.artifactHash.slice(0, 8)}) \u2014 skipped.`
+          );
+          cassMisses++;
+          return;
+        }
+        const { blob_hash } = await client.putBlob(import_fs36.default.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
+        results.push({ moduleId: mod.moduleId, artifactHash: mod.artifactHash, kind: mod.kind, blobHash: blob_hash });
+      })
+    )
+  );
+  if (cassMisses > 0) {
+    logWarn(`[push:tier1] ${cassMisses} module(s) had CAS misses and were excluded from the manifest.`);
+  }
+  if (results.length === 0) {
+    logWarn("[push:tier1] No source blob references were verified. Cannot publish manifest.");
+    return {
+      status: "no-blobs",
+      verifiedBlobCount: 0,
+      publishedEntryCount: 0,
+      namespace,
+      manifestHash: null
+    };
+  }
+  logInfo(`[push:tier1] ${results.length} source blob reference(s) verified.`);
+  let expectedNamespaceVersion = 0;
+  let currentManifestHashBeforePublish = null;
+  try {
+    const ns = await client.getNamespace("branch", namespace);
+    expectedNamespaceVersion = ns.version;
+    currentManifestHashBeforePublish = ns.current_manifest_hash;
+    logInfo(`[push:tier1] Namespace "${namespace}" exists at version ${expectedNamespaceVersion}.`);
+  } catch (err) {
+    if (err instanceof CloudApiError && err.statusCode === 404) {
+      logInfo(`[push:tier1] Namespace "${namespace}" does not exist. Creating\u2026`);
+      const created = await client.createNamespace("branch", namespace).catch((createErr) => throwPushCloudError(createErr, "create namespace"));
+      expectedNamespaceVersion = created.version;
+      logInfo(`[push:tier1] Namespace "${namespace}" created at version ${expectedNamespaceVersion}.`);
+    } else {
+      throw err;
+    }
+  }
+  const entries = results.map((r) => ({
+    module_id: r.moduleId,
+    artifact_hash: r.artifactHash,
+    artifact_type: "source_transform",
+    blob_hash: r.blobHash,
+    config_hash: configHash,
+    resolver_version: TIER1_RESOLVER_VERSION,
+    env_signature: envSignature
+  }));
+  logInfo(
+    `[push:tier1] Publishing manifest (${entries.length} entries) \u2192 namespace "${namespace}"...`
+  );
+  try {
+    const result = await client.publishManifest({
+      scope: "branch",
+      name: namespace,
+      expected_namespace_version: expectedNamespaceVersion,
+      entries
+    }).catch((publishErr) => throwPushCloudError(publishErr, "publish manifest"));
+    const noChanges = currentManifestHashBeforePublish !== null && currentManifestHashBeforePublish === result.manifest_hash;
+    if (noChanges) {
+      logInfo("[push:tier1] No new artifacts to publish.");
+    } else {
+      logInfo(
+        `[push:tier1] Manifest published. hash=${result.manifest_hash} ns_version=${result.namespace_version ?? "new"}`
+      );
+    }
+    return {
+      status: noChanges ? "no-changes" : "published",
+      verifiedBlobCount: results.length,
+      publishedEntryCount: entries.length,
+      namespace,
+      manifestHash: result.manifest_hash
+    };
+  } catch (err) {
+    if (err instanceof CloudApiError && err.statusCode === 409) {
+      logWarn(
+        `[push:tier1] OCC conflict: namespace "${namespace}" was updated concurrently.
+  Re-run ionify push to retry.`
+      );
+      return {
+        status: "occ-conflict",
+        verifiedBlobCount: results.length,
+        publishedEntryCount: entries.length,
+        namespace,
+        manifestHash: null
+      };
+    }
+    throw err;
+  }
+}
+async function refreshTier1SourceTransforms(options) {
+  const planModules = options.modules.map((mod) => {
+    const fsPath = resolveTier1ModuleFsPath(mod.moduleId, options.workspaceRoot);
+    if (!fsPath || !import_fs36.default.existsSync(fsPath)) return null;
+    const kind = normalizeTier1ModuleKind(mod.kind);
+    if (kind !== "js" && kind !== "css") return null;
+    const sourceHash = getCacheKey(import_fs36.default.readFileSync(fsPath, "utf8"));
+    return {
+      id: mod.moduleId,
+      fsPath,
+      hash: sourceHash,
+      kind,
+      deps: [],
+      dynamicDeps: []
+    };
+  }).filter((mod) => mod !== null);
+  if (planModules.length === 0) return options.modules;
+  configurePushTransformEnvironment(options);
+  const parserMode = resolveParser(options.config, { envMode: process.env.IONIFY_PARSER });
+  const defineConfig = buildPushDefineConfig(options.config, options.rootDir, options.nodeEnv);
+  const plan = {
+    entries: [],
+    chunks: [
+      {
+        id: "cloud-tier1",
+        modules: planModules,
+        entry: false,
+        shared: true,
+        consumers: [],
+        css: [],
+        assets: []
+      }
+    ]
+  };
+  const result = await publishProductionTransformCas({
+    plan,
+    casRoot: options.casRoot,
+    configHash: options.configHash,
+    workspaceRoot: options.workspaceRoot,
+    parserMode,
+    defineConfig
+  });
+  if (result.transformed > 0 || result.defineDerived > 0) {
+    logInfo(
+      `[push:tier1] Refreshed ${result.transformed + result.defineDerived} stale source transform(s) before publishing.`
+    );
+  }
+  const refreshedById = /* @__PURE__ */ new Map();
+  for (const mod of plan.chunks[0]?.modules ?? []) {
+    if (typeof mod.hash !== "string" || mod.hash.length === 0) continue;
+    refreshedById.set(mod.id, {
+      moduleId: mod.id,
+      artifactHash: mod.hash,
+      kind: mod.kind
+    });
+  }
+  return options.modules.map((mod) => refreshedById.get(mod.moduleId) ?? mod);
+}
+function resolveTier1ModuleFsPath(moduleId, workspaceRoot) {
+  if (!moduleId.startsWith(WS_MODULE_PREFIX)) return null;
+  return fromWsModuleId(moduleId, workspaceRoot);
+}
+function normalizeTier1ModuleKind(kind) {
+  const lower = kind.toLowerCase();
+  if (lower === "css" || lower.startsWith("css")) return "css";
+  if (lower === "js") return "js";
+  return "asset";
+}
+function configurePushTransformEnvironment(options) {
+  const ionifyDir = import_path38.default.dirname(options.casRoot);
+  import_fs36.default.mkdirSync(ionifyDir, { recursive: true });
+  process.env.IONIFY_PROJECT_ROOT = options.rootDir;
+  process.env.IONIFY_WORKSPACE_ROOT = options.workspaceRoot;
+  process.env.IONIFY_STATE_DIR = ionifyDir;
+  process.env.IONIFY_CONFIG_HASH = options.configHash;
+  process.env.MODE = options.nodeEnv;
+  process.env.NODE_ENV = options.nodeEnv;
+  try {
+    const preOpts = options.config?.css?.preprocessorOptions;
+    process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = preOpts ? JSON.stringify(preOpts) : "";
+  } catch {
+    process.env.IONIFY_CSS_PREPROCESSOR_OPTIONS = "";
+  }
+}
+function buildPushDefineConfig(config, rootDir, nodeEnv) {
+  const envFromFiles = loadEnv(nodeEnv, rootDir);
+  const envValues = {
+    ...envFromFiles,
+    NODE_ENV: nodeEnv,
+    MODE: nodeEnv
+  };
+  const envPrefix = config?.envPrefix || ["VITE_", "IONIFY_"];
+  return buildDefineConfig(config?.define, envValues, envPrefix);
+}
+async function computeStandaloneDepsHash(config, workspace, rootDir, nodeEnv) {
+  return computeStandaloneDepsIdentity(config, workspace, rootDir, nodeEnv);
+}
+async function computeStandaloneConfigHash(config, workspace, rootDir, envFilter) {
+  const { configHash } = await computeStandaloneDepsHash(
+    config,
+    workspace,
+    rootDir,
+    envFilter ?? "development"
+  );
+  return configHash;
+}
+async function resolveTier1Namespace(args) {
+  if (args.explicitNamespace) return args.explicitNamespace;
+  if (args.fixedConfigNamespace) return args.fixedConfigNamespace;
+  const gitBranch = await resolveGitBranch();
+  if (gitBranch) return gitBranch;
+  const fallback = sanitizeNamespace(import_path38.default.basename(args.rootDir));
+  if (fallback) {
+    logInfo(
+      `[push:tier1] No named git branch found. Using workspace namespace "${fallback}".`
+    );
+    return fallback;
+  }
+  return null;
+}
+function sanitizeNamespace(value) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : null;
+}
+function formatBytes2(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
+function logPushSummary(tier1Result, tier2Results, options) {
+  logInfo("Push complete");
+  if (options.doTier1) {
+    if (!tier1Result) {
+      logInfo("  Tier-1: skipped");
+    } else if (tier1Result.status === "no-changes") {
+      logInfo("  Tier-1: no changes");
+    } else if (tier1Result.status === "published") {
+      logInfo(
+        `  Tier-1: published ${tier1Result.publishedEntryCount} entry(s) from ${tier1Result.verifiedBlobCount} verified blob reference(s)`
+      );
+    } else if (tier1Result.status === "prewarmed-blobs") {
+      logInfo(`  Tier-1: prewarmed ${tier1Result.verifiedBlobCount} blob reference(s)`);
+    } else if (tier1Result.status === "occ-conflict") {
+      logInfo("  Tier-1: namespace conflict (retry needed)");
+    } else {
+      logInfo("  Tier-1: no changes");
+    }
+  }
+  if (options.doTier2) {
+    if (tier2Results.length === 0) {
+      logInfo("  Tier-2: skipped");
+    } else {
+      const reused = tier2Results.filter((result) => result.status === "reused-cloud");
+      const synced = tier2Results.filter((result) => result.status === "synced");
+      const logicalBytes = tier2Results.reduce((sum, result) => sum + result.logicalBytes, 0);
+      const linkedArtifacts = synced.reduce((sum, result) => sum + result.linkedArtifacts, 0);
+      const linkedBytes = synced.reduce((sum, result) => sum + result.linkedBytes, 0);
+      const uploadedArtifacts = synced.reduce((sum, result) => sum + result.uploadedArtifacts, 0);
+      const uploadedBytes = synced.reduce((sum, result) => sum + result.uploadedBytes, 0);
+      if (synced.length === 0) {
+        logInfo(`  Tier-2: reused cloud snapshot${reused.length > 1 ? "s" : ""}`);
+      } else {
+        logInfo(`  Tier-2: linked ${linkedArtifacts}, uploaded ${uploadedArtifacts}`);
+      }
+      if (logicalBytes > 0) {
+        logInfo(`  Tier-2 logical snapshot: ${formatBytes2(logicalBytes)}`);
+      }
+      if (linkedBytes > 0) {
+        logInfo(`  Tier-2 linked artifact bytes: ${formatBytes2(linkedBytes)}`);
+      }
+      if (uploadedBytes > 0) {
+        logInfo(`  Tier-2 uploaded artifact bytes: ${formatBytes2(uploadedBytes)}`);
+      }
+    }
+  }
+}
+async function resolveGitBranch() {
+  try {
+    const { execSync } = await import("child_process");
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    if (!branch || branch === "HEAD") return null;
+    return branch;
+  } catch {
+    return null;
+  }
+}
+function throwUnreachable(err) {
+  if (err instanceof CloudUnreachableError) {
+    logError(
+      `${err.message}
+  Your local build succeeded. Run \`ionify push\` again when cloud is available.`
+    );
+    process.exit(1);
+  }
+  throw err;
+}
+function throwPushCloudError(err, action) {
+  if (err instanceof CloudApiError && err.statusCode === 429) {
+    logError(formatCloudQuotaError("Push", action, err));
+    process.exit(1);
+  }
+  if (err instanceof CloudApiError && err.statusCode === 401) {
+    logError(formatCloudAuthError("Push"));
+    process.exit(1);
+  }
+  if (err instanceof CloudApiError && err.statusCode === 403) {
+    logError(
+      `push: cloud rejected ${action}.
+  The saved token is likely scoped to a different project or lacks access.
+  Run \`ionify login\` with this Project ID, or update cloud.projectId in ionify.config.ts.`
+    );
+    process.exit(1);
+  }
+  return throwUnreachable(err);
+}
+async function promptStateANoSnapshot(envFilter, hasLocalEvidence) {
+  const envHint = envFilter ? ` (env=${envFilter})` : "";
+  const devCommand = detectDevCommand(process.cwd());
+  const result = await selectMenu({
+    title: `No prepared dependency snapshot found${envHint}.`,
+    subtitle: hasLocalEvidence ? "This exact deps tuple is not complete locally or in cloud yet. Pick how to prepare it before pushing:" : "This exact deps tuple is not available locally or in cloud yet. Pick how to prepare it before pushing:",
+    options: [
+      {
+        label: "Prepare a complete dependency snapshot now",
+        description: "Recommended. Runs `ionify optimize-all` and creates the full snapshot teammates and CI can hydrate.",
+        value: "optimize-all",
+        recommended: true
+      },
+      {
+        label: `Run \`${devCommand.label}\` and render the app`,
+        description: "Fastest. Captures only what the first page actually loads (partial dependency snapshot).",
+        value: "run-dev"
+      },
+      {
+        label: "Cancel",
+        value: "cancel"
+      }
+    ],
+    initial: 0
+  });
+  return result;
+}
+async function promptStateBPartialOnly(partialCandidates) {
+  const summary = partialCandidates.map((c) => `${c.nodeEnv} (${c.depsHash.slice(0, 12)})`).join(", ");
+  const result = await selectMenu({
+    title: `Found a ${import_chalk4.default.yellow("PARTIAL")} dependency snapshot from a dev session: ${import_chalk4.default.cyan(summary)}`,
+    subtitle: "This covers what the browser loaded, but not the full dependency snapshot.",
+    options: [
+      {
+        label: "Prepare the complete dependency snapshot and push it",
+        description: "Captures every dependency. Best for teammates and CI hydrate.",
+        value: "optimize-all",
+        recommended: true
+      },
+      {
+        label: "Push partial snapshot anyway",
+        description: "Experimental. Teammates hydrating this may get fewer deps than a complete snapshot.",
+        value: "push-anyway"
+      },
+      {
+        label: "Cancel",
+        value: "cancel"
+      }
+    ],
+    initial: 0
+  });
+  return result;
+}
+function logPartialPushBanner() {
+  logWarn(
+    import_chalk4.default.yellow(
+      `[push] Pushing PARTIAL dev-stable dependency snapshot(s) \u2014 only what the browser actually loaded.`
+    )
+  );
+  logWarn(
+    import_chalk4.default.dim(
+      `       Experimental DX path: hydrate may miss deps that were not loaded during this dev session.`
+    )
+  );
+}
+function detectPackageManager(cwd) {
+  if (import_fs36.default.existsSync(import_path38.default.join(cwd, "pnpm-lock.yaml"))) return "pnpm";
+  if (import_fs36.default.existsSync(import_path38.default.join(cwd, "yarn.lock"))) return "yarn";
+  if (import_fs36.default.existsSync(import_path38.default.join(cwd, "bun.lockb"))) return "bun";
+  return "npm";
+}
+function readPackageScripts(rootDir) {
+  try {
+    const raw = import_fs36.default.readFileSync(import_path38.default.join(rootDir, "package.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && parsed.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {};
+  } catch {
+    return {};
+  }
+}
+function detectDevCommand(rootDir) {
+  const pm = detectPackageManager(rootDir);
+  const scripts = readPackageScripts(rootDir);
+  const preferredScript = typeof scripts.start === "string" ? "start" : typeof scripts.dev === "string" ? "dev" : null;
+  if (preferredScript) {
+    const args = pm === "npm" ? ["run", preferredScript] : pm === "bun" ? ["run", preferredScript] : [preferredScript];
+    return {
+      command: pm,
+      args,
+      label: `${pm} ${args.join(" ")}`
+    };
+  }
+  return {
+    command: "ionify",
+    args: ["dev"],
+    label: "ionify dev"
+  };
+}
+async function runDevInteractiveAndWait(rootDir) {
+  const { spawn: spawn2 } = await import("child_process");
+  const devCommand = detectDevCommand(rootDir);
+  logInfo("");
+  logInfo(import_chalk4.default.cyan.bold(`\u25B6 Launching \`${devCommand.label}\`\u2026`));
+  logInfo(import_chalk4.default.dim(`  Render your app in the browser, then press Ctrl+C to return to push.`));
+  logInfo("");
+  return new Promise((resolve) => {
+    const child = spawn2(devCommand.command, devCommand.args, { stdio: "inherit", cwd: rootDir, shell: false });
+    const onParentSigint = () => {
+      try {
+        child.kill("SIGINT");
+      } catch {
+      }
+    };
+    process.on("SIGINT", onParentSigint);
+    child.on("exit", () => {
+      process.removeListener("SIGINT", onParentSigint);
+      logInfo("");
+      logInfo(import_chalk4.default.dim(`\u25C0 Dev session ended \u2014 re-checking for snapshot\u2026`));
+      logInfo("");
+      resolve();
+    });
+    child.on("error", (err) => {
+      process.removeListener("SIGINT", onParentSigint);
+      logWarn(import_chalk4.default.yellow(`[push] Failed to launch \`${devCommand.label}\`: ${String(err)}`));
+      resolve();
+    });
+  });
+}
+
+// src/cli/commands/hydrate.ts
+init_cjs_shims();
+var import_fs37 = __toESM(require("fs"), 1);
+var import_path39 = __toESM(require("path"), 1);
+init_config();
+init_cloud_auth();
+init_workspace();
+init_native();
+init_logger();
+init_env();
+var DEPS_OPTIMIZER_OUTPUT_VERSION6 = getDepsOptimizerOutputVersion();
+var EMPTY_PROJECT_ID2 = "00000000-0000-0000-0000-000000000000";
+function createConcurrencyLimiter2(limit) {
+  let running = 0;
+  const queue = [];
+  function next() {
+    if (running >= limit || queue.length === 0) return;
+    running++;
+    const fn = queue.shift();
+    fn();
+  }
+  return function run(task) {
+    return new Promise((resolve, reject) => {
+      queue.push(() => {
+        task().then((val) => {
+          running--;
+          resolve(val);
+          next();
+        }).catch((err) => {
+          running--;
+          reject(err);
+          next();
+        });
+      });
+      next();
+    });
+  };
+}
+async function runHydrateCommand(options = {}) {
+  const doBoth = !options.tier1 && !options.tier2;
+  const doTier1 = doBoth || !!options.tier1;
+  const doTier2 = doBoth || !!options.tier2;
+  const config = await loadIonifyConfig();
+  const cloud = config?.cloud;
+  const profile = resolveCloudProfile();
+  const cwd = process.cwd();
+  const rootDir = config?.root ? import_path39.default.resolve(cwd, config.root) : cwd;
+  loadEnv(process.env.MODE, rootDir);
+  const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
+  const resolvedBinding = resolveProjectBinding(workspace);
+  const configuredProjectId = cloud?.projectId === EMPTY_PROJECT_ID2 ? void 0 : cloud?.projectId;
+  const binding = assertValidProjectBinding(resolvedBinding, "hydrate", configuredProjectId);
+  const bindingWarn = resolvedBinding ? bindingWarning(resolvedBinding) : null;
+  if (bindingWarn) logWarn(bindingWarn);
+  const projectId = binding.projectId;
+  const apiUrl = binding.apiUrl ?? profile?.apiUrl ?? cloud?.apiUrl ?? "https://api.ionify.cloud";
+  if (!projectId) {
+    logError(
+      "hydrate: cloud project is not configured.\n  Run `ionify bind --project <project-id>` from the project root."
+    );
+    process.exit(1);
+  }
+  const token = resolveCloudToken();
+  if (!token) {
+    logError(
+      "hydrate: no cloud token found.\n  Set IONIFY_CLOUD_TOKEN env var (CI/CD) or run `ionify login` (developer machine)."
+    );
+    process.exit(1);
+  }
+  const concurrency = options.concurrency ?? cloud?.uploadConcurrency ?? 8;
+  const client = new CloudClient({ apiUrl, token, projectId, binding });
+  let cloudHydrationBlocked = false;
+  let quotaSkipLogged = false;
+  const reportHydrateQuotaSkip = (action, err) => {
+    if (!quotaSkipLogged) {
+      quotaSkipLogged = true;
+      logHydrateQuotaSkip(action, err);
+    }
+    cloudHydrationBlocked = true;
+  };
+  const ionifyDir = workspace.ionifyDir;
+  const targets = [];
+  let configHashForTier1 = null;
+  const envHandoff = process.env.IONIFY_DEPS_HASH && process.env.IONIFY_CONFIG_HASH && (process.env.IONIFY_NODE_ENV === "development" || process.env.IONIFY_NODE_ENV === "production") ? process.env.IONIFY_NODE_ENV : null;
+  if (envHandoff) {
+    const depsHash = process.env.IONIFY_DEPS_HASH;
+    const configHash = process.env.IONIFY_CONFIG_HASH;
+    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? import_path39.default.join(ionifyDir, "deps", depsHash);
+    targets.push({ nodeEnv: envHandoff, depsHash, configHash, depsRoot });
+    configHashForTier1 = configHash;
+    logInfo(`[hydrate] Using handoff from build: env=${envHandoff} depsHash=${depsHash}`);
+    logInfo(`[hydrate] Using configHash from env: ${configHash}`);
+  } else {
+    const envFromNode = readNodeEnv();
+    const envsToProbe = options.env ? [options.env] : envFromNode ? [envFromNode] : [...NODE_ENV_TAGS];
+    if (!options.env && !envFromNode) {
+      logInfo(
+        `[hydrate] No --env or NODE_ENV; probing all envs: ${envsToProbe.join(", ")}.`
+      );
+    }
+    for (const nodeEnv of envsToProbe) {
+      const { depsHash, configHash } = await computeDepsHashFromConfig(
+        config,
+        workspace,
+        rootDir,
+        nodeEnv
+      );
+      configHashForTier1 = configHash;
+      const depsRoot = import_path39.default.join(ionifyDir, "deps", depsHash);
+      targets.push({ nodeEnv, depsHash, configHash, depsRoot });
+      logInfo(`[hydrate] env=${nodeEnv} depsHash=${depsHash}`);
+    }
+  }
+  if (doTier2) {
+    let alreadyVerified = 0;
+    let downloadedSessions = 0;
+    let missingSessions = 0;
+    for (const target of targets) {
+      if (cloudHydrationBlocked) break;
+      const verifiedSentinel = import_path39.default.join(target.depsRoot, ".verified");
+      if (import_fs37.default.existsSync(verifiedSentinel)) {
+        logInfo(
+          `[hydrate] env=${target.nodeEnv}: deps already verified locally (depsHash=${target.depsHash}). Skipping Tier-2.`
+        );
+        alreadyVerified++;
+        continue;
+      }
+      const ok = await hydrateTier2ForTarget(client, target, concurrency);
+      if (ok === "downloaded") downloadedSessions++;
+      else if (ok === "missing") missingSessions++;
+    }
+    if (targets.length > 1 && !cloudHydrationBlocked) {
+      logInfo(
+        `[hydrate] Tier-2 summary: ${alreadyVerified} already verified, ${downloadedSessions} downloaded, ${missingSessions} no committed session.`
+      );
+    }
+  }
+  if (doTier1 && configHashForTier1) {
+    if (cloudHydrationBlocked) return;
+    const namespace = options.namespace ?? cloud?.namespace ?? await resolveGitBranchForHydrate() ?? null;
+    if (!namespace) {
+      logWarn(
+        "[hydrate:tier1] Skipping Tier-1 \u2014 no namespace available.\n  Set cloud.namespace in ionify.config.ts, use --namespace flag,\n  or ensure you are on a named git branch."
+      );
+    } else {
+      await hydrateTier1(client, ionifyDir, configHashForTier1, namespace, concurrency);
+    }
+  }
+  async function hydrateTier2ForTarget(client2, target, concurrency2) {
+    const optimizerVersion = String(DEPS_OPTIMIZER_OUTPUT_VERSION6);
+    logInfo(
+      `[hydrate] Looking up cloud CDC session (env=${target.nodeEnv} depsHash=${target.depsHash})\u2026`
+    );
+    let session;
+    try {
+      session = await client2.lookupSession(target.depsHash, optimizerVersion, target.nodeEnv);
+    } catch (err) {
+      if (err instanceof CloudUnreachableError) {
+        logWarn(
+          `[hydrate] ${err.message}
+  Proceeding without Tier-2 hydration \u2014 optimizer will run locally.`
+        );
+        return "failed";
+      }
+      if (isCloudQuotaError(err)) {
+        reportHydrateQuotaSkip("lookup dependency session", err);
+        return "failed";
+      }
+      throw err;
+    }
+    if (!session) {
+      logInfo(
+        `[hydrate] env=${target.nodeEnv}: no committed CDC session for depsHash=${target.depsHash}.`
+      );
+      return "missing";
+    }
+    if (session.status !== "committed") {
+      logInfo(
+        `[hydrate] env=${target.nodeEnv}: session status is "${session.status}" (not committed).`
+      );
+      return "missing";
+    }
+    logInfo(
+      `[hydrate] env=${target.nodeEnv}: found session ${session.session_id} with ${session.artifact_count} artifact(s). Downloading\u2026`
+    );
+    import_fs37.default.mkdirSync(target.depsRoot, { recursive: true });
+    const limit = createConcurrencyLimiter2(concurrency2);
+    let downloaded = 0;
+    let failed = 0;
+    await Promise.all(
+      session.artifacts.map(
+        (artifact) => limit(async () => {
+          const { cache_key } = artifact;
+          const localFilename = cache_key.split(":").slice(3).join(":");
+          const destPath = import_path39.default.join(target.depsRoot, localFilename);
+          if (import_fs37.default.existsSync(destPath)) {
+            downloaded++;
+            return;
+          }
+          try {
+            const bytes = await client2.downloadArtifact(
+              session.session_id,
+              artifact.artifact_type,
+              cache_key
+            );
+            const tmpPath = destPath + ".tmp";
+            import_fs37.default.writeFileSync(tmpPath, bytes);
+            import_fs37.default.renameSync(tmpPath, destPath);
+            downloaded++;
+            if (downloaded % 50 === 0) {
+              logInfo(
+                `[hydrate] env=${target.nodeEnv}: ${downloaded}/${session.artifact_count} downloaded\u2026`
+              );
+            }
+          } catch (err) {
+            failed++;
+            if (isCloudQuotaError(err)) {
+              reportHydrateQuotaSkip("download dependency artifact", err);
+              return;
+            }
+            logWarn(
+              `[hydrate] Failed to download ${cache_key}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        })
+      )
+    );
+    if (failed > 0) {
+      logWarn(
+        `[hydrate] env=${target.nodeEnv}: ${failed} artifact(s) failed. Cleaning up partial state.`
+      );
+      cleanupPartialHydration(target.depsRoot);
+      logWarn(`[hydrate] env=${target.nodeEnv}: will run deps optimizer locally.`);
+      return "failed";
+    }
+    import_fs37.default.writeFileSync(
+      import_path39.default.join(target.depsRoot, ".verified"),
+      (/* @__PURE__ */ new Date()).toISOString() + "\n",
+      "utf8"
+    );
+    logInfo(
+      `[hydrate] env=${target.nodeEnv}: Tier-2 done. ${downloaded} artifact(s) restored (depsHash=${target.depsHash}).`
+    );
+    return "downloaded";
+  }
+}
+async function computeDepsHashFromConfig(config, workspace, rootDir, nodeEnv) {
+  const identity = await computeStandaloneDepsIdentity(config, workspace, rootDir, nodeEnv);
+  const configHash = identity.configHash;
+  logInfo(`[hydrate] Computed configHash: ${configHash}`);
+  return identity;
+}
+async function hydrateTier1(client, ionifyDir, configHash, namespace, concurrency) {
+  logInfo(`[hydrate:tier1] Looking up namespace "${namespace}"\u2026`);
+  let manifestHash;
+  try {
+    const ns = await client.getNamespace("branch", namespace);
+    if (!ns.current_manifest_hash) {
+      logInfo(`[hydrate:tier1] Namespace "${namespace}" has no manifest yet. Nothing to hydrate.`);
+      return;
+    }
+    manifestHash = ns.current_manifest_hash;
+    logInfo(`[hydrate:tier1] Found manifest ${manifestHash.slice(0, 12)}\u2026 (ns version ${ns.version})`);
+  } catch (err) {
+    if (err instanceof CloudApiError && err.statusCode === 404) {
+      logInfo(`[hydrate:tier1] Namespace "${namespace}" not found. Nothing to hydrate.`);
+      return;
+    }
+    if (err instanceof CloudUnreachableError) {
+      logWarn(`[hydrate:tier1] ${err.message}  Skipping Tier-1 hydration.`);
+      return;
+    }
+    if (isCloudQuotaError(err)) {
+      logHydrateQuotaSkip("lookup namespace", err);
+      return;
+    }
+    throw err;
+  }
+  let manifest;
+  try {
+    manifest = await client.getManifest(manifestHash);
+  } catch (err) {
+    if (err instanceof CloudUnreachableError) {
+      logWarn(`[hydrate:tier1] ${err.message}  Skipping Tier-1 hydration.`);
+      return;
+    }
+    if (isCloudQuotaError(err)) {
+      logHydrateQuotaSkip("download manifest", err);
+      return;
+    }
+    throw err;
+  }
+  const casRoot = import_path39.default.join(ionifyDir, "cas");
+  const entries = manifest.entries.filter((e) => e.artifact_type === "source_transform");
+  logInfo(`[hydrate:tier1] ${entries.length} source transform(s) to hydrate.`);
+  if (entries.length === 0) return;
+  const limit = createConcurrencyLimiter2(concurrency);
+  let hydrated = 0;
+  let skipped = 0;
+  let failed = 0;
+  let quotaLogged = false;
+  await Promise.all(
+    entries.map(
+      (entry) => limit(async () => {
+        const casDir = import_path39.default.join(casRoot, entry.config_hash, entry.artifact_hash);
+        const destPath = import_path39.default.join(casDir, "transformed.js");
+        if (import_fs37.default.existsSync(destPath)) {
+          skipped++;
+          return;
+        }
+        try {
+          const bytes = await client.getBlobBytes(entry.blob_hash);
+          import_fs37.default.mkdirSync(casDir, { recursive: true });
+          const tmpPath = destPath + ".tmp";
+          import_fs37.default.writeFileSync(tmpPath, bytes);
+          import_fs37.default.renameSync(tmpPath, destPath);
+          hydrated++;
+        } catch (err) {
+          failed++;
+          if (isCloudQuotaError(err)) {
+            if (!quotaLogged) {
+              quotaLogged = true;
+              logHydrateQuotaSkip("download source transform", err);
+            }
+            return;
+          }
+          logWarn(
+            `[hydrate:tier1] Failed to download blob for ${entry.module_id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      })
+    )
+  );
+  if (failed > 0) {
+    logWarn(
+      `[hydrate:tier1] ${failed} blob(s) failed. Affected modules will be recompiled locally.`
+    );
+  }
+  logInfo(
+    `[hydrate:tier1] Done. ${hydrated} downloaded, ${skipped} already cached. Build will use warm CAS for these modules.`
+  );
+}
+async function resolveGitBranchForHydrate() {
+  try {
+    const { execSync } = await import("child_process");
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    if (!branch || branch === "HEAD") return null;
+    return branch;
+  } catch {
+    return null;
+  }
+}
+function logHydrateQuotaSkip(action, err) {
+  const details = quotaDetails(err);
+  const message = formatCloudQuotaError("Hydrate", action, err).replace(
+    /^Hydrate stopped:/,
+    "Hydrate skipped:"
+  );
+  logWarn(
+    message + "\n  Local  : no local files were changed; existing local artifacts remain usable.\n  Hydrate: skipping cloud hydration; local build/push can continue from local artifacts."
+  );
+  if (details.kind !== "monthly_read_ops") {
+    logWarn("[hydrate] Non-read quota reached during hydration; this may indicate a cloud endpoint classification issue.");
+  }
+}
+function cleanupPartialHydration(depsRoot) {
+  try {
+    const files = import_fs37.default.readdirSync(depsRoot);
+    for (const file of files) {
+      import_fs37.default.rmSync(import_path39.default.join(depsRoot, file), { force: true });
+    }
+  } catch {
+  }
+}
+
+// src/cli/index.ts
+init_login();
+
+// src/cli/commands/bind.ts
+init_cjs_shims();
+var import_path40 = __toESM(require("path"), 1);
+init_config();
+init_cloud_auth();
+init_logger();
+init_workspace();
+async function runBindCommand(options = {}) {
+  const projectId = options.projectId?.trim();
+  if (!projectId) {
+    logError("bind: --project <project-id> is required.");
+    process.exit(1);
+  }
+  const config = await loadIonifyConfig();
+  const cloud = config?.cloud;
+  const profile = resolveCloudProfile();
+  const apiUrl = options.apiUrl?.trim() || profile?.apiUrl || cloud?.apiUrl || "https://api.ionify.cloud";
+  const token = resolveCloudToken();
+  if (!token) {
+    logError(
+      "bind: no cloud token found.\n  Run `ionify login --token <token>` first, or set IONIFY_CLOUD_TOKEN for CI."
+    );
+    process.exit(1);
+  }
+  await verifyProjectAccess(apiUrl, token, projectId);
+  const cwd = process.cwd();
+  const rootDir = config?.root ? import_path40.default.resolve(cwd, config.root) : cwd;
+  const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
+  let binding;
+  try {
+    binding = bindProject(workspace, {
+      projectId,
+      apiUrl,
+      projectSlug: options.slug,
+      allowLocal: !!options.allowLocal
+    });
+  } catch (err) {
+    logError(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+  logInfo("\u2713 Project binding saved to ~/.ionify/bindings.json");
+  logInfo(`  project_id   : ${binding.projectId}`);
+  logInfo(`  api_url      : ${apiUrl}`);
+  logInfo(`  project_slug : ${binding.projectSlug}`);
+  logInfo(`  binding_type : ${binding.bindingType}`);
+  if (binding.fingerprint) logInfo(`  fingerprint  : ${binding.fingerprint.slice(0, 16)}\u2026`);
+  const warning = bindingWarning({ binding, context: resolveBindingContext(workspace, { projectSlug: binding.projectSlug }) });
+  if (warning) logWarn(warning);
+}
+async function verifyProjectAccess(apiUrl, token, projectId) {
+  logInfo("Verifying project access\u2026");
+  const client = new CloudClient({ apiUrl, token, projectId });
+  try {
+    await client._request("GET", `/v1/usage?project_id=${projectId}`, null, {});
+  } catch (err) {
+    if (err instanceof CloudUnreachableError) {
+      logError(`bind: ${err.message}`);
+      process.exit(1);
+    }
+    if (err instanceof CloudApiError && (err.statusCode === 401 || err.statusCode === 403)) {
+      logError("bind: token is invalid or does not have access to this project.");
+      process.exit(1);
+    }
+  }
+}
+
+// src/cli/commands/status.ts
+init_cjs_shims();
+var import_path41 = __toESM(require("path"), 1);
+init_config();
+init_cloud_auth();
+init_logger();
+init_workspace();
+var EMPTY_PROJECT_ID3 = "00000000-0000-0000-0000-000000000000";
+async function runStatusCommand(options = {}) {
+  const config = await loadIonifyConfig();
+  const cloud = config?.cloud;
+  const profile = resolveCloudProfile();
+  const token = resolveCloudToken();
+  const cwd = process.cwd();
+  const rootDir = config?.root ? import_path41.default.resolve(cwd, config.root) : cwd;
+  const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
+  const resolvedBinding = resolveProjectBinding(workspace);
+  const binding = resolvedBinding?.binding ?? null;
+  const bindingWarn = resolvedBinding ? bindingWarning(resolvedBinding) : null;
+  const configuredProjectId = cloud?.projectId === EMPTY_PROJECT_ID3 ? void 0 : cloud?.projectId;
+  const apiUrl = binding?.apiUrl ?? profile?.apiUrl ?? cloud?.apiUrl ?? "https://api.ionify.cloud";
+  const projectId = binding?.projectId ?? configuredProjectId ?? null;
+  let cloudState = "not_checked";
+  let cloudMessage = null;
+  let usage = null;
+  if (token && projectId) {
+    const client = new CloudClient({
+      apiUrl,
+      token,
+      projectId,
+      binding: binding ?? void 0
+    });
+    try {
+      usage = await client.getUsage();
+      cloudState = "reachable";
+    } catch (err) {
+      if (err instanceof CloudUnreachableError) {
+        cloudState = "unreachable";
+        cloudMessage = err.message;
+      } else if (err instanceof CloudApiError && (err.statusCode === 401 || err.statusCode === 403)) {
+        cloudState = "unauthorized";
+        cloudMessage = `Cloud API rejected the token for project ${projectId}.`;
+      } else if (err instanceof Error) {
+        cloudState = "error";
+        cloudMessage = err.message;
+      } else {
+        cloudState = "error";
+        cloudMessage = String(err);
+      }
+    }
+  }
+  const payload = {
+    cwd,
+    apiUrl,
+    hasToken: Boolean(token),
+    tokenSource: process.env.IONIFY_CLOUD_TOKEN ? "IONIFY_CLOUD_TOKEN" : token ? "~/.ionify/credentials.json" : null,
+    projectId,
+    configuredProjectId: configuredProjectId ?? null,
+    binding: binding ? {
+      projectId: binding.projectId,
+      projectSlug: binding.projectSlug,
+      bindingType: binding.bindingType,
+      fingerprint: binding.fingerprint,
+      normalizedRemote: binding.normalizedRemote,
+      workspaceRelPath: binding.workspaceRelPath,
+      localProjectRelPath: binding.localProjectRelPath,
+      createdAt: binding.createdAt,
+      updatedAt: binding.updatedAt
+    } : null,
+    bindingWarning: bindingWarn,
+    cloud: {
+      state: cloudState,
+      message: cloudMessage,
+      usage
+    }
+  };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}
+`);
+    return;
+  }
+  logInfo("Ionify Cloud status");
+  logInfo(`  cwd          : ${cwd}`);
+  logInfo(`  api_url      : ${apiUrl}`);
+  logInfo(`  token        : ${payload.hasToken ? `found (${payload.tokenSource})` : "missing"}`);
+  logInfo(`  project_id   : ${projectId ?? "not bound"}`);
+  if (configuredProjectId && binding && configuredProjectId !== binding.projectId) {
+    logWarn(`config project_id differs from binding: ${configuredProjectId}`);
+  }
+  if (binding) {
+    logInfo(`  binding      : ${binding.bindingType}`);
+    logInfo(`  project_slug : ${binding.projectSlug}`);
+    logInfo(`  workspace    : ${binding.workspaceRelPath}`);
+    if (binding.normalizedRemote) logInfo(`  git_remote   : ${binding.normalizedRemote}`);
+    if (binding.fingerprint) logInfo(`  fingerprint  : ${binding.fingerprint.slice(0, 16)}\u2026`);
+    if (bindingWarn) logWarn(bindingWarn);
+  } else {
+    logWarn("No project binding found. Run `ionify bind --project <project-id>` from this project root.");
+  }
+  if (!token) {
+    logWarn("Cloud check skipped: no token found. Run `ionify login --token <token>`.");
+  } else if (!projectId) {
+    logWarn("Cloud check skipped: no project binding found.");
+  } else if (cloudState === "reachable") {
+    logInfo("  cloud        : reachable");
+  } else {
+    logError(`  cloud        : ${cloudState}${cloudMessage ? ` \u2014 ${cloudMessage}` : ""}`);
+  }
+}
+
+// src/cli/commands/migrate.ts
+init_cjs_shims();
+var import_fs38 = __toESM(require("fs"), 1);
+var import_path42 = __toESM(require("path"), 1);
+init_logger();
+init_native();
+var VITE_CONFIG_NAMES = [
+  "vite.config.ts",
+  "vite.config.mts",
+  "vite.config.cts",
+  "vite.config.js",
+  "vite.config.mjs",
+  "vite.config.cjs"
+];
+async function runMigrateCommand(options = {}) {
+  const cwd = options.cwd ? import_path42.default.resolve(options.cwd) : process.cwd();
+  const report = [];
+  const viteConfigPath = VITE_CONFIG_NAMES.map((name) => import_path42.default.join(cwd, name)).find((p) => import_fs38.default.existsSync(p)) ?? null;
+  const pkgPath = import_path42.default.join(cwd, "package.json");
+  const pkg = readJson2(pkgPath);
+  const hasViteDep = !!(pkg && (pkg.dependencies && pkg.dependencies.vite || pkg.devDependencies && pkg.devDependencies.vite));
+  if (!viteConfigPath && !hasViteDep) {
+    logError(
+      "No Vite project detected here (no vite.config.* and no `vite` dependency). Run `ionify migrate` from the project root."
+    );
+    process.exit(1);
+  }
+  const ionifyConfigOut = import_path42.default.join(cwd, "ionify.config.ts");
+  if (import_fs38.default.existsSync(ionifyConfigOut) && !options.force) {
+    logError(
+      "ionify.config.ts already exists. Re-run with --force to overwrite (a .bak copy is kept)."
+    );
+    process.exit(1);
+  }
+  logInfo(`Migrating Vite \u2192 Ionify in ${cwd}`);
+  let viteConfig = {};
+  if (viteConfigPath) {
+    try {
+      viteConfig = await loadViteConfig(viteConfigPath, cwd);
+      logInfo(`Resolved ${import_path42.default.basename(viteConfigPath)}`);
+    } catch (err) {
+      logWarn(
+        `Could not execute ${import_path42.default.basename(viteConfigPath)} (${String(
+          err?.message ?? err
+        )}); using best-effort static parse.`
+      );
+      report.push(
+        `\u26A0 The Vite config could not be executed; values were extracted by static parse. Review the generated ionify.config.ts against ${import_path42.default.basename(viteConfigPath)}.`
+      );
+      viteConfig = staticParseViteConfig(import_fs38.default.readFileSync(viteConfigPath, "utf8"));
+    }
+  } else {
+    report.push("\u26A0 No vite.config.* found \u2014 generated a minimal ionify.config.ts from package.json.");
+  }
+  const { ionifyConfig, notes } = mapViteToIonify(viteConfig, cwd);
+  report.push(...notes);
+  if (import_fs38.default.existsSync(ionifyConfigOut)) backupFile(ionifyConfigOut);
+  import_fs38.default.writeFileSync(ionifyConfigOut, serializeIonifyConfig(ionifyConfig), "utf8");
+  logInfo("Wrote ionify.config.ts");
+  if (viteConfigPath) {
+    backupFile(viteConfigPath);
+    report.push(`\u2022 Backed up ${import_path42.default.basename(viteConfigPath)} \u2192 ${import_path42.default.basename(viteConfigPath)}.bak`);
+  }
+  if (pkg) {
+    backupFile(pkgPath);
+    report.push(...updatePackageJson(pkg, pkgPath));
+    logInfo("Updated package.json scripts + added `ionify` devDependency (vite left installed)");
+  }
+  writeReport(cwd, viteConfigPath, ionifyConfig, report);
+  logInfo("");
+  logInfo("\u2705 Migration complete.");
+  logInfo("   1. Install Ionify:  npm install   (or pnpm/yarn install)");
+  logInfo("   2. Start dev:       ionify dev");
+  logInfo("   3. Review MIGRATION_REPORT.md for anything that needs manual attention.");
+}
+async function loadViteConfig(configPath, cwd) {
+  const ext = import_path42.default.extname(configPath).toLowerCase();
+  let importUrl;
+  let tmpFile = null;
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
+    importUrl = `file://${configPath}`;
+  } else {
+    const source = import_fs38.default.readFileSync(configPath, "utf8");
+    const code = transpileConfigToEsm(source, configPath);
+    tmpFile = import_path42.default.join(import_path42.default.dirname(configPath), `.ionify-migrate.${Date.now()}.mjs`);
+    import_fs38.default.writeFileSync(tmpFile, code, "utf8");
+    importUrl = `file://${tmpFile}`;
+  }
+  try {
+    const mod = await import(importUrl);
+    let cfg = mod.default ?? mod;
+    if (typeof cfg === "function") {
+      cfg = await cfg({
+        command: "build",
+        mode: "production",
+        isSsrBuild: false,
+        isPreview: false,
+        ssrBuild: false
+      });
+    }
+    cfg = await cfg;
+    return cfg && typeof cfg === "object" ? cfg : {};
+  } finally {
+    if (tmpFile) {
+      try {
+        import_fs38.default.rmSync(tmpFile, { force: true });
+      } catch {
+      }
+    }
+  }
+}
+function transpileConfigToEsm(source, filename) {
+  let code = null;
+  const native2 = tryNativeTransform("swc", source, { filename, typescript: true, jsx: false });
+  if (native2?.code) {
+    code = native2.code;
+  } else {
+    try {
+      const swc2 = require("@swc/core");
+      code = swc2.transformSync(source, {
+        filename,
+        jsc: { parser: { syntax: "typescript", tsx: false }, target: "es2022" },
+        module: { type: "es6" },
+        sourceMaps: false
+      }).code;
+    } catch (err) {
+      throw new Error(`native transform unavailable and @swc/core fallback failed: ${String(err)}`);
+    }
+  }
+  const usesDirname = /\b__dirname\b/.test(source) || /\b__filename\b/.test(source);
+  const declaresDirname = /\b(?:const|let|var)\s+__(?:dir|file)name\b/.test(source);
+  if (usesDirname && !declaresDirname) {
+    const shim = `import { fileURLToPath as __ionifyFileURLToPath } from "url";
+import { dirname as __ionifyDirname } from "path";
+const __filename = __ionifyFileURLToPath(import.meta.url);
+const __dirname = __ionifyDirname(__filename);
+`;
+    code = shim + code;
+  }
+  return code;
+}
+function staticParseViteConfig(source) {
+  const out = {};
+  const baseMatch = source.match(/\bbase\s*:\s*["'`]([^"'`]+)["'`]/);
+  if (baseMatch) out.base = baseMatch[1];
+  const portMatch = source.match(/\bport\s*:\s*(\d+)/);
+  const outDirMatch = source.match(/\boutDir\s*:\s*["'`]([^"'`]+)["'`]/);
+  if (portMatch) out.server = { port: Number(portMatch[1]) };
+  if (outDirMatch) out.build = { outDir: outDirMatch[1] };
+  return out;
+}
+function mapViteToIonify(vite, cwd) {
+  const out = {
+    productionArtifactPublishing: "auto"
+  };
+  const notes = [
+    "\u2022 Enabled Production Publishing in auto mode; set productionArtifactPublishing: false to opt out."
+  ];
+  const v = (k) => vite[k];
+  const alias = v("resolve")?.alias;
+  const aliasObj = {};
+  if (Array.isArray(alias)) {
+    for (const entry of alias) {
+      if (entry && typeof entry.find === "string" && typeof entry.replacement === "string") {
+        aliasObj[entry.find] = toRootRelative(entry.replacement, cwd);
+      }
+    }
+  } else if (alias && typeof alias === "object") {
+    for (const [k, val] of Object.entries(alias)) {
+      if (typeof val === "string") aliasObj[k] = toRootRelative(val, cwd);
+    }
+  }
+  if (Object.keys(aliasObj).length) out.resolve = { alias: aliasObj };
+  const server = {};
+  const vServer = v("server");
+  if (typeof vServer?.port === "number") server.port = vServer.port;
+  if (typeof vServer?.host === "string") server.host = vServer.host;
+  else if (vServer?.host === true) server.host = "0.0.0.0";
+  if (vServer?.https) {
+    server.https = true;
+    notes.push("\u2022 server.https \u2192 `true`. If you used custom cert/key, set them in Ionify's server.https config.");
+  }
+  if (vServer?.cors !== void 0) server.cors = !!vServer.cors;
+  if (vServer?.proxy) {
+    notes.push("\u26A0 server.proxy is set in Vite \u2014 Ionify's dev proxy is configured differently. Port it manually.");
+  }
+  if (Object.keys(server).length) out.server = server;
+  const build2 = {};
+  const vBuild = v("build");
+  if (typeof vBuild?.outDir === "string") build2.outDir = vBuild.outDir;
+  if (typeof vBuild?.sourcemap === "boolean") build2.sourcemap = vBuild.sourcemap;
+  if (vBuild?.minify !== void 0) build2.minify = vBuild.minify !== false;
+  if (typeof vBuild?.target === "string") build2.target = vBuild.target;
+  if (Object.keys(build2).length) out.build = build2;
+  const vCss = v("css");
+  if (vCss) {
+    const css = {};
+    if (vCss.modules) css.modules = vCss.modules === true ? {} : vCss.modules;
+    if (typeof vCss.postcss === "string") css.postcss = vCss.postcss;
+    if (Object.keys(css).length) out.css = css;
+    if (vCss.preprocessorOptions) {
+      notes.push("\u26A0 css.preprocessorOptions (Sass/Less) present \u2014 verify under Ionify css config.");
+    }
+  }
+  if (vite.define && typeof vite.define === "object") out.define = vite.define;
+  if (vite.envPrefix) out.envPrefix = vite.envPrefix;
+  if (typeof vite.base === "string" && vite.base !== "/") out.base = vite.base;
+  if (typeof vite.publicDir === "string") out.publicDir = toRootRelative(vite.publicDir, cwd);
+  else if (vite.publicDir === false) out.publicDir = false;
+  const plugins = Array.isArray(vite.plugins) ? vite.plugins.flat(Infinity) : [];
+  for (const p of plugins) {
+    const name = pluginName(p);
+    if (!name) continue;
+    if (/(^|[^a-z])react([^a-z]|$)/i.test(name)) {
+      notes.push(`\u2022 Plugin "${name}" \u2192 Ionify has built-in React + Fast Refresh; no plugin needed.`);
+    } else {
+      notes.push(`\u26A0 Plugin "${name}" is not auto-mapped \u2014 check whether Ionify covers it natively.`);
+    }
+  }
+  return { ionifyConfig: out, notes };
+}
+function pluginName(plugin) {
+  if (!plugin) return null;
+  if (Array.isArray(plugin)) {
+    for (const p of plugin) {
+      const n = pluginName(p);
+      if (n) return n;
+    }
+    return null;
+  }
+  if (typeof plugin === "object" && typeof plugin.name === "string") {
+    return plugin.name;
+  }
+  return null;
+}
+function toRootRelative(p, cwd) {
+  if (!import_path42.default.isAbsolute(p)) {
+    return "/" + p.replace(/^\.\//, "").replace(/^\/+/, "");
+  }
+  const rel = import_path42.default.relative(cwd, p);
+  if (rel.startsWith("..")) return p;
+  return "/" + rel.split(import_path42.default.sep).join("/");
+}
+function updatePackageJson(pkg, pkgPath) {
+  const notes = [];
+  pkg.scripts = pkg.scripts || {};
+  for (const [name, raw] of Object.entries(pkg.scripts)) {
+    if (typeof raw !== "string") continue;
+    if (/\bvite\s+preview\b/.test(raw)) {
+      notes.push(
+        `\u2022 Script "${name}" runs \`vite preview\` \u2014 Ionify has no preview server; serve the build output with any static file server.`
+      );
+      continue;
+    }
+    const next = raw.replace(/\bvite\s+build\b/g, "ionify build").replace(/\bvite\s+optimize\b/g, "ionify build").replace(/(^|\s)vite(\s|$)/g, "$1ionify dev$2").trimEnd();
+    if (next !== raw) pkg.scripts[name] = next;
+  }
+  pkg.devDependencies = pkg.devDependencies || {};
+  const hasIonify = pkg.dependencies && pkg.dependencies.ionify || pkg.devDependencies.ionify;
+  if (!hasIonify) {
+    pkg.devDependencies.ionify = "latest";
+    notes.push("\u2022 Added `ionify@latest` to devDependencies \u2014 run your package manager's install.");
+  }
+  import_fs38.default.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+  notes.push("\u2022 package.json scripts rewritten (vite \u2192 ionify); original saved as package.json.bak.");
+  return notes;
+}
+function serializeIonifyConfig(config) {
+  const body = Object.keys(config).length ? JSON.stringify(config, null, 2) : "{}";
+  return `import { defineConfig } from "ionify";
+
+// Generated by \`ionify migrate\`. Review against your previous vite.config.
+export default defineConfig(${body});
+`;
+}
+function writeReport(cwd, viteConfigPath, ionifyConfig, notes) {
+  const lines = [];
+  lines.push("# Ionify Migration Report", "");
+  lines.push(`Migrated from: \`${viteConfigPath ? import_path42.default.basename(viteConfigPath) : "(no vite.config)"}\``);
+  lines.push("Generated: `ionify.config.ts` + updated `package.json` scripts", "");
+  lines.push("## Mapped configuration", "");
+  lines.push("```ts");
+  lines.push(serializeIonifyConfig(ionifyConfig).trim());
+  lines.push("```", "");
+  lines.push("## Notes & manual steps", "");
+  if (notes.length === 0) {
+    lines.push("- Nothing flagged \u2014 a clean, fully-mapped migration. \u{1F389}");
+  } else {
+    for (const n of notes) lines.push(`- ${n.replace(/^[•\s]+/, "")}`);
+  }
+  lines.push("", "## Runtime compatibility (already handled by Ionify)", "");
+  lines.push("- `.env` files load in Vite order; `%VITE_*%` placeholders in `index.html` are substituted.");
+  lines.push("- `index.html` is the entry document as in Vite \u2014 no change needed.");
+  lines.push("- `vite` is left installed so you can revert via the `.bak` files if needed.");
+  import_fs38.default.writeFileSync(import_path42.default.join(cwd, "MIGRATION_REPORT.md"), lines.join("\n") + "\n", "utf8");
+}
+function backupFile(filePath) {
+  try {
+    import_fs38.default.copyFileSync(filePath, `${filePath}.bak`);
+  } catch {
+  }
+}
+function readJson2(filePath) {
+  try {
+    return JSON.parse(import_fs38.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// src/cli/index.ts
+if (!process.env.NODE_COMPILE_CACHE) {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  if (home) process.env.NODE_COMPILE_CACHE = home + "/.ionify/global/compile-cache";
+}
+var program = new import_commander.Command();
+function validateEnvFlag(cmd, value) {
+  if (value === "development" || value === "production") return value;
+  logError(`${cmd}: --env must be 'development' or 'production' (got '${value}')`);
+  process.exit(1);
+}
+function logPushCommandError(err) {
+  if (err instanceof CloudApiError && err.statusCode === 401) {
+    logError(formatCloudAuthError("Push"));
+    return;
+  }
+  if (err instanceof CloudApiError && err.statusCode === 429) {
+    logError(formatCloudQuotaError("Push", "cloud request", err));
+    return;
+  }
+  logError("Push failed", err);
+}
+function logHydrateCommandError(err) {
+  if (err instanceof CloudApiError && err.statusCode === 401) {
+    logError(formatCloudAuthError("Hydrate"));
+    return;
+  }
+  if (err instanceof CloudApiError && err.statusCode === 429) {
+    logError(formatCloudQuotaError("Hydrate", "cloud request", err));
+    return;
+  }
+  logError("Hydrate failed", err);
+}
+program.name("ionify").description("Ionify \u2013 Instant, Intelligent, Unified Build Engine").version("0.0.1");
+program.command("dev").description("Start Ionify development server").option("-p, --port <port>", "Port to run the server on", "5173").option("-m, --mode <mode>", "Environment mode, loads .env.<mode> file (default: development)").option("--hydrate", "Hydrate deps from Ionify Cloud CDC before starting (Tier-2)").option("--hydrate-tier1", "Also hydrate Tier-1 source transforms before starting").option("--namespace <name>", "Tier-1 namespace for hydration (overrides config.cloud.namespace)").option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt).action(async (options) => {
+  try {
+    if (options.hydrate || options.hydrateTier1) {
+      await runHydrateCommand({
+        tier1: !!options.hydrateTier1,
+        tier2: !options.hydrateTier1 || !!options.hydrate,
+        namespace: options.namespace,
+        concurrency: options.concurrency,
+        env: "development"
+      });
+    }
+    const port = parseInt(options.port, 10);
+    await startDevServer({ port, mode: options.mode });
+  } catch (err) {
+    logError("Failed to start dev server", err);
+    process.exit(1);
+  }
+});
+program.command("build").description("Create production build using Ionify bundler").option("-o, --out-dir <dir>", "Output directory", "dist").option("-m, --mode <mode>", "Environment mode, loads .env.<mode> while keeping production build semantics").option("--push", "Push artifacts to Ionify Cloud after build (Tier-1 + Tier-2 by default)").option("--tier1", "With --push: push only Tier-1 (source transforms)").option("--tier2", "With --push: push only Tier-2 (CDC deps cache)").option("--hydrate", "Hydrate Tier-2 deps from cloud before building").option("--hydrate-tier1", "Also hydrate Tier-1 source transforms before building").option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)").option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt).action(async (options) => {
+  try {
+    if (options.mode) {
+      process.env.MODE = options.mode;
+      process.env.IONIFY_MODE = options.mode;
+    }
+    if (options.hydrate || options.hydrateTier1) {
+      await runHydrateCommand({
+        tier1: !!options.hydrateTier1,
+        tier2: !options.hydrateTier1 || !!options.hydrate,
+        namespace: options.namespace,
+        concurrency: options.concurrency,
+        env: "production"
+      });
+    }
+    await runBuildCommand({ outDir: options.outDir, mode: options.mode });
+    if (options.push) {
+      await runPushCommand({
+        tier1: !!options.tier1,
+        tier2: !!options.tier2,
+        concurrency: options.concurrency,
+        namespace: options.namespace
+      });
+    }
+  } catch {
+    process.exit(1);
+  }
+});
+program.command("publish").description("Publish production contracts or artifacts into .ionify without writing build output").option("-m, --mode <mode>", "Environment mode, loads .env.<mode> while keeping production publication semantics").option("--contracts", "Publish Production Contracts (graph, plan, dependency contracts, transform artifacts)").option("--artifacts", "Publish Production Artifacts (contracts plus chunk artifacts)").addOption(new import_commander.Option("--phase <phase>", "Internal compatibility alias: A/contracts or B/artifacts").hideHelp()).action(async (options) => {
+  try {
+    await runPublishCommand({
+      mode: options.mode,
+      phase: options.phase,
+      contracts: !!options.contracts,
+      artifacts: !!options.artifacts
+    });
+  } catch {
+    process.exit(1);
+  }
+});
+program.command("push").description("Push build artifacts to Ionify Cloud (Tier-1 + Tier-2 by default)").option("--tier1", "Push only Tier-1 (source transform blobs + manifest)").option("--tier2", "Push only Tier-2 (CDC deps cache session)").option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)").option("--env <env>", "Restrict push to a single env (development|production); default: every verified env on disk").option("--concurrency <n>", "Upload concurrency", parseInt).action(async (options) => {
+  try {
+    const env = options.env ? validateEnvFlag("push", options.env) : void 0;
+    await runPushCommand({
+      tier1: !!options.tier1,
+      tier2: !!options.tier2,
+      namespace: options.namespace,
+      concurrency: options.concurrency,
+      env
+    });
+  } catch (err) {
+    logPushCommandError(err);
+    process.exit(1);
+  }
+});
+program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
+  try {
+    const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
+    const { runOptimizeAllCommand: runOptimizeAllCommand2 } = await Promise.resolve().then(() => (init_optimize_all(), optimize_all_exports));
+    await runOptimizeAllCommand2({ env });
+  } catch (err) {
+    logError("optimize-all failed", err);
+    process.exit(1);
+  }
+});
+program.command("hydrate").description("Hydrate artifacts from Ionify Cloud (Tier-1 + Tier-2 by default)").option("--tier1", "Hydrate only Tier-1 (source transform blobs from manifest)").option("--tier2", "Hydrate only Tier-2 (CDC deps cache)").option("--namespace <name>", "Tier-1 namespace name (overrides config.cloud.namespace)").option("--env <env>", "Env to hydrate (development|production); default: NODE_ENV or production").option("--concurrency <n>", "Download concurrency", parseInt).action(async (options) => {
+  try {
+    const env = options.env ? validateEnvFlag("hydrate", options.env) : void 0;
+    await runHydrateCommand({
+      tier1: !!options.tier1,
+      tier2: !!options.tier2,
+      namespace: options.namespace,
+      concurrency: options.concurrency,
+      env
+    });
+  } catch (err) {
+    logHydrateCommandError(err);
+    process.exit(1);
+  }
+});
+program.command("login").description("Log in to Ionify Cloud (auth only; project binding is separate)").option("--api <url>", "Ionify Cloud API URL").option("--token <token>", "Existing project token from the dashboard").action(async (options) => {
+  try {
+    await runLoginCommand({
+      apiUrl: options.api,
+      token: options.token
+    });
+  } catch (err) {
+    logError("Login failed", err);
+    process.exit(1);
+  }
+});
+program.command("bind").description("Bind the current folder to an Ionify Cloud project").requiredOption("--project <projectId>", "Project ID from the dashboard").option("--api <url>", "Ionify Cloud API URL").option("--slug <slug>", "Project slug/name used in the Fingerprint V1 hash").option("--allow-local", "Create a local_unverified binding when no git remote exists").action(async (options) => {
+  try {
+    await runBindCommand({
+      projectId: options.project,
+      apiUrl: options.api,
+      slug: options.slug,
+      allowLocal: !!options.allowLocal
+    });
+  } catch (err) {
+    logError("Bind failed", err);
+    process.exit(1);
+  }
+});
+program.command("status").description("Show local binding and Ionify Cloud project status").option("--json", "Print machine-readable status JSON").action(async (options) => {
+  try {
+    await runStatusCommand({ json: !!options.json });
+  } catch (err) {
+    logError("Status failed", err);
+    process.exit(1);
+  }
+});
+program.command("logout").description("Log out from Ionify Cloud").action(() => runLogoutCommand());
+program.command("whoami").description("Show current Ionify Cloud identity").action(async () => {
+  try {
+    await runWhoamiCommand();
+  } catch (err) {
+    logError("whoami failed", err);
+    process.exit(1);
+  }
+});
+program.command("migrate").description("Convert a Vite project to Ionify (config + scripts), with backups + a report").option("-f, --force", "Overwrite an existing ionify.config.ts (a .bak is kept)").option("-C, --cwd <dir>", "Project directory to migrate (defaults to current directory)").action(async (options) => {
+  try {
+    await runMigrateCommand({ cwd: options.cwd, force: !!options.force });
+  } catch (err) {
+    logError("Migration failed", err);
+    process.exit(1);
+  }
+});
+program.command("add").description("Add a copy-paste component to your project (shadcn-style, Ionify-native)").argument("[component]", "Component name, e.g. button").option("--list", "List available components").option("-d, --dir <dir>", "Target directory", "src/components/ui").option("-f, --force", "Overwrite if file exists").action(async (component, options) => {
+  try {
+    await runAddCommand(component, {
+      list: !!options.list,
+      dir: options.dir,
+      force: !!options.force
+    });
+  } catch (err) {
+    logError("Failed to add component", err);
+    process.exit(1);
+  }
+});
+program.command("analyze").description("Inspect graph, build, packs, routes, and Phase B analyzer findings").option("--json", "Output summary as JSON").option("--verbose", "Show full detailed analyzer sections after the summary").option("--section <name>", "Focus on one section: graph, build, deps, packs, routes, findings").option("-l, --limit <count>", "Limit list outputs", "10").option("--top <count>", "Alias for --limit").option("--graph", "Show graph summary").option("--tree", "Include dependency tree in graph summary").option("--deps", "Alias for --tree").option("--build", "Show build manifest/build.stats summary").option("--packs", "Show vendor-pack summary").option("--routes", "Show route-hint summary").option("--findings", "Show duplicate, bloat, and suggestion findings").option("--deps-hash <hash>", "Pin analyzer pack summary to a specific depsHash").option("--out-dir <dir>", "Build output directory to inspect", "dist").action(async (options) => {
+  try {
+    const rawLimit = options.top ?? options.limit ?? "10";
+    const limit = parseInt(rawLimit, 10);
+    const section = typeof options.section === "string" && options.section.length > 0 ? options.section.toLowerCase() : void 0;
+    if (section && !["graph", "build", "deps", "packs", "routes", "findings"].includes(section)) {
+      throw new Error(`Invalid --section value "${options.section}"`);
+    }
+    await runAnalyzeCommand({
+      json: !!options.json,
+      verbose: !!options.verbose,
+      section,
+      limit: Number.isFinite(limit) ? limit : 10,
+      graph: !!options.graph,
+      tree: !!options.tree,
+      deps: !!options.deps,
+      build: !!options.build,
+      packs: !!options.packs,
+      routes: !!options.routes,
+      findings: !!options.findings,
+      depsHash: options.depsHash,
+      outDir: options.outDir
+    });
+  } catch (err) {
+    logError("Analyzer failed", err);
+    process.exit(1);
+  }
+});
+program.parse(process.argv);

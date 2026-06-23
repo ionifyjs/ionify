@@ -18,6 +18,7 @@ export type WatchEvent = "added" | "changed" | "deleted";
 export class IonifyWatcher extends EventEmitter {
   private watchers = new Map<string, fs.FSWatcher>();
   private debounce = new Map<string, number>();
+  private lastEmitted = new Map<string, string>();
   private polled = new Set<string>();
 
   constructor(private rootDir: string) {
@@ -44,13 +45,9 @@ export class IonifyWatcher extends EventEmitter {
         const full = path.join(dir, filename.toString());
         if (full !== abs) return;
 
-        const now = Date.now();
-        const last = this.debounce.get(abs) || 0;
-        if (now - last < 100) return; // debounce duplicates
-        this.debounce.set(abs, now);
-
         const exists = fs.existsSync(abs);
-        this.emit("change", abs, exists ? "changed" : "deleted");
+        const stat = exists ? fs.statSync(abs) : null;
+        this.emitChange(abs, exists ? "changed" : "deleted", stat);
       });
 
       this.watchers.set(abs, watcher);
@@ -59,7 +56,7 @@ export class IonifyWatcher extends EventEmitter {
       // Lightweight polling fallback keeps the file in sync on platforms where fs.watch drops events.
       fs.watchFile(abs, { interval: 5000 }, (curr, prev) => {
         if (curr.mtimeMs !== prev.mtimeMs) {
-          this.emit("change", abs, "changed");
+          this.emitChange(abs, "changed", curr);
         }
       });
     } catch {
@@ -67,10 +64,28 @@ export class IonifyWatcher extends EventEmitter {
       this.polled.add(abs);
       fs.watchFile(abs, { interval: 8000 }, (curr, prev) => {
         if (curr.mtimeMs !== prev.mtimeMs) {
-          this.emit("change", abs, "changed");
+          this.emitChange(abs, "changed", curr);
         }
       });
     }
+  }
+
+  private emitChange(abs: string, status: WatchEvent, stat: fs.Stats | null) {
+    const now = Date.now();
+    const last = this.debounce.get(abs) || 0;
+    if (now - last < 100) return;
+
+    const fingerprint =
+      status === "deleted"
+        ? "deleted"
+        : stat
+          ? `${status}:${stat.mtimeMs}:${stat.size}`
+          : `${status}:unknown`;
+    if (this.lastEmitted.get(abs) === fingerprint) return;
+
+    this.debounce.set(abs, now);
+    this.lastEmitted.set(abs, fingerprint);
+    this.emit("change", abs, status);
   }
 
   unwatchFile(filePath: string) {
@@ -80,6 +95,8 @@ export class IonifyWatcher extends EventEmitter {
     fs.unwatchFile(abs);
     this.watchers.delete(abs);
     this.polled.delete(abs);
+    this.debounce.delete(abs);
+    this.lastEmitted.delete(abs);
   }
 
   closeAll() {
@@ -92,6 +109,8 @@ export class IonifyWatcher extends EventEmitter {
       fs.unwatchFile(abs);
     }
     this.polled.clear();
+    this.debounce.clear();
+    this.lastEmitted.clear();
   }
 }
 

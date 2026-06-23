@@ -63,7 +63,7 @@ import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
 import { renderCssTokensModule } from "@core/loaders/css";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { computeDepsHash } from "@cli/utils/deps-hash";
-import { REACT_REFRESH_RUNTIME_MODULE } from "@core/refresh/reactRefreshInstrumentation";
+import { readProductionPublicationPlan } from "@core/production-artifact-publishing";
 import {
   classifyImportSpecifiersForGraph,
   collectConfiguredExternalSpecifiers,
@@ -76,7 +76,6 @@ import {
   buildFederationContainerBuildSpec,
   buildFederationBuildManifest,
   buildFederationManifestGraphNodes,
-  buildFederationVersionContract,
   collectFederationExposeEntryPaths,
   collectFederationRemoteImportBindings,
   rewriteFederationGraphEdgeIds,
@@ -85,6 +84,7 @@ import {
 import { Graph } from "@core/graph";
 import { GRAPH_KIND_VIRTUAL, classifyStructuralGraphKind, isRuntimeGraphKind } from "@core/graph-kind";
 import { resolveProductionBuildEntries } from "@core/build-entry-inference";
+import { createProductionGraphVersionInputs } from "@core/production-build-identity";
 
 interface BuildOptions {
   outDir?: string;
@@ -113,43 +113,6 @@ function isBuildProfileEnabled(): boolean {
 function logBuildProfile(label: string, startedAt: number): void {
   if (!isBuildProfileEnabled()) return;
   logInfo(`[BuildProfile] ${label}_ms=${Date.now() - startedAt}`);
-}
-
-function createProductionGraphVersionInputs(options: {
-  config: any;
-  parserMode: string;
-  minifier: string;
-  treeshake: unknown;
-  scopeHoist: unknown;
-  entries: string[] | undefined;
-}): Record<string, unknown> {
-  const { config, parserMode, minifier, treeshake, scopeHoist, entries } = options;
-  const pluginNames = Array.isArray(config?.plugins)
-    ? config.plugins
-        .map((p: any) => (typeof p === "string" ? p : p?.name))
-        .filter((name: unknown): name is string => typeof name === "string" && name.length > 0)
-    : undefined;
-
-  return {
-    parserMode,
-    minifier,
-    treeshake,
-    scopeHoist,
-    plugins: pluginNames,
-    entry: entries ?? null,
-    resolveOptions: {
-      alias: config?.resolve?.alias,
-      extensions: config?.resolve?.extensions,
-      conditions: config?.resolve?.conditions,
-      mainFields: config?.resolve?.mainFields,
-    },
-    cssOptions: config?.css,
-    assetOptions: config?.assets ?? config?.asset,
-    runtimeContracts: {
-      reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
-      federation: buildFederationVersionContract(config?.federation),
-    },
-  };
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -2299,7 +2262,15 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo("Building...");
 
     const planStart = Date.now();
-    const publishedPlan: BuildPlan | null = null;
+    const publishedPlan = readProductionPublicationPlan(ionifyDir, {
+      mode: buildMode,
+      nodeEnv: "production",
+      configHash,
+      depsHash,
+      depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      entries: entries ?? [],
+      entrySource: resolvedBuildEntries.source,
+    });
     const plan = publishedPlan
       ? publishedPlan
       : await generateBuildPlan(

@@ -25,6 +25,8 @@ import { runLoginCommand, runLogoutCommand, runWhoamiCommand } from "./commands/
 import { runBindCommand } from "./commands/bind.js";
 import { runStatusCommand } from "./commands/status.js";
 import { runMigrateCommand } from "./commands/migrate.js";
+import { CloudApiError } from "./utils/cloud-client.js";
+import { formatCloudAuthError, formatCloudQuotaError } from "./utils/cloud-errors.js";
 
 const program = new Command();
 
@@ -32,6 +34,30 @@ function validateEnvFlag(cmd: string, value: string): "development" | "productio
   if (value === "development" || value === "production") return value;
   logError(`${cmd}: --env must be 'development' or 'production' (got '${value}')`);
   process.exit(1);
+}
+
+function logPushCommandError(err: unknown): void {
+  if (err instanceof CloudApiError && err.statusCode === 401) {
+    logError(formatCloudAuthError("Push"));
+    return;
+  }
+  if (err instanceof CloudApiError && err.statusCode === 429) {
+    logError(formatCloudQuotaError("Push", "cloud request", err));
+    return;
+  }
+  logError("Push failed", err);
+}
+
+function logHydrateCommandError(err: unknown): void {
+  if (err instanceof CloudApiError && err.statusCode === 401) {
+    logError(formatCloudAuthError("Hydrate"));
+    return;
+  }
+  if (err instanceof CloudApiError && err.statusCode === 429) {
+    logError(formatCloudQuotaError("Hydrate", "cloud request", err));
+    return;
+  }
+  logError("Hydrate failed", err);
 }
 
 program
@@ -56,6 +82,7 @@ program
           tier2: !options.hydrateTier1 || !!options.hydrate,
           namespace: options.namespace,
           concurrency: options.concurrency,
+          env: "development",
         });
       }
       const port = parseInt(options.port, 10);
@@ -90,6 +117,7 @@ program
           tier2: !options.hydrateTier1 || !!options.hydrate,
           namespace: options.namespace,
           concurrency: options.concurrency,
+          env: "production",
         });
       }
       await runBuildCommand({ outDir: options.outDir, mode: options.mode });
@@ -145,7 +173,7 @@ program
         env,
       });
     } catch (err) {
-      logError("Push failed", err);
+      logPushCommandError(err);
       process.exit(1);
     }
   });
@@ -184,7 +212,7 @@ program
         env,
       });
     } catch (err) {
-      logError("Hydrate failed", err);
+      logHydrateCommandError(err);
       process.exit(1);
     }
   });
@@ -192,7 +220,7 @@ program
 program
   .command("login")
   .description("Log in to Ionify Cloud (auth only; project binding is separate)")
-  .option("--api <url>", "Ionify Cloud API URL", "https://api.ionify.cloud")
+  .option("--api <url>", "Ionify Cloud API URL")
   .option("--token <token>", "Existing project token from the dashboard")
   .action(async (options) => {
     try {
