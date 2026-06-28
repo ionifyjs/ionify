@@ -2506,6 +2506,7 @@ export async function startDevServer({
         entryPath: string;
         packageName: string;
         packageVersion: string;
+        moduleFormat?: "esm" | "cjs" | "unknown";
         usedExports: string[];
         hasNamespace: boolean;
         hasExportStar: boolean;
@@ -2538,6 +2539,10 @@ export async function startDevServer({
         entryPath: item.entryPath,
         packageName: item.packageName,
         packageVersion: item.packageVersion,
+        moduleFormat:
+          item.moduleFormat === "esm" || item.moduleFormat === "cjs"
+            ? item.moduleFormat
+            : "unknown",
         usedExports: unique,
         hasNamespace: item.hasNamespace === true,
         hasExportStar: item.hasExportStar === true,
@@ -2561,6 +2566,7 @@ export async function startDevServer({
         entryPath: item.entryPath,
         packageName: item.packageName,
         packageVersion: item.packageVersion,
+        moduleFormat: item.moduleFormat ?? "unknown",
         usedExports: item.usedExports.slice(),
         hasNamespace: item.hasNamespace,
         hasExportStar: item.hasExportStar,

@@ -8,6 +8,11 @@ export interface BuildPlanModule {
   kind: BuildPlanModuleKind;
   deps: string[];
   dynamicDeps: string[];
+  dependencyFormat?: "esm" | "cjs" | "unknown" | null;
+  usedExports?: string[] | null;
+  dependencyAbiHash?: string | null;
+  productionClosureHash?: string | null;
+  sideEffects?: "none" | "present" | "unknown" | null;
 }
 
 export interface BuildPlanChunk {

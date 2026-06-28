@@ -27,6 +27,7 @@ import {
   computeDefineSignature,
   computeDepsHash,
   computeSubpathFromEntryPath,
+  createPartialProductionReadinessRecord,
   createProductionGraphVersionInputs,
   createProductionPublicationState,
   decodePublicPath,
@@ -48,6 +49,7 @@ import {
   loadEnv,
   loadIonifyConfig,
   planAutoFeaturePackGroups,
+  prepareCanonicalProductionDependencyPlan,
   publicPathForFile,
   readLockfile,
   reconcilePackEntries,
@@ -56,7 +58,6 @@ import {
   renderCssRawStringModule,
   renderCssTokensModule,
   renderCssUrlModule,
-  rerouteDepsArtifacts,
   resolveChunkedPackEntries,
   resolveImport,
   resolveMinifier,
@@ -74,8 +75,9 @@ import {
   toWsModuleId,
   vendorPackV2MemberKey,
   writeProductionPublicationPlan,
-  writeProductionPublicationState
-} from "../chunk-6HYABSNG.js";
+  writeProductionPublicationState,
+  writeProductionReadinessRecord
+} from "../chunk-TZWK6MMG.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -4203,6 +4205,7 @@ ${imports}
         entryPath: item.entryPath,
         packageName: item.packageName,
         packageVersion: item.packageVersion,
+        moduleFormat: item.moduleFormat === "esm" || item.moduleFormat === "cjs" ? item.moduleFormat : "unknown",
         usedExports: unique,
         hasNamespace: item.hasNamespace === true,
         hasExportStar: item.hasExportStar === true,
@@ -4222,6 +4225,7 @@ ${imports}
         entryPath: item.entryPath,
         packageName: item.packageName,
         packageVersion: item.packageVersion,
+        moduleFormat: item.moduleFormat ?? "unknown",
         usedExports: item.usedExports.slice(),
         hasNamespace: item.hasNamespace,
         hasExportStar: item.hasExportStar,
@@ -9502,11 +9506,26 @@ function publishProductionChunkCas(options) {
     codeBytes += typeof artifact.code_bytes === "number" ? artifact.code_bytes : Buffer.byteLength(artifact.code ?? "", "utf8");
     mapBytes += typeof artifact.map_bytes === "number" ? artifact.map_bytes : artifact.map ? Buffer.byteLength(artifact.map, "utf8") : 0;
   }
+  const artifactManifestHash = getCacheKey(
+    JSON.stringify(
+      rawArtifacts.map((artifact) => ({
+        id: typeof artifact.id === "string" ? artifact.id : "",
+        fileName: typeof artifact.file_name === "string" ? artifact.file_name : "",
+        codeBytes: typeof artifact.code_bytes === "number" ? artifact.code_bytes : Buffer.byteLength(artifact.code ?? "", "utf8"),
+        mapBytes: typeof artifact.map_bytes === "number" ? artifact.map_bytes : artifact.map ? Buffer.byteLength(artifact.map, "utf8") : 0,
+        assets: Array.isArray(artifact.assets) ? artifact.assets.map((asset) => ({
+          fileName: typeof asset.file_name === "string" ? asset.file_name : "",
+          source: typeof asset.source === "string" ? getCacheKey(asset.source) : ""
+        })).sort((a, b) => a.fileName.localeCompare(b.fileName)) : []
+      })).sort((a, b) => a.id.localeCompare(b.id))
+    )
+  );
   return {
     chunks: options.plan.chunks.length,
     artifacts: rawArtifacts.length,
     codeBytes,
     mapBytes,
+    artifactManifestHash,
     ms: Date.now() - start
   };
 }
@@ -9621,19 +9640,23 @@ async function runPublishCommand(options = {}) {
       loadDepStopsFromManifest(depsRoot),
       collectConfiguredExternalSpecifiers(config)
     );
+    const casRoot = path9.join(ionifyDir, "cas");
+    const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
+      plan,
+      rootDir,
+      depsRoot,
+      depsHash,
+      resolvedEntries: resolvedEntries.entries ?? [],
+      allowedRoots: workspace.allowedRoots,
+      casRoot,
+      configHash,
+      workspaceRoot: workspace.workspaceRoot
+    });
     writeProductionPublicationPlan(
       ionifyDir,
       identity,
       JSON.parse(JSON.stringify(plan))
     );
-    const casRoot = path9.join(ionifyDir, "cas");
-    rerouteDepsArtifacts({
-      plan,
-      depsRoot,
-      casRoot,
-      configHash,
-      workspaceRoot: workspace.workspaceRoot
-    });
     const planSummary = summarizePlanForPublication(plan);
     state.tiers.graph = {
       state: "published",
@@ -9646,6 +9669,7 @@ async function runPublishCommand(options = {}) {
       ms: state.tiers.graph.ms
     };
     state.timingsMs.plan = state.tiers.plan.ms ?? 0;
+    state.timingsMs.pdc = canonicalDeps.pdcMs;
     state.tiers.transforms = { state: "publishing" };
     writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const transformResult = await publishProductionTransformCas({
@@ -9656,6 +9680,7 @@ async function runPublishCommand(options = {}) {
       parserMode,
       defineConfig
     });
+    let tier4ChunkManifestHash = null;
     state.tiers.transforms = {
       state: "published",
       artifactCount: transformResult.transformed + transformResult.defineDerived,
@@ -9691,11 +9716,30 @@ async function runPublishCommand(options = {}) {
         ms: chunkResult.ms,
         reason: `chunks=${chunkResult.chunks}, codeBytes=${chunkResult.codeBytes}, mapBytes=${chunkResult.mapBytes}`
       };
+      tier4ChunkManifestHash = chunkResult.artifactManifestHash;
       state.timingsMs.chunks = chunkResult.ms;
     }
     state.state = "published";
     state.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     writeProductionPublicationState(ionifyDir, state);
+    try {
+      writeProductionReadinessRecord(
+        ionifyDir,
+        createPartialProductionReadinessRecord({
+          producer: phase === "B" ? "publish-artifacts" : "publish-contracts",
+          configHash,
+          workspaceRoot: workspace.workspaceRoot,
+          projectRoot: rootDir,
+          depsHash,
+          plan,
+          pdcClosureHash: canonicalDeps.productionClosure?.closureHash ?? null,
+          tier4ChunkManifestHash,
+          depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2
+        })
+      );
+    } catch (err) {
+      logWarn(`[PRA] Skipped partial deploy-ready.v1 emit during publish: ${err instanceof Error ? err.message : String(err)}`);
+    }
     logInfo(
       `[publish] Published ${targetLabel} (${planSummary.entries} entries, ${planSummary.chunks} chunks, ${planSummary.modules} modules, transform artifacts=${transformResult.transformed}, hits=${transformResult.hits}${phase === "B" ? ", chunk artifacts=yes" : ""}); no build output written.`
     );
@@ -10991,7 +11035,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-BIZJFR7W.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11012,7 +11056,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-BIZJFR7W.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11030,7 +11074,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-BIZJFR7W.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -12923,7 +12967,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-BIZJFR7W.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);

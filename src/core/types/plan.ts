@@ -20,6 +20,11 @@ export interface BuildPlanModule {
   deps: string[];
   dynamicDeps: string[];
   fsPath?: string | null;
+  dependencyFormat?: "esm" | "cjs" | "unknown" | null;
+  usedExports?: string[] | null;
+  dependencyAbiHash?: string | null;
+  productionClosureHash?: string | null;
+  sideEffects?: "none" | "present" | "unknown" | null;
 }
 
 export interface BuildPlanChunk {

@@ -55,6 +55,22 @@ import {
   type DepUsageIndex,
 } from "@core/deps/usage";
 import {
+  buildProductionDependencyClosure,
+  computeAppDemandIdentity,
+  loadProductionDependencyClosure,
+  persistProductionDependencyClosure,
+  type ProductionDependencyClosure,
+} from "@core/deps/production-closure";
+import {
+  createProductionReadinessRecord,
+  hashFileIfExists,
+  isVerifiedProductionReadinessForPlan,
+  readProductionReadinessRecord,
+  writeProductionReadinessRecord,
+  type ProductionReadinessCompressionState,
+  type ProductionReadinessRecord,
+} from "@core/production-readiness-authority";
+import {
   getDepEntry,
   registerDepEntry,
   computeSubpathFromEntryPath,
@@ -63,7 +79,11 @@ import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
 import { renderCssTokensModule } from "@core/loaders/css";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { computeDepsHash } from "@cli/utils/deps-hash";
-import { readProductionPublicationPlan } from "@core/production-artifact-publishing";
+import {
+  readProductionPublicationPlan,
+  writeProductionBuildPlanProof,
+  type ProductionPublicationIdentity,
+} from "@core/production-artifact-publishing";
 import {
   classifyImportSpecifiersForGraph,
   collectConfiguredExternalSpecifiers,
@@ -113,6 +133,11 @@ function isBuildProfileEnabled(): boolean {
 function logBuildProfile(label: string, startedAt: number): void {
   if (!isBuildProfileEnabled()) return;
   logInfo(`[BuildProfile] ${label}_ms=${Date.now() - startedAt}`);
+}
+
+function logBuildProfileDuration(label: string, elapsedMs: number): void {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(`[BuildProfile] ${label}_ms=${elapsedMs}`);
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -188,19 +213,31 @@ type CopiedAssetEntry = {
   hash: string;
 };
 
-async function copyPublicDirToOutDir(publicDirAbs: string | null, outDirAbs: string): Promise<CopiedAssetEntry[]> {
-  if (!publicDirAbs) return [];
+type PublicDirCopyResult = {
+  assets: CopiedAssetEntry[];
+  copied: CopiedAssetEntry[];
+  conflicts: string[];
+};
+
+async function copyPublicDirToOutDir(
+  publicDirAbs: string | null,
+  outDirAbs: string,
+  previousPublicAssets: CopiedAssetEntry[] = [],
+): Promise<PublicDirCopyResult> {
+  if (!publicDirAbs) return { assets: [], copied: [], conflicts: [] };
   const srcRoot = path.resolve(publicDirAbs);
   const destRoot = path.resolve(outDirAbs);
+  const previousByFile = new Map(previousPublicAssets.map((asset) => [asset.file, asset]));
 
   let srcStat: fs.Stats | null = null;
   try {
     srcStat = fs.statSync(srcRoot);
   } catch {
-    return [];
+    return { assets: [], copied: [], conflicts: [] };
   }
-  if (!srcStat.isDirectory()) return [];
+  if (!srcStat.isDirectory()) return { assets: [], copied: [], conflicts: [] };
 
+  const currentEntries: CopiedAssetEntry[] = [];
   const copiedEntries: CopiedAssetEntry[] = [];
   const conflicts: string[] = [];
 
@@ -225,11 +262,17 @@ async function copyPublicDirToOutDir(publicDirAbs: string | null, outDirAbs: str
 
       const rel = path.relative(srcRoot, srcPath);
       if (!rel || rel.startsWith("..")) continue;
+      const relPosix = rel.replace(/\\+/g, "/");
       const destPath = path.join(destRoot, rel);
       if (!destPath.startsWith(destRoot + path.sep) && destPath !== destRoot) continue;
 
       if (fs.existsSync(destPath)) {
-        conflicts.push(rel.replace(/\\+/g, "/"));
+        const previous = previousByFile.get(relPosix);
+        if (previous) {
+          currentEntries.push(previous);
+          continue;
+        }
+        conflicts.push(relPosix);
         continue;
       }
 
@@ -237,11 +280,13 @@ async function copyPublicDirToOutDir(publicDirAbs: string | null, outDirAbs: str
         const fileBytes = await fs.promises.readFile(srcPath);
         await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
         await fs.promises.writeFile(destPath, fileBytes);
-        copiedEntries.push({
-          file: rel.replace(/\\+/g, "/"),
+        const copied = {
+          file: relPosix,
           bytes: fileBytes.length,
           hash: getCacheKey(fileBytes),
-        });
+        };
+        copiedEntries.push(copied);
+        currentEntries.push(copied);
       } catch {
         // ignore copy errors; public assets are best-effort
       }
@@ -255,7 +300,65 @@ async function copyPublicDirToOutDir(publicDirAbs: string | null, outDirAbs: str
     logWarn(`[Build][public] Skipped ${conflicts.length} file(s) due to output conflicts (will not overwrite build artifacts)`);
   }
 
-  return copiedEntries;
+  return { assets: currentEntries, copied: copiedEntries, conflicts };
+}
+
+type SourceFreshnessCacheEntry = {
+  fsPath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  size: number;
+  hash: string;
+};
+
+function isProductionSourceFreshnessCurrent(plan: BuildPlan, ionifyDir: string, workspaceRoot: string): boolean {
+  const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
+  let freshnessCache: Record<string, SourceFreshnessCacheEntry> = {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(freshnessCacheFile, "utf8"));
+    if (parsed && typeof parsed === "object") {
+      freshnessCache = parsed as Record<string, SourceFreshnessCacheEntry>;
+    }
+  } catch {
+    return false;
+  }
+
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js" && mod.kind !== "css") continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, workspaceRoot);
+      }
+      if (!fsPath || !path.isAbsolute(fsPath)) continue;
+      if (fsPath.includes("node_modules") || fsPath.includes("/.ionify/")) continue;
+      try {
+        const st = fs.statSync(fsPath);
+        const cacheKey = `${mod.id}\n${fsPath}`;
+        const cached = freshnessCache[cacheKey];
+        if (
+          !cached ||
+          cached.fsPath !== fsPath ||
+          cached.dev !== st.dev ||
+          cached.ino !== st.ino ||
+          cached.mtimeMs !== st.mtimeMs ||
+          cached.ctimeMs !== st.ctimeMs ||
+          cached.size !== st.size ||
+          typeof cached.hash !== "string" ||
+          cached.hash.length === 0 ||
+          (typeof mod.hash === "string" && mod.hash.length > 0 && mod.hash !== cached.hash)
+        ) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 type CssCasMeta = {
@@ -442,8 +545,9 @@ export function rerouteDepsArtifacts(options: {
   casRoot: string;
   configHash: string;
   workspaceRoot: string;
+  productionClosure?: ProductionDependencyClosure | null;
 }): { rerouted: number; pruned: number; sharedPrewarmed: number; idRewritten: number } {
-  const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
+  const { plan, depsRoot, casRoot, configHash, workspaceRoot, productionClosure } = options;
 
   // Build reverse map: canonical entry path → { outFile, artifactPath, artifactHash, sharedImports }
   const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string; artifactHash: string; sharedImports: string[] }>();
@@ -563,6 +667,19 @@ export function rerouteDepsArtifacts(options: {
 
         mod.fsPath = artifact.artifactPath;
         mod.hash = resolvedHash;
+        const closure = productionClosure?.entries?.[artifact.outFile];
+        if (closure) {
+          // Fix 3 — PDC is analysis-only here: attach the closure identity/record
+          // (folds into Tier-4 + manifest) but DO NOT set `usedExports`, so the
+          // linker keeps the dependency's complete wrapper export surface
+          // (baseline linking). Artifact-layer slimming is deferred to the
+          // Cached Artifact Layer phase (backlog-ii), not delivered by narrowing
+          // the linker surface here.
+          mod.dependencyFormat = closure.format;
+          mod.dependencyAbiHash = closure.dependencyAbiHash || undefined;
+          mod.productionClosureHash = closure.productionClosureHash;
+          mod.sideEffects = closure.sideEffects;
+        }
         // Normalize kind: T19 dep-leaf nodes have kind="dep" so the BFS recognises them
         // as artifact boundaries. After rerouting they are concrete JS artifact files;
         // all downstream consumers (CAS hydration loop, Rust bundler) expect kind="js".
@@ -786,6 +903,134 @@ export function rerouteDepsArtifacts(options: {
   return { rerouted, pruned, sharedPrewarmed, idRewritten };
 }
 
+export function attachProductionClosureMetadata(options: {
+  plan: BuildPlan;
+  depsRoot: string;
+  workspaceRoot: string;
+  productionClosure?: ProductionDependencyClosure | null;
+}): number {
+  const { plan, depsRoot, workspaceRoot, productionClosure } = options;
+  if (!productionClosure) return 0;
+
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return 0;
+
+  const closureByArtifactPath = new Map<string, ProductionDependencyClosure["entries"][string]>();
+  const closureByArtifactId = new Map<string, ProductionDependencyClosure["entries"][string]>();
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const manifestEntries: Record<string, any> = parsed?.entries ?? {};
+    for (const entry of Object.values(manifestEntries)) {
+      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
+      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
+      const closure = productionClosure.entries[outFile];
+      if (!closure) continue;
+      const artifactPath = path.join(depsRoot, outFile);
+      closureByArtifactPath.set(path.resolve(artifactPath), closure);
+      try {
+        closureByArtifactId.set(toWsModuleId(artifactPath, workspaceRoot), closure);
+      } catch {
+        // Absolute-path matching below is sufficient when workspace ids cannot be formed.
+      }
+    }
+  } catch {
+    return 0;
+  }
+
+  if (closureByArtifactPath.size === 0 && closureByArtifactId.size === 0) return 0;
+
+  let attached = 0;
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      let closure = typeof mod.id === "string" ? closureByArtifactId.get(mod.id) : undefined;
+      if (!closure && typeof mod.fsPath === "string" && mod.fsPath.length > 0) {
+        closure = closureByArtifactPath.get(path.resolve(mod.fsPath));
+      }
+      if (!closure) continue;
+
+      // PDC is authoritative identity metadata here. It intentionally does not
+      // set `usedExports`; complete DPL artifacts remain the linked bytes until
+      // the artifact-native closure layer materializes finite artifacts.
+      mod.dependencyFormat = closure.format;
+      mod.dependencyAbiHash = closure.dependencyAbiHash || undefined;
+      mod.productionClosureHash = closure.productionClosureHash;
+      mod.sideEffects = closure.sideEffects;
+      attached += 1;
+    }
+  }
+
+  return attached;
+}
+
+export async function prepareCanonicalProductionDependencyPlan(options: {
+  plan: BuildPlan;
+  rootDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  casRoot: string;
+  configHash: string;
+  workspaceRoot: string;
+}): Promise<{
+  productionClosure: ProductionDependencyClosure | null;
+  rerouted: number;
+  pruned: number;
+  sharedPrewarmed: number;
+  idRewritten: number;
+  metadataAttached: number;
+  finite: number;
+  fallback: number;
+  pdcMs: number;
+  rerouteMs: number;
+}> {
+  const rerouteStart = Date.now();
+  const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
+    plan: options.plan,
+    depsRoot: options.depsRoot,
+    casRoot: options.casRoot,
+    configHash: options.configHash,
+    workspaceRoot: options.workspaceRoot,
+  });
+  const rerouteMs = Date.now() - rerouteStart;
+
+  const pdcStart = Date.now();
+  const appDemandIdentity = computeAppDemandIdentity(
+    options.plan.chunks.flatMap((chunk) => chunk.modules),
+    options.depsHash,
+  );
+  const productionClosure = await prepareProductionDependencyClosure({
+    rootDir: options.rootDir,
+    depsRoot: options.depsRoot,
+    depsHash: options.depsHash,
+    resolvedEntries: options.resolvedEntries,
+    allowedRoots: options.allowedRoots,
+    appDemandIdentity,
+  });
+  const metadataAttached = attachProductionClosureMetadata({
+    plan: options.plan,
+    depsRoot: options.depsRoot,
+    workspaceRoot: options.workspaceRoot,
+    productionClosure,
+  });
+  const closureEntries = productionClosure ? Object.values(productionClosure.entries) : [];
+  const finite = closureEntries.filter((entry) => entry.usedExports !== null).length;
+
+  return {
+    productionClosure,
+    rerouted,
+    pruned,
+    sharedPrewarmed,
+    idRewritten,
+    metadataAttached,
+    finite,
+    fallback: closureEntries.length - finite,
+    pdcMs: Date.now() - pdcStart,
+    rerouteMs,
+  };
+}
+
 function casTextFileMatchesHash(filePath: string, expectedHash: string): boolean {
   try {
     return getCacheKey(fs.readFileSync(filePath, "utf8")) === expectedHash;
@@ -937,6 +1182,7 @@ type DepUsageDisk = {
       entryPath: string;
       packageName: string;
       packageVersion: string;
+      moduleFormat?: "esm" | "cjs" | "unknown";
       usedExports: string[];
       hasNamespace: boolean;
       hasExportStar: boolean;
@@ -1098,6 +1344,10 @@ function loadDepUsageIndexFromDisk(depsRoot: string, depsHash: string): DepUsage
       entryPath: item.entryPath,
       packageName: item.packageName,
       packageVersion: item.packageVersion,
+      moduleFormat:
+        item.moduleFormat === "esm" || item.moduleFormat === "cjs"
+          ? item.moduleFormat
+          : "unknown",
       usedExports: unique,
       hasNamespace: item.hasNamespace === true,
       hasExportStar: item.hasExportStar === true,
@@ -1123,6 +1373,7 @@ function saveDepUsageIndexToDisk(depsRoot: string, depsHash: string, index: DepU
       entryPath: item.entryPath,
       packageName: item.packageName,
       packageVersion: item.packageVersion,
+      moduleFormat: item.moduleFormat ?? "unknown",
       usedExports: item.usedExports.slice(),
       hasNamespace: item.hasNamespace,
       hasExportStar: item.hasExportStar,
@@ -1153,6 +1404,68 @@ async function resolveUsageEntries(rootDir: string, resolvedEntries: string[] | 
     if (fs.existsSync(candidate)) usageEntries.push(candidate);
   }
   return usageEntries;
+}
+
+export async function prepareProductionDependencyClosure(options: {
+  rootDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  appDemandIdentity?: string;
+}): Promise<ProductionDependencyClosure | null> {
+  // Fix 1 — warm short-circuit. The closure depends on (deps identity + the
+  // app's import demand). When the build plan's module id+hash set is unchanged
+  // (appDemandIdentity matches the persisted record), neither can have changed,
+  // so reuse the persisted closure and skip the full-app usage scan entirely.
+  // This keeps the scan off the warm hot path (the 1.3s/UP-Portal regression).
+  if (options.appDemandIdentity) {
+    const cached = loadProductionDependencyClosure(options.depsRoot, options.depsHash);
+    if (cached && cached.appDemandIdentity === options.appDemandIdentity) {
+      return cached;
+    }
+  }
+  if (!fs.existsSync(path.join(options.depsRoot, "manifest.json"))) {
+    return null;
+  }
+  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
+  if (usageEntries.length === 0) {
+    // No current roots means no current demand proof. Falling back to complete
+    // DPL artifacts is safe; reviving an old closure here would make PDC
+    // correctness depend on unverified stale state.
+    return null;
+  }
+
+  const manifestIndex = loadDepsManifestIndex(options.depsRoot);
+  const canonicalFileNames = buildCanonicalDepFileNameIndex(
+    Array.from(manifestIndex, ([fileName, entry]) => ({
+      fileName,
+      entryPath: entry.entryPath,
+    })),
+  );
+
+  try {
+    const usage = canonicalizeDepUsageIndex(
+      await scanDepUsage({
+        rootDir: options.rootDir,
+        entries: usageEntries,
+        allowedRoots: options.allowedRoots,
+      }),
+      canonicalFileNames,
+    );
+    saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, usage);
+    const closure = buildProductionDependencyClosure({
+      depsRoot: options.depsRoot,
+      depsHash: options.depsHash,
+      usage,
+      appDemandIdentity: options.appDemandIdentity,
+    });
+    persistProductionDependencyClosure(options.depsRoot, closure);
+    return closure;
+  } catch (err) {
+    logWarn(`[PDC] Closure computation failed; using complete DPL artifacts (${String(err)})`);
+    return null;
+  }
 }
 
 function isReadyManualPackState(
@@ -1850,6 +2163,7 @@ async function prepareProductionManualPacks(options: {
 export async function runBuildCommand(options: BuildOptions = {}) {
   try {
     const buildStart = Date.now();
+    const setupStart = Date.now();
     const buildMode =
       options.mode ??
       process.env.IONIFY_MODE ??
@@ -1975,9 +2289,11 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const configHash = computeGraphVersion(rawVersionInputs);
     logInfo(`[Build] Version hash: ${configHash}`);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    logBuildProfile("setupConfigIdentity", setupStart);
 
     // Align deps optimizer (/@deps) with build so native bundler can consume optimized ESM deps
     // (CJS wrappers like react/index.js must be optimized to browser-safe ESM).
+    const depsPhaseStart = Date.now();
     const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
     const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
     const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false; // default true
@@ -2003,6 +2319,131 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     fs.mkdirSync(depsRoot, { recursive: true });
 
     const buildExternalSpecifiers = collectConfiguredExternalSpecifiers(config);
+    const productionPublicationIdentity: ProductionPublicationIdentity = {
+      mode: buildMode,
+      nodeEnv: "production",
+      configHash,
+      depsHash,
+      depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      entries: entries ?? [],
+      entrySource: resolvedBuildEntries.source,
+    };
+
+    const earlyOutDir = options.outDir || "dist";
+    const earlyAbsOutDir = path.resolve(earlyOutDir);
+    const earlyPlanStart = Date.now();
+    const earlyPublishedPlan = readProductionPublicationPlan(ionifyDir, productionPublicationIdentity);
+    const earlyProductionReadinessRecord: ProductionReadinessRecord | null =
+      earlyPublishedPlan ? readProductionReadinessRecord(ionifyDir) : null;
+    if (earlyPublishedPlan) {
+      logBuildProfile("publishedProductionPlanRead", earlyPlanStart);
+      const sourceFreshnessPreflightStart = Date.now();
+      const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(
+        earlyPublishedPlan,
+        ionifyDir,
+        workspace.workspaceRoot,
+      );
+      logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
+      const verifiedPraForDeployReadyOutput =
+        sourceFreshnessCurrent &&
+        isVerifiedProductionReadinessForPlan(earlyProductionReadinessRecord, {
+          configHash,
+          workspaceRoot: workspace.workspaceRoot,
+          projectRoot: rootDir,
+          depsHash,
+          plan: earlyPublishedPlan,
+          depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+        });
+      const materializedReadiness =
+        verifiedPraForDeployReadyOutput && earlyProductionReadinessRecord
+          ? tryVerifyProductionReadinessMaterializedOutputs(earlyAbsOutDir, earlyProductionReadinessRecord)
+          : null;
+      if (materializedReadiness) {
+        logInfo("Building...");
+        logInfo(`[Build] Using published Production Plan (${earlyPublishedPlan.chunks.length} chunk(s), identity verified)`);
+        const totalPlannedModules = earlyPublishedPlan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
+        logInfo(
+          `[Build] Plan ready: entries=${earlyPublishedPlan.entries.length}, chunks=${earlyPublishedPlan.chunks.length}, modules=${totalPlannedModules}`,
+        );
+        logInfo("[PRA] Verified deploy-ready identity for current Production Plan; skipping dependency/CAS/dist readiness probes");
+        logBuildProfileDuration("depsAuthorityAndPacks", 0);
+        logBuildProfileDuration("generateBuildPlan", 0);
+        logBuildProfileDuration("depsReroute", 0);
+        logBuildProfileDuration("pdcClosure", 0);
+        logBuildProfileDuration("canonicalDependencyPlan", 0);
+        logBuildProfileDuration("moduleIndex", 0);
+        logBuildProfileDuration("freshnessScan", 0);
+        logBuildProfileDuration("praOutputReadinessProbe", 0);
+        logBuildProfileDuration("casBatchCheck", 0);
+        logBuildProfileDuration("casHydration", 0);
+        logBuildProfileDuration("distReuseProbe", 0);
+        logBuildProfileDuration("emitChunksAndFiles", 0);
+        logBuildProfileDuration("writeBuildManifest", 0);
+        logBuildProfileDuration("writeAssetsManifest", 0);
+        logBuildProfileDuration("emitIndexHtml", 0);
+        logBuildProfileDuration("publicAssetReadiness", 0);
+        logBuildProfileDuration("writeBuildStats", 0);
+        logBuildProfileDuration("manifestAssetsStats", 0);
+
+        const outputHashHints = collectOutputHashHints(materializedReadiness.stats);
+        const distProof = earlyProductionReadinessRecord!.proofs.dist;
+        if (distProof.manifestHash) outputHashHints.set("manifest.json", distProof.manifestHash);
+        if (distProof.buildStatsHash) outputHashHints.set("build.stats.json", distProof.buildStatsHash);
+        if (distProof.assetsManifestHash) outputHashHints.set("manifest.assets.json", distProof.assetsManifestHash);
+        if (distProof.indexHtmlHash) outputHashHints.set("index.html", distProof.indexHtmlHash);
+        for (const asset of earlyProductionReadinessRecord!.proofs.publicAssets.assets) {
+          outputHashHints.set(toPosixPath(asset.file), asset.hash);
+        }
+
+        const coreBuildElapsed = Date.now() - buildStart;
+        logInfo(`Build plan generated → ${path.join(earlyAbsOutDir, "manifest.json")}`);
+        logInfo(`Entries: ${earlyPublishedPlan.entries.length}, Chunks: ${earlyPublishedPlan.chunks.length}`);
+        logInfo(`Modules in plan: ${totalPlannedModules}`);
+        logInfo(`CAS hits: PRA verified • transforms needed: 0`);
+        logInfo(`Build complete in ${coreBuildElapsed}ms`);
+        logInfo(`[Build] Time-to-deploy-ready: ${coreBuildElapsed}ms`);
+        logBuildProfileDuration("timeToDeployReady", coreBuildElapsed);
+
+        const compression = await runPostBuildCompression({
+          config,
+          absOutDir: earlyAbsOutDir,
+          casRoot: path.join(ionifyDir, "cas"),
+          outputHashHints,
+          buildStart,
+        });
+
+        const praEmitStart = Date.now();
+        try {
+          const readinessRecord = createProductionReadinessRecord({
+            configHash,
+            workspaceRoot: workspace.workspaceRoot,
+            projectRoot: rootDir,
+            depsHash,
+            plan: earlyPublishedPlan,
+            pdcClosureHash: earlyProductionReadinessRecord!.identity.pdcClosureHash,
+            artifacts: materializedReadiness.artifacts,
+            dist: {
+              manifestHash: distProof.manifestHash ?? "",
+              buildStatsHash: distProof.buildStatsHash ?? "",
+              assetsManifestHash: distProof.assetsManifestHash,
+              indexHtmlHash: distProof.indexHtmlHash,
+            },
+            compression,
+            publicAssets: earlyProductionReadinessRecord!.proofs.publicAssets,
+            depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+          });
+          writeProductionReadinessRecord(ionifyDir, readinessRecord);
+        } catch (err) {
+          logWarn(`[PRA] Skipped deploy-ready.v1 emit: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        logBuildProfile("praEmit", praEmitStart);
+        const slimmingSaved = computeBuildSlimmingSavedPercent(depsRoot, depsHash);
+        const vendorPacksSaved = computeBuildVendorPackRequestsSavedPercent(depsRoot, depsHash);
+        logInfo(`Slimming saved: ${typeof slimmingSaved === "number" ? `${slimmingSaved}%` : "0%"}`);
+        logInfo(`Vendor packs saved: ${typeof vendorPacksSaved === "number" ? `${vendorPacksSaved}%` : "0%"} requests`);
+        return;
+      }
+    }
 
     // Phase 5-Cloud-EI: tag this build's env so a downstream `--push` can
     // trust it without re-deriving from process.env.NODE_ENV (which may have
@@ -2056,7 +2497,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         const sentinelPath = path.join(depsRoot, ".verified");
         if (fs.existsSync(sentinelPath)) {
           logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
-        } else if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+        } else if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
           // ── T20: Global cache hit ──────────────────────────────────────────
           try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
           logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
@@ -2238,6 +2679,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Allows the native BFS to record dep entries as leaf nodes instead of crawling
     // into node_modules source trees \u2014 saves ~500-1100ms on large apps (UP-Portal scale).
     const depStops = loadDepStopsFromManifest(depsRoot);
+    logBuildProfile("depsAuthorityAndPacks", depsPhaseStart);
 
     // Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit. The deps
     // optimizer pass above has already produced (or reused) every dep
@@ -2262,15 +2704,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo("Building...");
 
     const planStart = Date.now();
-    const publishedPlan = readProductionPublicationPlan(ionifyDir, {
-      mode: buildMode,
-      nodeEnv: "production",
-      configHash,
-      depsHash,
-      depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
-      entries: entries ?? [],
-      entrySource: resolvedBuildEntries.source,
-    });
+    const publishedPlan = readProductionPublicationPlan(ionifyDir, productionPublicationIdentity);
     const plan = publishedPlan
       ? publishedPlan
       : await generateBuildPlan(
@@ -2287,6 +2721,26 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo(
       `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`,
     );
+    const productionReadinessRecord: ProductionReadinessRecord | null = readProductionReadinessRecord(ionifyDir);
+    const sourceFreshnessPreflightStart = Date.now();
+    const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(plan, ionifyDir, workspace.workspaceRoot);
+    logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
+    const verifiedPraForPublishedPlan =
+      publishedPlan !== null &&
+      sourceFreshnessCurrent &&
+      isVerifiedProductionReadinessForPlan(productionReadinessRecord, {
+        configHash,
+        workspaceRoot: workspace.workspaceRoot,
+        projectRoot: rootDir,
+        depsHash,
+        plan,
+        depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      });
+    if (verifiedPraForPublishedPlan) {
+      logInfo("[PRA] Verified deploy-ready identity for current Production Plan; skipping duplicate canonical dependency readiness probe");
+    } else if (productionReadinessRecord?.state === "verified" && publishedPlan !== null && !sourceFreshnessCurrent) {
+      logInfo("[PRA] Verified deploy-ready identity found, but source freshness proof is missing or stale; using normal canonical dependency probe");
+    }
 
     const federationGraph = new Graph(rawVersionInputs, { ionifyDir });
     const federationRemoteBindings = collectFederationRemoteImportBindings(config, rootDir);
@@ -2340,26 +2794,48 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-    // ── T3: Route node_modules deps through deps optimizer artifacts ──
-    {
-      const rerouteStart = Date.now();
+    let canonicalDepsForReadiness:
+      | Awaited<ReturnType<typeof prepareCanonicalProductionDependencyPlan>>
+      | null = null;
+    let readinessPlanForIdentity: BuildPlan | null = null;
+
+    // ── Production dependency authority ─────────────────────────────────────
+    // Canonical order: DPL artifacts first, then PDC on the production-native
+    // artifact plan, then buildChunks/PAP consume that single plan shape.
+    if (!verifiedPraForPublishedPlan) {
       const casRoot = path.join(ionifyDir, "cas");
-      const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
+      const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
         plan,
+        rootDir,
         depsRoot,
+        depsHash,
+        resolvedEntries: entries,
+        allowedRoots: workspace.allowedRoots,
         casRoot,
         configHash,
         workspaceRoot: workspace.workspaceRoot,
       });
-      if (rerouted > 0 || pruned > 0) {
+      canonicalDepsForReadiness = canonicalDeps;
+      if (canonicalDeps.rerouted > 0 || canonicalDeps.pruned > 0) {
         logInfo(
-          `[Build] Deps artifact rerouting: ${rerouted} entries rerouted (${idRewritten} ids → artifact identity), ${pruned} internal modules pruned${sharedPrewarmed > 0 ? `, ${sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
+          `[Build] Deps artifact rerouting: ${canonicalDeps.rerouted} entries rerouted (${canonicalDeps.idRewritten} ids → artifact identity), ${canonicalDeps.pruned} internal modules pruned${canonicalDeps.sharedPrewarmed > 0 ? `, ${canonicalDeps.sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
         );
       }
-      logBuildProfile("depsReroute", rerouteStart);
+      if (canonicalDeps.productionClosure) {
+        logInfo(
+          `[PDC] Production closure ready: ${canonicalDeps.finite} finite, ${canonicalDeps.fallback} conservative fallback (${canonicalDeps.pdcMs}ms, metadata=${canonicalDeps.metadataAttached})`,
+        );
+      }
+      logBuildProfileDuration("depsReroute", canonicalDeps.rerouteMs);
+      logBuildProfileDuration("pdcClosure", canonicalDeps.pdcMs);
+      logBuildProfileDuration("canonicalDependencyPlan", canonicalDeps.rerouteMs + canonicalDeps.pdcMs);
+    } else {
+      logBuildProfileDuration("depsReroute", 0);
+      logBuildProfileDuration("pdcClosure", 0);
+      logBuildProfileDuration("canonicalDependencyPlan", 0);
     }
-
     const outDir = options.outDir || "dist";
+    const absOutDir = path.resolve(outDir);
 
     const defineSignature = computeDefineSignature(defineConfig as any);
     const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
@@ -2526,6 +3002,85 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         // Non-fatal: next build will fall back to hashing sources.
       }
       logBuildProfile("freshnessScan", freshnessStart);
+    }
+    readinessPlanForIdentity = JSON.parse(JSON.stringify(plan)) as BuildPlan;
+
+    const praOutputProbeStart = Date.now();
+    const verifiedPraOutputReuse =
+      verifiedPraForPublishedPlan && productionReadinessRecord
+        ? tryVerifyProductionReadinessOutputReuse(absOutDir, plan, productionReadinessRecord)
+        : null;
+    logBuildProfile("praOutputReadinessProbe", praOutputProbeStart);
+    if (verifiedPraOutputReuse) {
+      logInfo("[PRA] Verified deploy-ready outputs for current Production Plan; skipping duplicate CAS/dist probes");
+      logBuildProfileDuration("casBatchCheck", 0);
+      logBuildProfileDuration("casHydration", 0);
+      logBuildProfileDuration("distReuseProbe", 0);
+      logBuildProfileDuration("emitChunksAndFiles", 0);
+      logBuildProfileDuration("writeBuildManifest", 0);
+      logBuildProfileDuration("writeAssetsManifest", 0);
+      logBuildProfileDuration("emitIndexHtml", 0);
+      logBuildProfileDuration("publicAssetReadiness", 0);
+      logBuildProfileDuration("writeBuildStats", 0);
+      logBuildProfileDuration("manifestAssetsStats", 0);
+
+      const outputHashHints = collectOutputHashHints(verifiedPraOutputReuse.stats);
+      const distProof = productionReadinessRecord.proofs.dist;
+      if (distProof.manifestHash) outputHashHints.set("manifest.json", distProof.manifestHash);
+      if (distProof.buildStatsHash) outputHashHints.set("build.stats.json", distProof.buildStatsHash);
+      if (distProof.assetsManifestHash) outputHashHints.set("manifest.assets.json", distProof.assetsManifestHash);
+      if (distProof.indexHtmlHash) outputHashHints.set("index.html", distProof.indexHtmlHash);
+      for (const asset of productionReadinessRecord.proofs.publicAssets.assets) {
+        outputHashHints.set(toPosixPath(asset.file), asset.hash);
+      }
+
+      const coreBuildElapsed = Date.now() - buildStart;
+      logInfo(`Build plan generated → ${path.join(absOutDir, "manifest.json")}`);
+      logInfo(`Entries: ${plan.entries.length}, Chunks: ${plan.chunks.length}`);
+      logInfo(`Modules in plan: ${modulesInPlan}`);
+      logInfo(`CAS hits: PRA verified • transforms needed: 0`);
+      logInfo(`Build complete in ${coreBuildElapsed}ms`);
+      logInfo(`[Build] Time-to-deploy-ready: ${coreBuildElapsed}ms`);
+      logBuildProfileDuration("timeToDeployReady", coreBuildElapsed);
+
+      const compression = await runPostBuildCompression({
+        config,
+        absOutDir,
+        casRoot,
+        outputHashHints,
+        buildStart,
+      });
+
+      const praEmitStart = Date.now();
+      try {
+        const readinessRecord = createProductionReadinessRecord({
+          configHash,
+          workspaceRoot: workspace.workspaceRoot,
+          projectRoot: rootDir,
+          depsHash,
+          plan: readinessPlanForIdentity,
+          pdcClosureHash: productionReadinessRecord.identity.pdcClosureHash,
+          artifacts: verifiedPraOutputReuse.artifacts,
+          dist: {
+            manifestHash: distProof.manifestHash ?? "",
+            buildStatsHash: distProof.buildStatsHash ?? "",
+            assetsManifestHash: distProof.assetsManifestHash,
+            indexHtmlHash: distProof.indexHtmlHash,
+          },
+          compression,
+          publicAssets: productionReadinessRecord.proofs.publicAssets,
+          depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+        });
+        writeProductionReadinessRecord(ionifyDir, readinessRecord);
+      } catch (err) {
+        logWarn(`[PRA] Skipped deploy-ready.v1 emit: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      logBuildProfile("praEmit", praEmitStart);
+      const slimmingSaved = computeBuildSlimmingSavedPercent(depsRoot, depsHash);
+      const vendorPacksSaved = computeBuildVendorPackRequestsSavedPercent(depsRoot, depsHash);
+      logInfo(`Slimming saved: ${typeof slimmingSaved === "number" ? `${slimmingSaved}%` : "0%"}`);
+      logInfo(`Vendor packs saved: ${typeof vendorPacksSaved === "number" ? `${vendorPacksSaved}%` : "0%"} requests`);
+      return;
     }
 
     const defineJobs: Array<{ id: string; artifactHash: string; baseCode: string }> = [];
@@ -2943,7 +3498,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-    const absOutDir = path.resolve(outDir);
+    // Fix 3 — PDC raw-source injection (virtual re-export shims + production
+    // closure roots) is disabled. The bundler links the complete optimized
+    // dependency wrapper artifacts (baseline), avoiding raw node_modules
+    // re-expansion. Artifact-layer slimming is delivered by the deps optimizer.
 
 	    const buildMinifyRaw = (config as any)?.build?.minify;
 	    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
@@ -2960,10 +3518,12 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0);
 
     const emitStart = Date.now();
+    const distReuseProbeStart = Date.now();
     const reusedOutputs =
       transformsNeeded === 0 && defineJobs.length === 0 && !config?.federation
         ? tryReusePreviousBuildOutputs(absOutDir, plan)
         : null;
+    logBuildProfile("distReuseProbe", distReuseProbeStart);
 
     let emittedPlan = plan;
     let artifacts: Array<{ id: string; files: ReusedChunkFiles }>;
@@ -2985,7 +3545,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 	          mangle: mangleEnabled,
 	          treeshake,
 	          scopeHoist,
-	          externalModules: nativeExternalModules,
+            externalModules: nativeExternalModules,
             federationExposeEntries: federationExposeEntryIds,
 	        },
 	      });
@@ -3077,16 +3637,23 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     }
     const manifestStart = Date.now();
     const outputHashHints = collectOutputHashHints(combinedStats);
+    const buildManifestStart = Date.now();
+    const buildManifestInfo = await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
+      federation: federationManifest,
+    });
+    logBuildProfile("writeBuildManifest", buildManifestStart);
     recordOutputHashHint(
       outputHashHints,
-      await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
-        federation: federationManifest,
-      }),
+      buildManifestInfo,
     );
-    recordOutputHashHint(outputHashHints, await writeAssetsManifest(absOutDir, artifacts));
+    const assetsManifestStart = Date.now();
+    const assetsManifestInfo = await writeAssetsManifest(absOutDir, artifacts);
+    logBuildProfile("writeAssetsManifest", assetsManifestStart);
+    recordOutputHashHint(outputHashHints, assetsManifestInfo);
 
     // Emit index.html for SPA deployments (Phase 6.6+: manifest-driven output)
-    recordOutputHashHint(outputHashHints, await emitIndexHtml({
+    const indexHtmlStart = Date.now();
+    const indexHtmlInfo = await emitIndexHtml({
       rootDir,
       outDir: absOutDir,
       entries: entries ?? [],
@@ -3095,21 +3662,38 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       artifacts,
       envValues,
       envPrefix,
-    }));
+    });
+    logBuildProfile("emitIndexHtml", indexHtmlStart);
+    recordOutputHashHint(outputHashHints, indexHtmlInfo);
 
     // Copy publicDir assets BEFORE writing build.stats.json so they are included in the
     // publicAssets section and eligible for precompressBuildOutputs via outputHashHints.
-    const copiedPublicAssets = await copyPublicDirToOutDir(publicDirAbs, absOutDir);
-    if (copiedPublicAssets.length > 0) {
-      combinedStats.publicAssets = copiedPublicAssets;
-      for (const asset of copiedPublicAssets) {
+    const previousPublicAssets = Array.isArray(combinedStats.publicAssets)
+      ? combinedStats.publicAssets.filter(
+          (asset: any): asset is CopiedAssetEntry =>
+            asset &&
+            typeof asset === "object" &&
+            typeof asset.file === "string" &&
+            typeof asset.bytes === "number" &&
+            typeof asset.hash === "string",
+        )
+      : [];
+    const publicCopyStart = Date.now();
+    const publicCopy = await copyPublicDirToOutDir(publicDirAbs, absOutDir, previousPublicAssets);
+    logBuildProfile("publicAssetReadiness", publicCopyStart);
+    if (publicCopy.assets.length > 0) {
+      combinedStats.publicAssets = publicCopy.assets;
+      for (const asset of publicCopy.assets) {
         outputHashHints.set(asset.file, asset.hash);
       }
     }
 
+    const statsWriteStart = Date.now();
     const statsJson = JSON.stringify(combinedStats, null, 2);
     await writeTextFileIfChanged(path.join(absOutDir, "build.stats.json"), statsJson);
-    outputHashHints.set("build.stats.json", getCacheKey(statsJson));
+    const buildStatsHash = getCacheKey(statsJson);
+    outputHashHints.set("build.stats.json", buildStatsHash);
+    logBuildProfile("writeBuildStats", statsWriteStart);
     logBuildProfile("manifestAssetsStats", manifestStart);
 
     const coreBuildElapsed = Date.now() - buildStart;
@@ -3119,71 +3703,64 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo(`CAS hits: ${casHits} (${percentHits}%) • transforms needed: ${transformsNeeded}`);
     logInfo(`Build complete in ${coreBuildElapsed}ms`);
     logInfo(`[Build] Time-to-deploy-ready: ${coreBuildElapsed}ms`);
+    logBuildProfileDuration("timeToDeployReady", coreBuildElapsed);
 
-    const precompressRaw = (config as any)?.build?.precompress;
-    const precompressEnabled = precompressRaw !== false;
-    const precompressConfig =
-      precompressRaw && typeof precompressRaw === "object" && !Array.isArray(precompressRaw)
-        ? (precompressRaw as Record<string, unknown>)
-        : null;
-    if (precompressEnabled) {
-      const thresholdRaw = precompressConfig?.thresholdBytes;
-      const thresholdBytes =
-        typeof thresholdRaw === "number" && Number.isFinite(thresholdRaw)
-          ? Math.max(0, Math.floor(thresholdRaw))
-          : 1024;
-      const gzipLevelRaw = precompressConfig?.gzipLevel;
-      const gzipLevel =
-        typeof gzipLevelRaw === "number" && Number.isFinite(gzipLevelRaw)
-          ? Math.max(0, Math.min(9, Math.floor(gzipLevelRaw)))
-          : 9;
-      const brotliQualityRaw = precompressConfig?.brotliQuality;
-      const brotliQuality =
-        typeof brotliQualityRaw === "number" && Number.isFinite(brotliQualityRaw)
-          ? Math.max(0, Math.min(11, Math.floor(brotliQualityRaw)))
-          : 11;
-      const concurrency = resolvePrecompressConcurrency(precompressConfig?.concurrency);
-      const emitManifest = precompressConfig?.manifest === false ? false : true;
-
-      // Phase 18C: plug in the Rust-native batch compressor when available.
-      // The compressor is used only for JS chunk files (chunks/**/*.js) on CAS miss;
-      // all other eligible files continue to use the Node.js zlib path.
-      type NativeCompressorFn = NonNullable<Parameters<typeof precompressBuildOutputs>[1]["nativeCompressor"]>;
-      const nativeCompressBatchFn = native?.compressBatch?.bind(native);
-      const nativeCompressor: NativeCompressorFn | undefined = nativeCompressBatchFn
-        ? (items) =>
-            nativeCompressBatchFn(
-              items.map((it) => ({
-                id: it.id,
-                bytes: it.bytes as unknown as import("buffer").Buffer,
-                brotliQuality: it.brotliQuality,
-                gzipLevel: it.gzipLevel,
-              })),
-            ) as Array<{ id: string; br?: Buffer | null; gz?: Buffer | null }>
-        : undefined;
-
-      const compressStart = Date.now();
-      const report = await precompressBuildOutputs(absOutDir, {
-        casRoot,
-        thresholdBytes,
-        gzipLevel,
-        brotliQuality,
-        emitManifest,
-        concurrency,
-        outputHashHints,
-        nativeCompressor,
-      });
-      const elapsed = Date.now() - compressStart;
-      const backendNote = native?.compressBatch ? " [js-chunks=rust]" : "";
-      logInfo(
-        `[Build][compress]${backendNote} ${report.totals.filesWithSidecars}/${report.totals.filesEligible} files precompressed in ${elapsed}ms (parallel=${report.concurrency}, current=${report.totals.filesAlreadyCurrent}, touched=${report.totals.filesTouched}, cas ${report.totals.casHits} hit/${report.totals.casMisses} miss, copied=${report.totals.sidecarsCopiedFromCas}, compressed=${report.totals.sidecarsCompressed}, br ${formatByteDelta(
-          report.totals.brotliOriginalBytes,
-        )}→${formatByteDelta(report.totals.brotliBytes)}, gzip ${formatByteDelta(
-          report.totals.gzipOriginalBytes,
-        )}→${formatByteDelta(report.totals.gzipBytes)})`,
-      );
-      logInfo(`Build total in ${Date.now() - buildStart}ms`);
+    const compression = await runPostBuildCompression({
+      config,
+      absOutDir,
+      casRoot,
+      outputHashHints,
+      buildStart,
+    });
+    if (publishedPlan === null || !sourceFreshnessCurrent) {
+      try {
+        writeProductionBuildPlanProof(
+          ionifyDir,
+          productionPublicationIdentity,
+          readinessPlanForIdentity ?? plan,
+          { plan: Date.now() - planStart },
+        );
+      } catch (err) {
+        logWarn(`[Planner] Skipped production plan proof emit: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+    const praEmitStart = Date.now();
+    try {
+      const readinessRecord = createProductionReadinessRecord({
+        configHash,
+        workspaceRoot: workspace.workspaceRoot,
+        projectRoot: rootDir,
+        depsHash,
+        plan: readinessPlanForIdentity ?? emittedPlan,
+        pdcClosureHash:
+          canonicalDepsForReadiness?.productionClosure?.closureHash ??
+          productionReadinessRecord?.identity.pdcClosureHash ??
+          null,
+        artifacts,
+        dist: {
+          manifestHash:
+            buildManifestInfo?.hash ?? hashFileIfExists(path.join(absOutDir, "manifest.json")) ?? "",
+          buildStatsHash,
+          assetsManifestHash:
+            assetsManifestInfo?.hash ?? hashFileIfExists(path.join(absOutDir, "manifest.assets.json")),
+          indexHtmlHash:
+            indexHtmlInfo?.hash ?? hashFileIfExists(path.join(absOutDir, "index.html")),
+        },
+        compression: {
+          state: compression.state,
+          manifestHash: compression.manifestHash,
+        },
+        publicAssets: {
+          assets: publicCopy.assets,
+          conflicts: publicCopy.conflicts,
+        },
+        depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      });
+      writeProductionReadinessRecord(ionifyDir, readinessRecord);
+    } catch (err) {
+      logWarn(`[PRA] Skipped deploy-ready.v1 emit: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    logBuildProfile("praEmit", praEmitStart);
     const slimmingSaved = computeBuildSlimmingSavedPercent(depsRoot, depsHash);
     const vendorPacksSaved = computeBuildVendorPackRequestsSavedPercent(depsRoot, depsHash);
     logInfo(`Slimming saved: ${typeof slimmingSaved === "number" ? `${slimmingSaved}%` : "0%"}`);
@@ -3192,6 +3769,89 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logError("ionify build failed", err);
     throw err;
   }
+}
+
+async function runPostBuildCompression(options: {
+  config: any;
+  absOutDir: string;
+  casRoot: string;
+  outputHashHints: Map<string, string>;
+  buildStart: number;
+}): Promise<{ state: ProductionReadinessCompressionState; manifestHash: string | null }> {
+  const precompressRaw = (options.config as any)?.build?.precompress;
+  const precompressEnabled = precompressRaw !== false;
+  let compressionState: ProductionReadinessCompressionState = precompressEnabled ? "missing" : "skipped";
+  let compressionManifestHash: string | null = null;
+  const precompressConfig =
+    precompressRaw && typeof precompressRaw === "object" && !Array.isArray(precompressRaw)
+      ? (precompressRaw as Record<string, unknown>)
+      : null;
+
+  if (!precompressEnabled) {
+    return { state: compressionState, manifestHash: compressionManifestHash };
+  }
+
+  const thresholdRaw = precompressConfig?.thresholdBytes;
+  const thresholdBytes =
+    typeof thresholdRaw === "number" && Number.isFinite(thresholdRaw)
+      ? Math.max(0, Math.floor(thresholdRaw))
+      : 1024;
+  const gzipLevelRaw = precompressConfig?.gzipLevel;
+  const gzipLevel =
+    typeof gzipLevelRaw === "number" && Number.isFinite(gzipLevelRaw)
+      ? Math.max(0, Math.min(9, Math.floor(gzipLevelRaw)))
+      : 9;
+  const brotliQualityRaw = precompressConfig?.brotliQuality;
+  const brotliQuality =
+    typeof brotliQualityRaw === "number" && Number.isFinite(brotliQualityRaw)
+      ? Math.max(0, Math.min(11, Math.floor(brotliQualityRaw)))
+      : 11;
+  const concurrency = resolvePrecompressConcurrency(precompressConfig?.concurrency);
+  const emitManifest = precompressConfig?.manifest === false ? false : true;
+
+  // Phase 18C: plug in the Rust-native batch compressor when available.
+  // The compressor is used only for JS chunk files (chunks/**/*.js) on CAS miss.
+  type NativeCompressorFn = NonNullable<Parameters<typeof precompressBuildOutputs>[1]["nativeCompressor"]>;
+  const nativeCompressBatchFn = native?.compressBatch?.bind(native);
+  const nativeCompressor: NativeCompressorFn | undefined = nativeCompressBatchFn
+    ? (items) =>
+        nativeCompressBatchFn(
+          items.map((it) => ({
+            id: it.id,
+            bytes: it.bytes as unknown as import("buffer").Buffer,
+            brotliQuality: it.brotliQuality,
+            gzipLevel: it.gzipLevel,
+          })),
+        ) as Array<{ id: string; br?: Buffer | null; gz?: Buffer | null }>
+    : undefined;
+
+  const compressStart = Date.now();
+  const report = await precompressBuildOutputs(options.absOutDir, {
+    casRoot: options.casRoot,
+    thresholdBytes,
+    gzipLevel,
+    brotliQuality,
+    emitManifest,
+    concurrency,
+    outputHashHints: options.outputHashHints,
+    nativeCompressor,
+  });
+  if (emitManifest) {
+    compressionManifestHash = hashFileIfExists(path.join(options.absOutDir, "manifest.compression.json"));
+    compressionState = compressionManifestHash ? "verified" : "missing";
+  }
+  const elapsed = Date.now() - compressStart;
+  const backendNote = native?.compressBatch ? " [js-chunks=rust]" : "";
+  logInfo(
+    `[Build][compress]${backendNote} ${report.totals.filesWithSidecars}/${report.totals.filesEligible} files precompressed in ${elapsed}ms (parallel=${report.concurrency}, current=${report.totals.filesAlreadyCurrent}, touched=${report.totals.filesTouched}, cas ${report.totals.casHits} hit/${report.totals.casMisses} miss, copied=${report.totals.sidecarsCopiedFromCas}, compressed=${report.totals.sidecarsCompressed}, br ${formatByteDelta(
+      report.totals.brotliOriginalBytes,
+    )}→${formatByteDelta(report.totals.brotliBytes)}, gzip ${formatByteDelta(
+      report.totals.gzipOriginalBytes,
+    )}→${formatByteDelta(report.totals.gzipBytes)})`,
+  );
+  logInfo(`Build total in ${Date.now() - options.buildStart}ms`);
+
+  return { state: compressionState, manifestHash: compressionManifestHash };
 }
 
 function readProjectPackageJson(rootDir: string): any | null {
@@ -3316,7 +3976,7 @@ async function ensureOptimizedDeps(options: {
   // ── T20: Global Tier-5 restore ────────────────────────────────────────────
   // If the global cache has a completed build for this depsHash, restore it to
   // the local depsRoot (hardlinks, ~5ms) and skip the full optimizer (~133ms).
-  if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot)) {
+  if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
     try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
     logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
     return;
@@ -3508,10 +4168,40 @@ function getGlobalDepCacheDir(depsHash: string): string {
  * Uses hardlinks for zero-copy performance (falls back to copy on EXDEV).
  * Returns true if restore succeeded.
  */
-function restoreDepArtifactsFromGlobalCache(depsHash: string, localDepsRoot: string): boolean {
+function manifestEntryHasPdcC1Facts(entry: any, outputVersion: number): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  if (entry.outputVersion !== outputVersion) return false;
+  if (typeof entry.outFile !== "string" || entry.outFile.length === 0) return false;
+  if (typeof entry.entryPath !== "string" || entry.entryPath.length === 0) return false;
+  if (typeof entry.packageName !== "string" || entry.packageName.length === 0) return false;
+  if (typeof entry.packageVersion !== "string" || entry.packageVersion.length === 0) return false;
+  if (typeof entry.packageSubpath !== "string" || entry.packageSubpath.length === 0) return false;
+  if (typeof entry.packageRoot !== "string") return false;
+  if (entry.runtimeFormat !== "esm" && entry.runtimeFormat !== "cjs" && entry.runtimeFormat !== "unknown") return false;
+  if (entry.sideEffects !== "none" && entry.sideEffects !== "present" && entry.sideEffects !== "unknown") return false;
+  if (typeof entry.artifactHash !== "string" || entry.artifactHash.length === 0) return false;
+  return true;
+}
+
+function depsManifestSatisfiesPdcC1Contract(manifestPath: string, outputVersion: number): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    if (!entries.length) return false;
+    return entries.every((entry) => manifestEntryHasPdcC1Facts(entry, outputVersion));
+  } catch {
+    return false;
+  }
+}
+
+function restoreDepArtifactsFromGlobalCache(depsHash: string, localDepsRoot: string, outputVersion: number): boolean {
   const globalDir = getGlobalDepCacheDir(depsHash);
   const globalSentinel = path.join(globalDir, ".verified");
   if (!fs.existsSync(globalSentinel)) return false;
+  if (!depsManifestSatisfiesPdcC1Contract(path.join(globalDir, "manifest.json"), outputVersion)) {
+    try { fs.rmSync(globalDir, { recursive: true, force: true }); } catch {}
+    return false;
+  }
   try {
     const entries = fs.readdirSync(globalDir);
     for (const entry of entries) {
@@ -3618,6 +4308,33 @@ type BuildCompressionReport = {
   entries: BuildCompressionReportEntry[];
 };
 
+type BuildCompressionManifest = {
+  version: 2;
+  compressionCasVersion: number;
+  thresholdBytes: number;
+  gzipLevel: number;
+  brotliQuality: number;
+  totals: Pick<
+    BuildCompressionReport["totals"],
+    | "filesEligible"
+    | "filesWithSidecars"
+    | "brotliFiles"
+    | "gzipFiles"
+    | "brotliOriginalBytes"
+    | "brotliBytes"
+    | "gzipOriginalBytes"
+    | "gzipBytes"
+    | "brotliSavedBytes"
+    | "gzipSavedBytes"
+  >;
+  entries: Array<
+    Omit<
+      BuildCompressionReportEntry,
+      "outputHash" | "brotliSource" | "gzipSource"
+    >
+  >;
+};
+
 type CompressionCandidate = {
   absPath: string;
   rel: string;
@@ -3647,6 +4364,11 @@ function normalizePlanChunkForReuse(chunk: BuildPlan["chunks"][number]) {
       kind: mod.kind,
       deps: [...(mod.deps ?? [])],
       dynamicDeps: [...(mod.dynamicDeps ?? [])],
+      dependencyFormat: mod.dependencyFormat ?? undefined,
+      usedExports: mod.usedExports ?? undefined,
+      dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
+      productionClosureHash: mod.productionClosureHash ?? undefined,
+      sideEffects: mod.sideEffects ?? undefined,
       artifactHash: mod.hash ?? undefined,
     })),
   };
@@ -3693,6 +4415,11 @@ function tryReusePreviousBuildOutputs(
         kind: mod.kind,
         deps: mod.deps ?? [],
         dynamicDeps: mod.dynamicDeps ?? [],
+        dependencyFormat: mod.dependencyFormat ?? undefined,
+        usedExports: mod.usedExports ?? undefined,
+        dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
+        productionClosureHash: mod.productionClosureHash ?? undefined,
+        sideEffects: mod.sideEffects ?? undefined,
         artifactHash: mod.artifactHash,
       })),
     };
@@ -3720,6 +4447,111 @@ function tryReusePreviousBuildOutputs(
       if (fileStat.size !== meta.bytes) return null;
       // If a user or tool modified dist after build.stats.json was written, do not
       // trust the old hash oracle; fall back to normal emission and rewrite.
+      if (fileStat.mtimeMs > statsStat.mtimeMs + 1) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return { artifacts, stats };
+}
+
+function tryVerifyProductionReadinessOutputReuse(
+  outDir: string,
+  plan: BuildPlan,
+  record: ProductionReadinessRecord,
+): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+  if (record.state !== "verified") return null;
+  const distProof = record.proofs.dist;
+  if (!distProof.manifestHash || !distProof.buildStatsHash) return null;
+  if (record.proofs.publicAssets.conflicts.length > 0) return null;
+
+  const manifestHash = hashFileIfExists(path.join(outDir, "manifest.json"));
+  if (manifestHash !== distProof.manifestHash) return null;
+  const buildStatsHash = hashFileIfExists(path.join(outDir, "build.stats.json"));
+  if (buildStatsHash !== distProof.buildStatsHash) return null;
+  if (distProof.assetsManifestHash) {
+    const assetsManifestHash = hashFileIfExists(path.join(outDir, "manifest.assets.json"));
+    if (assetsManifestHash !== distProof.assetsManifestHash) return null;
+  }
+  if (distProof.indexHtmlHash) {
+    const indexHtmlHash = hashFileIfExists(path.join(outDir, "index.html"));
+    if (indexHtmlHash !== distProof.indexHtmlHash) return null;
+  }
+
+  return tryReusePreviousBuildOutputs(outDir, plan);
+}
+
+function tryVerifyProductionReadinessMaterializedOutputs(
+  outDir: string,
+  record: ProductionReadinessRecord,
+): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+  if (record.state !== "verified") return null;
+  const distProof = record.proofs.dist;
+  if (!distProof.manifestHash || !distProof.buildStatsHash) return null;
+  if (record.proofs.publicAssets.conflicts.length > 0) return null;
+
+  const manifestPath = path.join(outDir, "manifest.json");
+  const statsPath = path.join(outDir, "build.stats.json");
+  let manifestStat: fs.Stats;
+  let statsStat: fs.Stats;
+  let manifest: any;
+  let stats: Record<string, any>;
+  try {
+    manifestStat = fs.statSync(manifestPath);
+    statsStat = fs.statSync(statsPath);
+    if (!manifestStat.isFile() || !statsStat.isFile()) return null;
+    if (hashFileIfExists(manifestPath) !== distProof.manifestHash) return null;
+    if (hashFileIfExists(statsPath) !== distProof.buildStatsHash) return null;
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    stats = JSON.parse(fs.readFileSync(statsPath, "utf8"));
+  } catch {
+    return null;
+  }
+
+  if (distProof.assetsManifestHash) {
+    const assetsManifestHash = hashFileIfExists(path.join(outDir, "manifest.assets.json"));
+    if (assetsManifestHash !== distProof.assetsManifestHash) return null;
+  }
+  if (distProof.indexHtmlHash) {
+    const indexHtmlHash = hashFileIfExists(path.join(outDir, "index.html"));
+    if (indexHtmlHash !== distProof.indexHtmlHash) return null;
+  }
+
+  const artifacts: Array<{ id: string; files: ReusedChunkFiles }> = [];
+  const allFiles = new Set<string>();
+  const chunks: any[] = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+  for (const chunk of chunks) {
+    if (!chunk || typeof chunk.id !== "string") return null;
+    const files: ReusedChunkFiles = {
+      js: Array.isArray(chunk.files?.js) ? chunk.files.js : [],
+      css: Array.isArray(chunk.files?.css) ? chunk.files.css : [],
+      assets: Array.isArray(chunk.files?.assets) ? chunk.files.assets : [],
+    };
+    artifacts.push({ id: chunk.id, files });
+    for (const rel of [...files.js, ...files.css, ...files.assets]) {
+      if (typeof rel === "string" && rel.length > 0) allFiles.add(toPosixPath(rel));
+    }
+  }
+  for (const asset of record.proofs.publicAssets.assets) {
+    if (typeof asset.file === "string" && asset.file.length > 0) allFiles.add(toPosixPath(asset.file));
+  }
+  if (distProof.assetsManifestHash) allFiles.add("manifest.assets.json");
+  if (distProof.indexHtmlHash) allFiles.add("index.html");
+
+  for (const rel of allFiles) {
+    const meta = stats?.[rel];
+    let expectedBytes: number | null = null;
+    if (meta && typeof meta === "object" && typeof meta.bytes === "number" && Number.isFinite(meta.bytes)) {
+      expectedBytes = meta.bytes;
+    } else {
+      const publicAsset = record.proofs.publicAssets.assets.find((asset) => toPosixPath(asset.file) === rel);
+      if (publicAsset) expectedBytes = publicAsset.bytes;
+    }
+    try {
+      const fileStat = fs.statSync(path.join(outDir, rel));
+      if (!fileStat.isFile()) return null;
+      if (expectedBytes !== null && fileStat.size !== expectedBytes) return null;
       if (fileStat.mtimeMs > statsStat.mtimeMs + 1) return null;
     } catch {
       return null;
@@ -3885,7 +4717,7 @@ export async function precompressBuildOutputs(
     gzipLevel: number;
     brotliQuality: number;
     emitManifest: boolean;
-    concurrency: number;
+  concurrency: number;
     outputHashHints: Map<string, string>;
     /**
      * Phase 18C: optional Rust-native compressor for JS chunk files.
@@ -4254,9 +5086,57 @@ export async function precompressBuildOutputs(
 
   report.entries.sort((a, b) => a.file.localeCompare(b.file));
   if (opts.emitManifest) {
-    writeJsonFile(path.join(outDir, "manifest.compression.json"), report);
+    writeJsonFile(
+      path.join(outDir, "manifest.compression.json"),
+      toBuildCompressionManifest(report),
+    );
   }
   return report;
+}
+
+function toBuildCompressionManifest(
+  report: BuildCompressionReport,
+): BuildCompressionManifest {
+  const {
+    filesEligible,
+    filesWithSidecars,
+    brotliFiles,
+    gzipFiles,
+    brotliOriginalBytes,
+    brotliBytes,
+    gzipOriginalBytes,
+    gzipBytes,
+    brotliSavedBytes,
+    gzipSavedBytes,
+  } = report.totals;
+
+  return {
+    version: 2,
+    compressionCasVersion: report.compressionCasVersion,
+    thresholdBytes: report.thresholdBytes,
+    gzipLevel: report.gzipLevel,
+    brotliQuality: report.brotliQuality,
+    totals: {
+      filesEligible,
+      filesWithSidecars,
+      brotliFiles,
+      gzipFiles,
+      brotliOriginalBytes,
+      brotliBytes,
+      gzipOriginalBytes,
+      gzipBytes,
+      brotliSavedBytes,
+      gzipSavedBytes,
+    },
+    entries: report.entries.map((entry) => ({
+      file: entry.file,
+      originalBytes: entry.originalBytes,
+      brotliBytes: entry.brotliBytes,
+      gzipBytes: entry.gzipBytes,
+      brotliSidecar: entry.brotliSidecar,
+      gzipSidecar: entry.gzipSidecar,
+    })),
+  };
 }
 
 function pickPrimaryJs(files: string[] | undefined): string | null {
