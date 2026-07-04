@@ -60,7 +60,7 @@ export interface IonifyServerConfig {
 export interface IonifyBuildConfig {
   target?: string | string[];
   sourcemap?: boolean | "inline" | "hidden";
-  minify?: boolean | "esbuild" | "terser";
+  minify?: boolean;
   /**
    * Preserve matching specifiers as external runtime imports.
    * These modules are recorded as graph edges and emitted unchanged in production output.

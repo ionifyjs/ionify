@@ -76,7 +76,7 @@ import {
   computeSubpathFromEntryPath,
 } from "@core/deps/registry";
 import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
-import { renderCssTokensModule } from "@core/loaders/css";
+import { compileCss, renderCssTokensModule } from "@core/loaders/css";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { computeDepsHash } from "@cli/utils/deps-hash";
 import {
@@ -125,6 +125,21 @@ interface BuildOptions {
 }
 
 const DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
+const TOPOLOGY_PROOF_VERSION = 1;
+const PACKAGE_GRAPH_VERSION = 5;
+
+const topologyValidationProfile = {
+  proofValidationTimeMs: 0,
+  byteScanTimeMs: 0,
+  packageGraphCacheHit: 0,
+};
+
+const depsMeasurementProfile = {
+  cacheMode: "unknown",
+  promoted: 0,
+  promotionSkipped: 0,
+  outputVersionMismatchSeen: false,
+};
 
 function isBuildProfileEnabled(): boolean {
   return process.env.IONIFY_BUNDLE_PROFILE === "1" || process.env.IONIFY_BUNDLE_PROFILE === "true";
@@ -138,6 +153,239 @@ function logBuildProfile(label: string, startedAt: number): void {
 function logBuildProfileDuration(label: string, elapsedMs: number): void {
   if (!isBuildProfileEnabled()) return;
   logInfo(`[BuildProfile] ${label}_ms=${elapsedMs}`);
+}
+
+function logBuildProfileValue(label: string, value: number): void {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(`[BuildProfile] ${label}=${value}`);
+}
+
+function logBuildProfileText(label: string, value: string): void {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(`[BuildProfile] ${label}=${value}`);
+}
+
+type TransformCasProfile = {
+  nativeJsTransformMs: number;
+  nativeJsTransformJobs: number;
+  cssWorkerTransformStartupMs: number;
+  cssWorkerJobs: number;
+  workerTransformJobs: number;
+  defineReplacementMs: number;
+  defineReplacementCalls: number;
+  artifactHashBookkeepingMs: number;
+  artifactHashBookkeepingCalls: number;
+  casMkdirMs: number;
+  casMkdirCalls: number;
+  casWriteMs: number;
+  casWriteFiles: number;
+  casWriteBytes: number;
+  baseArtifactWriteMs: number;
+  baseArtifactWriteFiles: number;
+  baseArtifactWriteBytes: number;
+  variantArtifactWriteMs: number;
+  variantArtifactWriteFiles: number;
+  variantArtifactWriteBytes: number;
+};
+
+function createTransformCasProfile(): TransformCasProfile {
+  return {
+    nativeJsTransformMs: 0,
+    nativeJsTransformJobs: 0,
+    cssWorkerTransformStartupMs: 0,
+    cssWorkerJobs: 0,
+    workerTransformJobs: 0,
+    defineReplacementMs: 0,
+    defineReplacementCalls: 0,
+    artifactHashBookkeepingMs: 0,
+    artifactHashBookkeepingCalls: 0,
+    casMkdirMs: 0,
+    casMkdirCalls: 0,
+    casWriteMs: 0,
+    casWriteFiles: 0,
+    casWriteBytes: 0,
+    baseArtifactWriteMs: 0,
+    baseArtifactWriteFiles: 0,
+    baseArtifactWriteBytes: 0,
+    variantArtifactWriteMs: 0,
+    variantArtifactWriteFiles: 0,
+    variantArtifactWriteBytes: 0,
+  };
+}
+
+function profileElapsed<T>(profile: TransformCasProfile, key: keyof TransformCasProfile, fn: () => T): T {
+  const started = Date.now();
+  try {
+    return fn();
+  } finally {
+    profile[key] = (profile[key] as number) + (Date.now() - started);
+  }
+}
+
+function profileCasMkdir(profile: TransformCasProfile, dir: string): void {
+  const started = Date.now();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } finally {
+    profile.casMkdirMs += Date.now() - started;
+    profile.casMkdirCalls += 1;
+  }
+}
+
+function byteLengthOfWriteData(data: string | NodeJS.ArrayBufferView): number {
+  if (typeof data === "string") return Buffer.byteLength(data, "utf8");
+  return data.byteLength;
+}
+
+function profileCasWrite(
+  profile: TransformCasProfile,
+  filePath: string,
+  data: string | NodeJS.ArrayBufferView,
+  kind: "base" | "variant",
+): void {
+  const started = Date.now();
+  try {
+    fs.writeFileSync(filePath, data as any, "utf8");
+  } finally {
+    const elapsed = Date.now() - started;
+    const bytes = byteLengthOfWriteData(data);
+    profile.casWriteMs += elapsed;
+    profile.casWriteFiles += 1;
+    profile.casWriteBytes += bytes;
+    if (kind === "base") {
+      profile.baseArtifactWriteMs += elapsed;
+      profile.baseArtifactWriteFiles += 1;
+      profile.baseArtifactWriteBytes += bytes;
+    } else {
+      profile.variantArtifactWriteMs += elapsed;
+      profile.variantArtifactWriteFiles += 1;
+      profile.variantArtifactWriteBytes += bytes;
+    }
+  }
+}
+
+function profileJsonCasWrite(
+  profile: TransformCasProfile,
+  filePath: string,
+  data: unknown,
+  kind: "base" | "variant",
+): void {
+  const bytes = Buffer.byteLength(JSON.stringify(data, null, 2) + "\n", "utf8");
+  const started = Date.now();
+  try {
+    writeJsonFile(filePath, data);
+  } finally {
+    const elapsed = Date.now() - started;
+    profile.casWriteMs += elapsed;
+    profile.casWriteFiles += 1;
+    profile.casWriteBytes += bytes;
+    if (kind === "base") {
+      profile.baseArtifactWriteMs += elapsed;
+      profile.baseArtifactWriteFiles += 1;
+      profile.baseArtifactWriteBytes += bytes;
+    } else {
+      profile.variantArtifactWriteMs += elapsed;
+      profile.variantArtifactWriteFiles += 1;
+      profile.variantArtifactWriteBytes += bytes;
+    }
+  }
+}
+
+function logTransformCasProfile(profile: TransformCasProfile): void {
+  if (!isBuildProfileEnabled()) return;
+  logInfo(
+    `[BuildProfile][transformCas] nativeJsTransform_ms=${profile.nativeJsTransformMs} jobs=${profile.nativeJsTransformJobs}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] cssWorkerTransformStartup_ms=${profile.cssWorkerTransformStartupMs} cssJobs=${profile.cssWorkerJobs} workerJobs=${profile.workerTransformJobs}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] defineReplacement_ms=${profile.defineReplacementMs} calls=${profile.defineReplacementCalls}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] artifactHashBookkeeping_ms=${profile.artifactHashBookkeepingMs} calls=${profile.artifactHashBookkeepingCalls}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] casMkdir_ms=${profile.casMkdirMs} calls=${profile.casMkdirCalls}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] casWrite_ms=${profile.casWriteMs} files=${profile.casWriteFiles} bytes=${profile.casWriteBytes}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] baseArtifactWrite_ms=${profile.baseArtifactWriteMs} files=${profile.baseArtifactWriteFiles} bytes=${profile.baseArtifactWriteBytes}`,
+  );
+  logInfo(
+    `[BuildProfile][transformCas] variantArtifactWrite_ms=${profile.variantArtifactWriteMs} files=${profile.variantArtifactWriteFiles} bytes=${profile.variantArtifactWriteBytes}`,
+  );
+}
+
+function resetTopologyValidationProfile(): void {
+  topologyValidationProfile.proofValidationTimeMs = 0;
+  topologyValidationProfile.byteScanTimeMs = 0;
+  topologyValidationProfile.packageGraphCacheHit = 0;
+  depsMeasurementProfile.cacheMode = "unknown";
+  depsMeasurementProfile.promoted = 0;
+  depsMeasurementProfile.promotionSkipped = 0;
+  depsMeasurementProfile.outputVersionMismatchSeen = false;
+  native?.depsOptimizerTopologyProfileReset?.();
+}
+
+function logTopologyValidationProfile(depsRoot: string): void {
+  if (!isBuildProfileEnabled()) return;
+  const nativeProfile = native?.depsOptimizerTopologyProfile?.();
+  const manifestCounts = countDepsManifestTopologies(depsRoot);
+  logBuildProfileDuration("topologyDecisionTime", nativeProfile?.topologyDecisionTimeMs ?? 0);
+  logBuildProfileDuration(
+    "esmNativeSlimEmissionTime",
+    nativeProfile?.esmNativeSlimEmissionTimeMs ?? nativeProfile?.esm_native_slim_emission_time_ms ?? 0,
+  );
+  logBuildProfileDuration(
+    "esmNativeSlimDceTime",
+    nativeProfile?.esmNativeSlimDceTimeMs ?? nativeProfile?.esm_native_slim_dce_time_ms ?? 0,
+  );
+  logBuildProfileValue(
+    "esmNativeSlimDceRemovedDeclarations",
+    nativeProfile?.esmNativeSlimDceRemovedDeclarations ??
+      nativeProfile?.esm_native_slim_dce_removed_declarations ??
+      0,
+  );
+  logBuildProfileValue(
+    "esmNativeSlimDceRemovedPureExpressions",
+    nativeProfile?.esmNativeSlimDceRemovedPureExpressions ??
+      nativeProfile?.esm_native_slim_dce_removed_pure_expressions ??
+      0,
+  );
+  logBuildProfileValue(
+    "esmNativeSlimDceFoldedBranches",
+    nativeProfile?.esmNativeSlimDceFoldedBranches ?? nativeProfile?.esm_native_slim_dce_folded_branches ?? 0,
+  );
+  logBuildProfileDuration(
+    "topologyProofValidationTime",
+    topologyValidationProfile.proofValidationTimeMs + (nativeProfile?.topologyProofValidationTimeMs ?? 0),
+  );
+  logBuildProfileDuration(
+    "topologyByteScanTime",
+    topologyValidationProfile.byteScanTimeMs + (nativeProfile?.topologyByteScanTimeMs ?? 0),
+  );
+  logBuildProfileValue(
+    "esmNativeArtifactCount",
+    (manifestCounts.esmNative + manifestCounts.esmNativeSlim) || nativeProfile?.esmNativeArtifactCount || 0,
+  );
+  logBuildProfileValue("esmNativeSlimArtifactCount", manifestCounts.esmNativeSlim);
+  logBuildProfileValue(
+    "wrapperArtifactCount",
+    manifestCounts.wrapper || nativeProfile?.wrapperArtifactCount || 0,
+  );
+  logBuildProfileDuration("packageGraphBuildTime", nativeProfile?.packageGraphBuildTimeMs ?? 0);
+  logBuildProfileValue(
+    "packageGraphCacheHit",
+    topologyValidationProfile.packageGraphCacheHit + (nativeProfile?.packageGraphCacheHit ?? 0),
+  );
+  logBuildProfileValue("packageGraphCacheMiss", nativeProfile?.packageGraphCacheMiss ?? 0);
+  logBuildProfileText("depsCacheMode", depsMeasurementProfile.cacheMode);
+  logBuildProfileValue("depsPromotedArtifactCount", depsMeasurementProfile.promoted);
+  logBuildProfileValue("depsPromotionSkippedCount", depsMeasurementProfile.promotionSkipped);
+  logBuildProfileValue("depsOutputVersionMismatchSeen", depsMeasurementProfile.outputVersionMismatchSeen ? 1 : 0);
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -313,7 +561,13 @@ type SourceFreshnessCacheEntry = {
   hash: string;
 };
 
-function isProductionSourceFreshnessCurrent(plan: BuildPlan, ionifyDir: string, workspaceRoot: string): boolean {
+function isProductionSourceFreshnessCurrent(
+  plan: BuildPlan,
+  ionifyDir: string,
+  workspaceRoot: string,
+  casRoot: string,
+  configHash: string,
+): boolean {
   const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
   let freshnessCache: Record<string, SourceFreshnessCacheEntry> = {};
   try {
@@ -348,9 +602,37 @@ function isProductionSourceFreshnessCurrent(plan: BuildPlan, ionifyDir: string, 
           cached.size !== st.size ||
           typeof cached.hash !== "string" ||
           cached.hash.length === 0 ||
-          (typeof mod.hash === "string" && mod.hash.length > 0 && mod.hash !== cached.hash)
+          (mod.kind !== "css" && typeof mod.hash === "string" && mod.hash.length > 0 && mod.hash !== cached.hash)
         ) {
           return false;
+        }
+        if (mod.kind === "css") {
+          const cssMeta = readJsonFile<CssCasMeta>(
+            path.join(getCasArtifactPath(casRoot, configHash, cached.hash), "meta.json"),
+          );
+          if (
+            !cssMeta ||
+            cssMeta.version !== 1 ||
+            cssMeta.baseHash !== cached.hash ||
+            typeof cssMeta.pipelineHash !== "string" ||
+            cssMeta.pipelineHash.length === 0
+          ) {
+            return false;
+          }
+          const depsAbs = Array.from(
+            new Set(
+              [...(cssMeta.deps ?? []), ...(cssMeta.urlDeps ?? [])].filter(
+                (p): p is string => typeof p === "string" && p.length > 0,
+              ),
+            ),
+          );
+          const depsStampHash = computeDepsContentStampHash(depsAbs, new Map(), workspaceRoot);
+          const expectedCssHash = getCacheKey(
+            `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`,
+          );
+          if (typeof mod.hash !== "string" || mod.hash !== expectedCssHash) {
+            return false;
+          }
         }
       } catch {
         return false;
@@ -439,6 +721,21 @@ type DepsManifestIndexEntry = {
   chunkFiles: string[];
 };
 
+type VerifiedDepsSnapshotFreshness = {
+  fresh: boolean;
+  checked: number;
+  missing: string[];
+  reason?: string;
+};
+
+function canonicalFsPath(value: string): string {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
 function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexEntry> {
   const manifestPath = path.join(depsRoot, "manifest.json");
   if (!fs.existsSync(manifestPath)) return new Map();
@@ -507,6 +804,678 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
   }
 }
 
+function normalizeManifestString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeManifestStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function countDepsManifestTopologies(depsRoot: string): { esmNative: number; esmNativeSlim: number; wrapper: number } {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(depsRoot, "manifest.json"), "utf8"));
+    const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    let esmNative = 0;
+    let esmNativeSlim = 0;
+    let wrapper = 0;
+    for (const entry of entries) {
+      const topology = normalizeManifestString((entry as any)?.artifactTopology ?? (entry as any)?.artifact_topology);
+      if (topology === "esm-native") esmNative++;
+      else if (topology === "esm-native-slim") esmNativeSlim++;
+      else if (topology === "wrapper") wrapper++;
+    }
+    return { esmNative, esmNativeSlim, wrapper };
+  } catch {
+    return { esmNative: 0, esmNativeSlim: 0, wrapper: 0 };
+  }
+}
+
+function hasForbiddenFactoryTokens(code: string): boolean {
+  return code.includes("__ionifyModules") || code.includes("__ionifyRequire") || code.includes("shared.sc");
+}
+
+function validateDepsPackageGraphFact(entry: any, depsRoot: string): { ok: boolean; reason?: string; graphOutFiles: string[] } {
+  const graph = entry?.packageGraph ?? entry?.package_graph;
+  if (!graph || typeof graph !== "object") return { ok: true, graphOutFiles: [] };
+  if (graph.version !== PACKAGE_GRAPH_VERSION) return { ok: false, reason: "package-graph-version", graphOutFiles: [] };
+  if (graph.status !== "ready") return { ok: true, graphOutFiles: [] };
+  if (
+    normalizeManifestString(graph.identityHash ?? graph.identity_hash).length === 0 ||
+    normalizeManifestString(graph.entryFile ?? graph.entry_file).length === 0
+  ) {
+    return { ok: false, reason: "package-graph-identity", graphOutFiles: [] };
+  }
+  const files = Array.isArray(graph.files) ? graph.files : [];
+  const reachableFilesRaw = graph.reachableFiles ?? graph.reachable_files;
+  const reachableFiles = Array.isArray(reachableFilesRaw) ? reachableFilesRaw : [];
+  if (files.length === 0 || reachableFiles.length === 0) {
+    return { ok: false, reason: "package-graph-files", graphOutFiles: [] };
+  }
+  const graphOutFiles: string[] = [];
+  for (const file of files) {
+    const graphOutFile = normalizeManifestString(file?.outFile ?? file?.out_file);
+    const graphSourceFile = normalizeManifestString(file?.file);
+    const graphHash = normalizeManifestString(file?.hash);
+    if (!graphOutFile.endsWith(".js") || graphSourceFile.length === 0 || graphHash.length === 0) {
+      return { ok: false, reason: "package-graph-file-invalid", graphOutFiles: [] };
+    }
+    if (!fs.existsSync(path.join(depsRoot, graphOutFile))) {
+      return { ok: false, reason: "package-graph-artifact-missing", graphOutFiles: [] };
+    }
+    graphOutFiles.push(graphOutFile);
+  }
+  topologyValidationProfile.packageGraphCacheHit += 1;
+  return { ok: true, graphOutFiles };
+}
+
+export function validateDepsManifestEntryTopology(
+  entry: any,
+  depsRoot: string,
+  outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION,
+): { ok: boolean; reason?: string } {
+  const proofStarted = Date.now();
+  try {
+    if (!entry || typeof entry !== "object") return { ok: false, reason: "entry-invalid" };
+    const entryOutputVersion =
+      typeof entry.outputVersion === "number"
+        ? entry.outputVersion
+        : typeof entry.output_version === "number"
+          ? entry.output_version
+          : 0;
+    if (entryOutputVersion !== outputVersion) {
+      depsMeasurementProfile.outputVersionMismatchSeen = true;
+      return { ok: false, reason: "output-version-mismatch" };
+    }
+
+    const topology = normalizeManifestString(entry.artifactTopology ?? entry.artifact_topology);
+    if (topology !== "wrapper" && topology !== "esm-native" && topology !== "esm-native-slim") {
+      return { ok: false, reason: "artifact-topology-missing-or-invalid" };
+    }
+    const topologyReason = normalizeManifestString(entry.artifactTopologyReason ?? entry.artifact_topology_reason);
+    if (topologyReason.length === 0) {
+      return { ok: false, reason: "artifact-topology-reason-missing" };
+    }
+
+    const outFile = normalizeManifestString(entry.outFile ?? entry.out_file);
+    if (!outFile.endsWith(".js")) return { ok: false, reason: "topology-out-file" };
+    if (!fs.existsSync(path.join(depsRoot, outFile))) {
+      return { ok: false, reason: "topology-artifact-missing" };
+    }
+
+    const artifactHash = normalizeManifestString(entry.artifactHash ?? entry.artifact_hash);
+    if (artifactHash.length === 0) return { ok: false, reason: "topology-artifact-hash-missing" };
+
+    const proofVersion =
+      typeof entry.proofVersion === "number"
+        ? entry.proofVersion
+        : typeof entry.proof_version === "number"
+          ? entry.proof_version
+          : 0;
+
+    if (topology === "wrapper") {
+      return proofVersion === TOPOLOGY_PROOF_VERSION
+        ? { ok: true }
+        : { ok: false, reason: "topology-proof-version" };
+    }
+
+    if (entry.runtimeFormat !== "esm" && entry.runtime_format !== "esm") {
+      return { ok: false, reason: "esm-native-runtime-format" };
+    }
+    if (entry.productionEsmSafe !== true && entry.production_esm_safe !== true) {
+      return { ok: false, reason: "esm-native-production-safe" };
+    }
+
+    const sharedImportsRaw = entry.sharedImports ?? entry.shared_imports;
+    if (!Array.isArray(sharedImportsRaw)) return { ok: false, reason: "esm-native-shared-imports-missing" };
+    const sharedImports = normalizeManifestStringArray(sharedImportsRaw);
+    if (sharedImports.length > 0) return { ok: false, reason: "esm-native-shared-imports" };
+
+    const chunkGroup = normalizeManifestString(entry.chunkGroup ?? entry.chunk_group);
+    if (chunkGroup.length > 0) return { ok: false, reason: "esm-native-chunk-group" };
+
+    const chunkFilesRaw = entry.chunkFiles ?? entry.chunk_files;
+    if (!Array.isArray(chunkFilesRaw)) return { ok: false, reason: "esm-native-chunk-files-missing" };
+    const chunkFiles = normalizeManifestStringArray(chunkFilesRaw);
+    if (chunkFiles.length > 0) return { ok: false, reason: "esm-native-chunk-files" };
+
+    const forbiddenFactoryTokensAbsent =
+      entry.forbiddenFactoryTokensAbsent === true || entry.forbidden_factory_tokens_absent === true;
+    const graphValidation = validateDepsPackageGraphFact(entry, depsRoot);
+    if (!graphValidation.ok) return { ok: false, reason: graphValidation.reason };
+    if (proofVersion === TOPOLOGY_PROOF_VERSION && forbiddenFactoryTokensAbsent) {
+      return { ok: true };
+    }
+
+    const scanStarted = Date.now();
+    let code = "";
+    try {
+      code = fs.readFileSync(path.join(depsRoot, outFile), "utf8");
+    } catch {
+      return { ok: false, reason: "esm-native-artifact-missing" };
+    } finally {
+      topologyValidationProfile.byteScanTimeMs += Date.now() - scanStarted;
+    }
+    if (code.includes("__ionifyModules")) return { ok: false, reason: "esm-native-factory-modules" };
+    if (code.includes("__ionifyRequire")) return { ok: false, reason: "esm-native-factory-require" };
+    if (code.includes("shared.sc")) return { ok: false, reason: "esm-native-shared-factory" };
+    for (const graphOutFile of graphValidation.graphOutFiles) {
+      if (graphOutFile === outFile) continue;
+      const graphScanStarted = Date.now();
+      let graphCode = "";
+      try {
+        graphCode = fs.readFileSync(path.join(depsRoot, graphOutFile), "utf8");
+      } catch {
+        return { ok: false, reason: "esm-native-graph-artifact-missing" };
+      } finally {
+        topologyValidationProfile.byteScanTimeMs += Date.now() - graphScanStarted;
+      }
+      if (hasForbiddenFactoryTokens(graphCode)) {
+        return { ok: false, reason: "esm-native-graph-factory-topology" };
+      }
+    }
+
+    return { ok: true, reason: "topology-proof-fallback-byte-scan" };
+  } finally {
+    topologyValidationProfile.proofValidationTimeMs += Date.now() - proofStarted;
+  }
+}
+
+function depsManifestEntriesSatisfyTopologyContract(
+  entries: Record<string, any>,
+  depsRoot: string,
+  outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION,
+): boolean {
+  return Object.values(entries).every(
+    (entry) => validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok,
+  );
+}
+
+function manifestHasDifferentOutputVersion(manifestPath: string, outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    return entries.some((entry: any) => {
+      const entryOutputVersion =
+        typeof entry?.outputVersion === "number"
+          ? entry.outputVersion
+          : typeof entry?.output_version === "number"
+            ? entry.output_version
+            : 0;
+      return entryOutputVersion > 0 && entryOutputVersion !== outputVersion;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasPriorDepsOutputVersionMismatch(ionifyDir: string, currentDepsRoot: string): boolean {
+  const localDepsDir = path.join(ionifyDir, "deps");
+  const checkParent = (parent: string): boolean => {
+    if (!fs.existsSync(parent)) return false;
+    try {
+      for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const dirPath = path.join(parent, entry.name);
+        if (path.resolve(dirPath) === path.resolve(currentDepsRoot)) continue;
+        if (manifestHasDifferentOutputVersion(path.join(dirPath, "manifest.json"))) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  };
+  if (checkParent(localDepsDir)) return true;
+  return checkParent(path.join(os.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION));
+}
+
+function statFileBytes(filePath: string): number | null {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function sortedDirectoryFiles(root: string): string[] {
+  const out: string[] = [];
+  if (!fs.existsSync(root)) return out;
+  const visit = (dir: string) => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const filePath = path.join(dir, name);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) visit(filePath);
+      else if (stat.isFile()) out.push(filePath);
+    }
+  };
+  visit(root);
+  return out;
+}
+
+function depsRootRelativePath(depsRoot: string, filePath: string): string {
+  return path.relative(depsRoot, filePath).split(path.sep).join("/");
+}
+
+function collectManifestReferencedJsFiles(entry: any): string[] {
+  const out = new Set<string>();
+  const outFile = normalizeManifestString(entry?.outFile ?? entry?.out_file);
+  if (outFile.endsWith(".js")) out.add(outFile);
+  const graph = entry?.packageGraph ?? entry?.package_graph;
+  const graphFiles = graph && typeof graph === "object" && Array.isArray(graph.files) ? graph.files : [];
+  for (const file of graphFiles) {
+    const graphOutFile = normalizeManifestString(file?.outFile ?? file?.out_file);
+    if (graphOutFile.endsWith(".js")) out.add(graphOutFile);
+  }
+  return Array.from(out).sort();
+}
+
+function sumFilesBytes(depsRoot: string, files: Iterable<string>): number {
+  let total = 0;
+  for (const file of files) total += statFileBytes(path.join(depsRoot, file)) ?? 0;
+  return total;
+}
+
+function writeGate4ValueAccountingArtifact(depsRoot: string): { bytes: number; timeMs: number } {
+  const started = Date.now();
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return { bytes: 0, timeMs: Date.now() - started };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const entriesRaw = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    const dependencyJsFiles = new Set<string>();
+    const dependencyGzipFiles = new Set<string>();
+    const summary = {
+      totalEntries: 0,
+      wrapperEntries: 0,
+      esmNativeEntries: 0,
+      esmNativeSlimEntries: 0,
+      wrapperJsBytes: 0,
+      esmNativeJsBytes: 0,
+      esmNativeSlimJsBytes: 0,
+      realDependencyJsBytes: 0,
+      realDependencyGzipBytes: 0,
+      realDependencyFileCount: 0,
+      allDependencyJsBytes: 0,
+      allDependencyGzipBytes: 0,
+      allDependencyFileCount: 0,
+      nonManifestDependencyJsBytes: 0,
+      nonManifestDependencyGzipBytes: 0,
+      nonManifestDependencyFileCount: 0,
+      packageGraphJsBytes: 0,
+      packageGraphFileCount: 0,
+      diagnosticReportBytes: 0,
+      diagnosticReportFileCount: 0,
+      contractMetadataBytes: 0,
+      contractMetadataFileCount: 0,
+      otherNonValueBytes: 0,
+      otherNonValueFileCount: 0,
+    };
+    const entries = entriesRaw.map((entry: any) => {
+      const topology = normalizeManifestString(entry?.artifactTopology ?? entry?.artifact_topology) || "wrapper";
+      const files = collectManifestReferencedJsFiles(entry);
+      for (const file of files) {
+        dependencyJsFiles.add(file);
+        const gzipFile = `${file}.gz`;
+        if (fs.existsSync(path.join(depsRoot, gzipFile))) dependencyGzipFiles.add(gzipFile);
+      }
+      const graph = entry?.packageGraph ?? entry?.package_graph;
+      const graphFiles = graph && typeof graph === "object" && Array.isArray(graph.files) ? graph.files : [];
+      const outFile = normalizeManifestString(entry?.outFile ?? entry?.out_file);
+      const entryJsBytes = sumFilesBytes(depsRoot, files);
+      const graphOnlyFiles = graphFiles
+        .map((file: any) => normalizeManifestString(file?.outFile ?? file?.out_file))
+        .filter((file: string) => file.endsWith(".js") && file !== outFile)
+        .sort();
+      const graphJsBytes = sumFilesBytes(depsRoot, graphOnlyFiles);
+
+      summary.totalEntries += 1;
+      if (topology === "wrapper") {
+        summary.wrapperEntries += 1;
+        summary.wrapperJsBytes += entryJsBytes;
+      } else if (topology === "esm-native-slim") {
+        summary.esmNativeEntries += 1;
+        summary.esmNativeSlimEntries += 1;
+        summary.esmNativeJsBytes += entryJsBytes;
+        summary.esmNativeSlimJsBytes += entryJsBytes;
+      } else if (topology === "esm-native") {
+        summary.esmNativeEntries += 1;
+        summary.esmNativeJsBytes += entryJsBytes;
+      }
+      summary.packageGraphJsBytes += graphJsBytes;
+      summary.packageGraphFileCount += graphOnlyFiles.length;
+
+      return {
+        package: normalizeManifestString(entry?.package) ||
+          `${normalizeManifestString(entry?.packageName ?? entry?.package_name)}@${normalizeManifestString(entry?.packageVersion ?? entry?.package_version)}`,
+        packageName: normalizeManifestString(entry?.packageName ?? entry?.package_name),
+        packageVersion: normalizeManifestString(entry?.packageVersion ?? entry?.package_version),
+        packageSubpath: normalizeManifestString(entry?.packageSubpath ?? entry?.package_subpath),
+        topology,
+        artifactJsBytes: entryJsBytes,
+        packageGraphJsBytes: graphJsBytes,
+        dependencyFiles: files,
+        fallbackReason:
+          topology === "wrapper"
+            ? normalizeManifestString(entry?.artifactTopologyReason ?? entry?.artifact_topology_reason)
+            : null,
+      };
+    }).sort((a: any, b: any) => {
+      const packageCompare = a.package.localeCompare(b.package);
+      if (packageCompare !== 0) return packageCompare;
+      return a.packageSubpath.localeCompare(b.packageSubpath);
+    });
+
+    summary.realDependencyJsBytes = sumFilesBytes(depsRoot, dependencyJsFiles);
+    summary.realDependencyGzipBytes = sumFilesBytes(depsRoot, dependencyGzipFiles);
+    summary.realDependencyFileCount = dependencyJsFiles.size;
+
+    const dependencyValueFiles = new Set<string>([...dependencyJsFiles, ...dependencyGzipFiles]);
+    const diagnosticReportFiles = new Set([
+      "deps-usage.v2.json",
+      "gate3-profile.json",
+      "gate4-value-accounting.json",
+      "production-closure.v1.json",
+    ]);
+    for (const filePath of sortedDirectoryFiles(depsRoot)) {
+      const rel = depsRootRelativePath(depsRoot, filePath);
+      const bytes = statFileBytes(filePath) ?? 0;
+      if (dependencyValueFiles.has(rel)) {
+        if (rel.endsWith(".js")) summary.allDependencyJsBytes += bytes;
+        else if (rel.endsWith(".js.gz")) summary.allDependencyGzipBytes += bytes;
+        summary.allDependencyFileCount += 1;
+        continue;
+      }
+      if (rel.endsWith(".js") || rel.endsWith(".js.gz")) {
+        if (rel.endsWith(".js")) {
+          summary.allDependencyJsBytes += bytes;
+          summary.nonManifestDependencyJsBytes += bytes;
+        } else {
+          summary.allDependencyGzipBytes += bytes;
+          summary.nonManifestDependencyGzipBytes += bytes;
+        }
+        summary.allDependencyFileCount += 1;
+        summary.nonManifestDependencyFileCount += 1;
+        continue;
+      }
+      if (rel === "manifest.json" || rel === ".verified" || rel.startsWith("vendor-pack.")) {
+        summary.contractMetadataBytes += bytes;
+        summary.contractMetadataFileCount += 1;
+      } else if (diagnosticReportFiles.has(rel)) {
+        summary.diagnosticReportBytes += bytes;
+        summary.diagnosticReportFileCount += 1;
+      } else {
+        summary.otherNonValueBytes += bytes;
+        summary.otherNonValueFileCount += 1;
+      }
+    }
+
+    const artifactPath = path.join(depsRoot, "gate4-value-accounting.json");
+    writeJsonFile(artifactPath, {
+      version: 1,
+      diagnostic: true,
+      valueBytesExcludeReports: true,
+      depsHash: normalizeManifestString(parsed?.depsHash ?? parsed?.deps_hash),
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      packageGraphVersion: PACKAGE_GRAPH_VERSION,
+      cacheMode: depsMeasurementProfile.cacheMode,
+      promotedArtifacts: depsMeasurementProfile.promoted,
+      promotionSkippedArtifacts: depsMeasurementProfile.promotionSkipped,
+      outputVersionMismatchSeen: depsMeasurementProfile.outputVersionMismatchSeen,
+      summary,
+      entries,
+    });
+    return { bytes: statFileBytes(artifactPath) ?? 0, timeMs: Date.now() - started };
+  } catch (err) {
+    logWarn(`[deps] WARN: Failed to write Gate 4 value accounting artifact: ${String(err)}`);
+    return { bytes: 0, timeMs: Date.now() - started };
+  }
+}
+
+function writeGate3ProfileArtifact(depsRoot: string): { bytes: number; timeMs: number } {
+  const started = Date.now();
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return { bytes: 0, timeMs: Date.now() - started };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const entriesRaw = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    const entries = entriesRaw
+      .map((entry: any) => {
+        const topology = normalizeManifestString(entry?.artifactTopology ?? entry?.artifact_topology);
+        const outFile = normalizeManifestString(entry?.outFile ?? entry?.out_file);
+        const artifactPath = outFile ? path.join(depsRoot, outFile) : "";
+        const artifactBytes = artifactPath ? statFileBytes(artifactPath) : null;
+        const graph = entry?.packageGraph ?? entry?.package_graph;
+        const graphFiles = graph && typeof graph === "object" && Array.isArray(graph.files) ? graph.files : [];
+        const graphBytes = graphFiles.reduce((total: number, file: any) => {
+          const graphOutFile = normalizeManifestString(file?.outFile ?? file?.out_file);
+          if (!graphOutFile || graphOutFile === outFile) return total;
+          return total + (statFileBytes(path.join(depsRoot, graphOutFile)) ?? 0);
+        }, 0);
+        const wrapperBytes = topology === "wrapper" ? artifactBytes : null;
+        const esmNativeBytes =
+          (topology === "esm-native" || topology === "esm-native-slim") && artifactBytes !== null
+            ? artifactBytes + graphBytes
+            : null;
+        const esmNativeSlimBytes = topology === "esm-native-slim" ? artifactBytes : null;
+        const deltaBytes =
+          typeof wrapperBytes === "number" && typeof esmNativeBytes === "number"
+            ? wrapperBytes - esmNativeBytes
+            : null;
+        const reachableRaw = graph?.reachableFiles ?? graph?.reachable_files;
+        const exportDemandRaw = entry?.exportDemand ?? entry?.export_demand ?? graph?.usedExports ?? graph?.used_exports;
+        return {
+          package: normalizeManifestString(entry?.package) ||
+            `${normalizeManifestString(entry?.packageName ?? entry?.package_name)}@${normalizeManifestString(entry?.packageVersion ?? entry?.package_version)}`,
+          entry: normalizeManifestString(entry?.entryPath ?? entry?.entry_path),
+          packageName: normalizeManifestString(entry?.packageName ?? entry?.package_name),
+          packageVersion: normalizeManifestString(entry?.packageVersion ?? entry?.package_version),
+          packageSubpath: normalizeManifestString(entry?.packageSubpath ?? entry?.package_subpath),
+          topology,
+          wrapperBytes,
+          esmNativeBytes,
+          esmNativeSlimBytes,
+          deltaBytes,
+          reachableFiles: normalizeManifestStringArray(reachableRaw),
+          usedExports: normalizeManifestStringArray(exportDemandRaw),
+          fallbackReason:
+            topology === "wrapper"
+              ? normalizeManifestString(entry?.artifactTopologyReason ?? entry?.artifact_topology_reason)
+              : null,
+        };
+      })
+      .sort((a: any, b: any) => {
+        const packageCompare = a.package.localeCompare(b.package);
+        if (packageCompare !== 0) return packageCompare;
+        return a.entry.localeCompare(b.entry);
+      });
+
+    const summary = entries.reduce(
+      (acc: any, entry: any) => {
+        acc.total += 1;
+        if (entry.topology === "esm-native") acc.esmNative += 1;
+        else if (entry.topology === "esm-native-slim") acc.esmNativeSlim += 1;
+        else if (entry.topology === "wrapper") acc.wrapper += 1;
+        if (typeof entry.wrapperBytes === "number") acc.wrapperBytes += entry.wrapperBytes;
+        if (typeof entry.esmNativeBytes === "number") acc.esmNativeBytes += entry.esmNativeBytes;
+        if (typeof entry.esmNativeSlimBytes === "number") acc.esmNativeSlimBytes += entry.esmNativeSlimBytes;
+        return acc;
+      },
+      { total: 0, wrapper: 0, esmNative: 0, esmNativeSlim: 0, wrapperBytes: 0, esmNativeBytes: 0, esmNativeSlimBytes: 0 },
+    );
+
+    const artifactPath = path.join(depsRoot, "gate3-profile.json");
+    writeJsonFile(artifactPath, {
+      version: 1,
+      diagnostic: true,
+      valueBytesExcludeReports: true,
+      depsHash: normalizeManifestString(parsed?.depsHash ?? parsed?.deps_hash),
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      summary,
+      entries,
+    });
+    return { bytes: statFileBytes(artifactPath) ?? 0, timeMs: Date.now() - started };
+  } catch (err) {
+    logWarn(`[deps] WARN: Failed to write Gate 3 profile artifact: ${String(err)}`);
+    return { bytes: 0, timeMs: Date.now() - started };
+  }
+}
+
+function writeDepsMeasurementArtifacts(depsRoot: string): void {
+  const started = Date.now();
+  const gate3 = writeGate3ProfileArtifact(depsRoot);
+  const gate4 = writeGate4ValueAccountingArtifact(depsRoot);
+  if (!isBuildProfileEnabled()) return;
+  logBuildProfileDuration("profileReportWriteTime", Date.now() - started);
+  logBuildProfileValue("gate3ProfileBytes", gate3.bytes);
+  logBuildProfileValue("gate4ValueAccountingBytes", gate4.bytes);
+  logBuildProfileDuration("gate3ProfileWriteTime", gate3.timeMs);
+  logBuildProfileDuration("gate4ValueAccountingWriteTime", gate4.timeMs);
+}
+
+function loadVerifiedManifestEntryPathMap(depsRoot: string): Map<string, any> | null {
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return null;
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const entries: Record<string, any> = parsed?.entries ?? {};
+    if (!depsManifestEntriesSatisfyTopologyContract(entries, depsRoot)) return null;
+    const currentNodeEnv = process.env.NODE_ENV ?? "";
+    const out = new Map<string, any>();
+    for (const [manifestKey, entry] of Object.entries(entries)) {
+      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
+      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
+      const outputVersion =
+        typeof (entry as any)?.outputVersion === "number"
+          ? (entry as any).outputVersion
+          : typeof (entry as any)?.output_version === "number"
+            ? (entry as any).output_version
+            : 0;
+      if (outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION) continue;
+      const nodeEnv = (entry as any)?.nodeEnv ?? (entry as any)?.node_env ?? "";
+      if (
+        typeof nodeEnv === "string" &&
+        nodeEnv.length > 0 &&
+        currentNodeEnv.length > 0 &&
+        nodeEnv.toLowerCase() !== currentNodeEnv.toLowerCase()
+      ) {
+        continue;
+      }
+      if (!fs.existsSync(path.join(depsRoot, outFile))) continue;
+      const entryPath = (entry as any)?.entryPath ?? (entry as any)?.entry_path ?? manifestKey;
+      if (typeof entryPath !== "string" || entryPath.length === 0) continue;
+      out.set(canonicalFsPath(entryPath), entry);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkVerifiedDepsSnapshotFreshness(options: {
+  rootDir: string;
+  depsRoot: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  config: any;
+}): Promise<VerifiedDepsSnapshotFreshness> {
+  if (!native?.resolveModule) {
+    return { fresh: true, checked: 0, missing: [], reason: "native-resolver-unavailable" };
+  }
+
+  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
+  if (usageEntries.length === 0) {
+    return { fresh: true, checked: 0, missing: [], reason: "no-entry-roots" };
+  }
+
+  const manifestEntriesByPath = loadVerifiedManifestEntryPathMap(options.depsRoot);
+  if (!manifestEntriesByPath) {
+    return { fresh: false, checked: 0, missing: [], reason: "manifest-missing-or-invalid" };
+  }
+
+  const optimizeExclude = Array.isArray(options.config?.optimizeDeps?.exclude)
+    ? new Set(options.config.optimizeDeps.exclude.map((s: any) => String(s)))
+    : null;
+
+  let scanned: Array<{ entryPath: string; packageName: string }> = [];
+  try {
+    scanned = await scanDepEntryPaths({
+      rootDir: options.rootDir,
+      entries: usageEntries,
+      allowedRoots: options.allowedRoots,
+    });
+  } catch {
+    return { fresh: true, checked: 0, missing: [], reason: "scan-failed" };
+  }
+
+  const currentEntryPaths = new Set<string>();
+  for (const entry of scanned) {
+    if (optimizeExclude?.has(entry.packageName)) continue;
+    if (!isOptimizableDepEntryPath(entry.entryPath)) continue;
+    currentEntryPaths.add(canonicalFsPath(entry.entryPath));
+  }
+
+  const missing = Array.from(currentEntryPaths)
+    .filter((entryPath) => !manifestEntriesByPath.has(entryPath))
+    .sort();
+  if (missing.length > 0) {
+    return {
+      fresh: false,
+      checked: currentEntryPaths.size,
+      missing,
+      reason: "manifest-missing-current-deps",
+    };
+  }
+
+  try {
+    const usage = await scanDepUsage({
+      rootDir: options.rootDir,
+      entries: usageEntries,
+      allowedRoots: options.allowedRoots,
+    });
+    for (const item of usage.values()) {
+      if (optimizeExclude?.has(item.packageName)) continue;
+      if (!isOptimizableDepEntryPath(item.entryPath)) continue;
+      const manifestEntry = manifestEntriesByPath.get(canonicalFsPath(item.entryPath));
+      if (!manifestEntry) continue;
+      const currentDemand =
+        !item.hasNamespace && !item.hasExportStar && Array.isArray(item.usedExports)
+          ? Array.from(new Set(item.usedExports.map((value) => String(value).trim()).filter(Boolean))).sort()
+          : [];
+      const persistedRaw = manifestEntry.exportDemand ?? manifestEntry.export_demand ?? [];
+      const persistedDemand = Array.isArray(persistedRaw)
+        ? Array.from(new Set(persistedRaw.map((value: unknown) => String(value).trim()).filter(Boolean))).sort()
+        : [];
+      if (
+        currentDemand.length !== persistedDemand.length ||
+        currentDemand.some((value, index) => value !== persistedDemand[index])
+      ) {
+        return {
+          fresh: false,
+          checked: currentEntryPaths.size,
+          missing: [],
+          reason: "manifest-export-demand-mismatch",
+        };
+      }
+    }
+  } catch {
+    // Entry presence is still a valid freshness proof if the usage scan fails.
+  }
+
+  return {
+    fresh: true,
+    checked: currentEntryPaths.size,
+    missing: [],
+    reason: undefined,
+  };
+}
+
 export function collectNativeExternalModules(plan: BuildPlan, configuredExternals: readonly string[]): string[] {
   const externals = new Set<string>();
 
@@ -549,8 +1518,18 @@ export function rerouteDepsArtifacts(options: {
 }): { rerouted: number; pruned: number; sharedPrewarmed: number; idRewritten: number } {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot, productionClosure } = options;
 
-  // Build reverse map: canonical entry path → { outFile, artifactPath, artifactHash, sharedImports }
-  const depsArtifactsByEntry = new Map<string, { outFile: string; artifactPath: string; artifactHash: string; sharedImports: string[] }>();
+  // Build reverse map: canonical entry path → DPL artifact metadata.
+  const depsArtifactsByEntry = new Map<
+    string,
+    {
+      outFile: string;
+      artifactPath: string;
+      artifactHash: string;
+      artifactTopology: "wrapper" | "esm-native" | "esm-native-slim";
+      sharedImports: string[];
+      graphFiles: Array<{ outFile: string; artifactPath: string }>;
+    }
+  >();
   const manifestPath = path.join(depsRoot, "manifest.json");
   if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
   try {
@@ -563,16 +1542,32 @@ export function rerouteDepsArtifacts(options: {
       const artifactPath = path.join(depsRoot, outFile);
       if (!fs.existsSync(artifactPath)) continue;
       const artifactHash: string = (entry as any)?.artifactHash ?? "";
+      const topology = normalizeManifestString((entry as any)?.artifactTopology ?? (entry as any)?.artifact_topology);
+      const artifactTopology: "wrapper" | "esm-native" | "esm-native-slim" =
+        topology === "esm-native" || topology === "esm-native-slim" || topology === "wrapper"
+          ? topology
+          : "wrapper";
       const sharedImports: string[] = Array.isArray((entry as any)?.sharedImports)
         ? (entry as any).sharedImports
         : [];
+      const packageGraph = (entry as any)?.packageGraph ?? (entry as any)?.package_graph;
+      const graphFiles: Array<{ outFile: string; artifactPath: string }> = [];
+      if (packageGraph && typeof packageGraph === "object" && packageGraph.status === "ready") {
+        const files = Array.isArray(packageGraph.files) ? packageGraph.files : [];
+        for (const file of files) {
+          const graphOutFile = typeof file?.outFile === "string" ? file.outFile : typeof file?.out_file === "string" ? file.out_file : "";
+          if (!graphOutFile.endsWith(".js") || graphOutFile === outFile) continue;
+          const graphArtifactPath = path.join(depsRoot, graphOutFile);
+          if (fs.existsSync(graphArtifactPath)) graphFiles.push({ outFile: graphOutFile, artifactPath: graphArtifactPath });
+        }
+      }
       let canonicalEntry: string;
       try {
         canonicalEntry = fs.realpathSync.native(entryPath);
       } catch {
         canonicalEntry = path.resolve(entryPath);
       }
-      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, sharedImports });
+      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, artifactTopology, sharedImports, graphFiles });
     }
   } catch {
     return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
@@ -605,6 +1600,8 @@ export function rerouteDepsArtifacts(options: {
   // Track rerouted module paths per chunk so we can scan their /@deps/ imports.
   // key: chunkId → set of rerouted artifact paths
   const reroutedPathsByChunk = new Map<string, Set<string>>();
+  const graphFilesByChunk = new Map<string, Map<string, { outFile: string; artifactPath: string }>>();
+  const graphDepsByModuleId = new Map<string, string[]>();
 
   for (const chunk of plan.chunks) {
     const keptModules: typeof chunk.modules = [];
@@ -667,6 +1664,7 @@ export function rerouteDepsArtifacts(options: {
 
         mod.fsPath = artifact.artifactPath;
         mod.hash = resolvedHash;
+        mod.artifactTopology = artifact.artifactTopology;
         const closure = productionClosure?.entries?.[artifact.outFile];
         if (closure) {
           // Fix 3 — PDC is analysis-only here: attach the closure identity/record
@@ -707,6 +1705,26 @@ export function rerouteDepsArtifacts(options: {
           claimedNewIds.add(newId);
           mod.id = newId;
           idRewritten += 1;
+        }
+
+        if (newId && artifact.graphFiles.length > 0) {
+          let chunkGraphFiles = graphFilesByChunk.get(chunk.id);
+          if (!chunkGraphFiles) {
+            chunkGraphFiles = new Map();
+            graphFilesByChunk.set(chunk.id, chunkGraphFiles);
+          }
+          const graphDepIds: string[] = [];
+          for (const graphFile of artifact.graphFiles) {
+            let graphId: string;
+            try {
+              graphId = toWsModuleId(graphFile.artifactPath, workspaceRoot);
+            } catch {
+              graphId = graphFile.artifactPath;
+            }
+            graphDepIds.push(graphId);
+            chunkGraphFiles.set(graphId, graphFile);
+          }
+          graphDepsByModuleId.set(newId, graphDepIds);
         }
 
         keptModules.push(mod);
@@ -756,6 +1774,51 @@ export function rerouteDepsArtifacts(options: {
         if (Array.isArray((mod as any).dynamicDeps)) {
           (mod as any).dynamicDeps = remapDepList((mod as any).dynamicDeps);
         }
+      }
+    }
+  }
+
+  if (graphDepsByModuleId.size > 0) {
+    for (const chunk of plan.chunks) {
+      for (const mod of chunk.modules) {
+        const graphDeps = typeof mod.id === "string" ? graphDepsByModuleId.get(mod.id) : undefined;
+        if (!graphDeps?.length) continue;
+        const nextDeps = new Set([...(mod.deps ?? []), ...graphDeps]);
+        mod.deps = Array.from(nextDeps);
+      }
+    }
+  }
+
+  if (graphFilesByChunk.size > 0) {
+    for (const chunk of plan.chunks) {
+      const graphFiles = graphFilesByChunk.get(chunk.id);
+      if (!graphFiles) continue;
+      const existingIds = new Set(chunk.modules.map((mod) => mod.id));
+      for (const [graphId, graphFile] of graphFiles.entries()) {
+        if (existingIds.has(graphId)) continue;
+        let graphCode: string;
+        try {
+          graphCode = fs.readFileSync(graphFile.artifactPath, "utf8");
+        } catch {
+          continue;
+        }
+        const graphHash = getCacheKey(graphCode);
+        const graphCasDir = getCasArtifactPath(casRoot, configHash, graphHash);
+        const graphCasFile = path.join(graphCasDir, "transformed.js");
+        if (!fs.existsSync(graphCasFile)) {
+          fs.mkdirSync(graphCasDir, { recursive: true });
+          fs.writeFileSync(graphCasFile, graphCode, "utf8");
+        }
+        chunk.modules.push({
+          id: graphId,
+          fsPath: graphFile.artifactPath,
+          hash: graphHash,
+          kind: "js",
+          deps: [],
+          dynamicDeps: [],
+          artifactTopology: "esm-native",
+        });
+        existingIds.add(graphId);
       }
     }
   }
@@ -966,6 +2029,7 @@ export function attachProductionClosureMetadata(options: {
 export async function prepareCanonicalProductionDependencyPlan(options: {
   plan: BuildPlan;
   rootDir: string;
+  ionifyDir: string;
   depsRoot: string;
   depsHash: string;
   resolvedEntries: string[] | undefined;
@@ -985,6 +2049,19 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
   pdcMs: number;
   rerouteMs: number;
 }> {
+  await repairMissingPlanDependencyArtifacts({
+    plan: options.plan,
+    rootDir: options.rootDir,
+    ionifyDir: options.ionifyDir,
+    depsRoot: options.depsRoot,
+    depsHash: options.depsHash,
+    resolvedEntries: options.resolvedEntries,
+    allowedRoots: options.allowedRoots,
+    workspaceRoot: options.workspaceRoot,
+  });
+
+  writeDepsMeasurementArtifacts(options.depsRoot);
+
   const rerouteStart = Date.now();
   const { rerouted, pruned, sharedPrewarmed, idRewritten } = rerouteDepsArtifacts({
     plan: options.plan,
@@ -1029,6 +2106,125 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
     pdcMs: Date.now() - pdcStart,
     rerouteMs,
   };
+}
+
+async function repairMissingPlanDependencyArtifacts(options: {
+  plan: BuildPlan;
+  rootDir: string;
+  ionifyDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  workspaceRoot: string;
+}): Promise<void> {
+  if (!native?.optimizeDependenciesBatch && !native?.optimizeDependency) return;
+
+  const currentManifest = loadDepsManifestIndex(options.depsRoot);
+  const coveredEntryPaths = new Set<string>();
+  for (const entry of currentManifest.values()) {
+    if (!entry.entryPath) continue;
+    coveredEntryPaths.add(canonicalFsPath(entry.entryPath));
+  }
+
+  const missing = new Set<string>();
+  for (const chunk of options.plan.chunks) {
+    for (const mod of chunk.modules) {
+      let fsPath: string | null =
+        typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, options.workspaceRoot);
+      }
+      if (!fsPath && typeof mod.id === "string" && path.isAbsolute(mod.id)) {
+        fsPath = mod.id;
+      }
+      if (!fsPath || !fsPath.includes(`${path.sep}node_modules${path.sep}`)) continue;
+      if (!isOptimizableDepEntryPath(fsPath)) continue;
+      const canonical = canonicalFsPath(fsPath);
+      if (!coveredEntryPaths.has(canonical)) missing.add(canonical);
+    }
+  }
+
+  if (missing.size === 0) return;
+
+  const sentinelPath = path.join(options.depsRoot, ".verified");
+  try {
+    fs.unlinkSync(sentinelPath);
+  } catch {
+    // The repair path is still valid when the sentinel was already absent.
+  }
+
+  fs.mkdirSync(options.depsRoot, { recursive: true });
+  const dplDemand = await scanDplUsageDemand({
+    rootDir: options.rootDir,
+    depsRoot: options.depsRoot,
+    depsHash: options.depsHash,
+    resolvedEntries: options.resolvedEntries,
+    allowedRoots: options.allowedRoots,
+  });
+  const repairEntries = Array.from(missing).map((entryPath) =>
+    withDplUsageDemand(entryPath, options.depsHash, dplDemand.demandByEntryPath),
+  );
+
+  let failed = 0;
+  let singleRepairEntries: typeof repairEntries = [];
+  if (native?.optimizeDependenciesBatch) {
+    try {
+      const results = native.optimizeDependenciesBatch(repairEntries, options.ionifyDir) ?? [];
+      for (let index = 0; index < repairEntries.length; index++) {
+        const result = results[index] as { error?: string | null } | undefined;
+        if (result?.error) {
+          failed += 1;
+          singleRepairEntries.push(repairEntries[index]);
+        }
+      }
+    } catch (err) {
+      failed = repairEntries.length;
+      singleRepairEntries = repairEntries.slice();
+      logWarn(`[deps] WARN: Plan dependency coverage repair batch failed: ${String(err)}`);
+    }
+  } else {
+    singleRepairEntries = repairEntries.slice();
+  }
+
+  if (singleRepairEntries.length > 0 && native?.optimizeDependency) {
+    let singleFailures = 0;
+    for (const entry of singleRepairEntries) {
+      try {
+        native.optimizeDependency(entry.entryPath, options.depsHash, false, true, options.ionifyDir);
+      } catch {
+        singleFailures += 1;
+      }
+    }
+    failed = singleFailures;
+  }
+
+  const repairedManifest = loadDepsManifestIndex(options.depsRoot);
+  const repairedEntryPaths = new Set<string>();
+  for (const entry of repairedManifest.values()) {
+    if (!entry.entryPath) continue;
+    repairedEntryPaths.add(canonicalFsPath(entry.entryPath));
+  }
+  const stillMissing = repairEntries.filter((entry) => !repairedEntryPaths.has(canonicalFsPath(entry.entryPath)));
+
+  if (failed === 0 && stillMissing.length === 0) {
+    try {
+      fs.writeFileSync(sentinelPath, String(Date.now()));
+    } catch {
+      // A missing sentinel only costs the next build a validation pass.
+    }
+    writeDepArtifactsToGlobalCache(options.depsHash, options.depsRoot);
+    logInfo(`[deps] Repaired ${repairEntries.length} plan dependency artifact(s) before canonical reroute`);
+  } else {
+    const failedLabel = failed > 0 ? `, failed=${failed}` : "";
+    const sample = stillMissing
+      .slice(0, 5)
+      .map((entry) => path.basename(entry.entryPath))
+      .join(", ");
+    logWarn(
+      `[deps] WARN: Plan dependency coverage repair incomplete (missing=${stillMissing.length}${failedLabel}${sample ? `, sample=${sample}` : ""}); DBI will fail closed if raw deps remain`,
+    );
+  }
 }
 
 function casTextFileMatchesHash(filePath: string, expectedHash: string): boolean {
@@ -1387,6 +2583,95 @@ function saveDepUsageIndexToDisk(depsRoot: string, depsHash: string, index: DepU
     updatedAt: new Date().toISOString(),
     deps: depsObj,
   } satisfies DepUsageDisk);
+}
+
+function depUsageDemandByEntryPath(index: DepUsageIndex | null | undefined): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!index) return out;
+
+  const byIdentity = new Map<
+    string,
+    {
+      entryPaths: Set<string>;
+      usedExports: Set<string>;
+      uncertain: boolean;
+    }
+  >();
+  for (const usage of index.values()) {
+    if (!usage) continue;
+    const subpath = computeSubpathFromEntryPath(usage.entryPath) || ".";
+    const identity = `${usage.packageName}@${usage.packageVersion}:${subpath}`;
+    let bucket = byIdentity.get(identity);
+    if (!bucket) {
+      bucket = { entryPaths: new Set(), usedExports: new Set(), uncertain: false };
+      byIdentity.set(identity, bucket);
+    }
+    bucket.entryPaths.add(canonicalFsPath(usage.entryPath));
+    if (usage.hasNamespace || usage.hasExportStar) {
+      bucket.uncertain = true;
+      continue;
+    }
+    if (!Array.isArray(usage.usedExports) || usage.usedExports.length === 0) continue;
+    for (const name of usage.usedExports
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)) {
+      bucket.usedExports.add(name);
+    }
+  }
+
+  for (const bucket of byIdentity.values()) {
+    if (bucket.uncertain || bucket.usedExports.size === 0) continue;
+    const demand = Array.from(bucket.usedExports).sort();
+    for (const entryPath of bucket.entryPaths) {
+      out.set(entryPath, demand);
+    }
+  }
+  return out;
+}
+
+async function scanDplUsageDemand(options: {
+  rootDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+}): Promise<{ index: DepUsageIndex | null; demandByEntryPath: Map<string, string[]> }> {
+  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
+  if (usageEntries.length === 0 || !native?.resolveModule) {
+    const cached = loadDepUsageIndexFromDisk(options.depsRoot, options.depsHash);
+    return { index: cached, demandByEntryPath: depUsageDemandByEntryPath(cached) };
+  }
+  try {
+    const manifestIndex = loadDepsManifestIndex(options.depsRoot);
+    const canonicalFileNames = buildCanonicalDepFileNameIndex(
+      Array.from(manifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath })),
+    );
+    const index = canonicalizeDepUsageIndex(
+      await scanDepUsage({
+        rootDir: options.rootDir,
+        entries: usageEntries,
+        allowedRoots: options.allowedRoots,
+      }),
+      canonicalFileNames,
+    );
+    saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, index);
+    return { index, demandByEntryPath: depUsageDemandByEntryPath(index) };
+  } catch (err) {
+    logWarn(`[deps] WARN: DPL usage demand scan failed; using complete dep artifacts (${String(err)})`);
+    const cached = loadDepUsageIndexFromDisk(options.depsRoot, options.depsHash);
+    return { index: cached, demandByEntryPath: new Map() };
+  }
+}
+
+function withDplUsageDemand(
+  entryPath: string,
+  depsHash: string,
+  demandByEntryPath?: Map<string, string[]> | null,
+): { entryPath: string; depsHash: string; usedExports?: string[] } {
+  const usedExports = demandByEntryPath?.get(canonicalFsPath(entryPath));
+  return usedExports && usedExports.length > 0
+    ? { entryPath, depsHash, usedExports: usedExports.slice() }
+    : { entryPath, depsHash };
 }
 
 async function resolveUsageEntries(rootDir: string, resolvedEntries: string[] | undefined): Promise<string[]> {
@@ -2294,6 +3579,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Align deps optimizer (/@deps) with build so native bundler can consume optimized ESM deps
     // (CJS wrappers like react/index.js must be optimized to browser-safe ESM).
     const depsPhaseStart = Date.now();
+    resetTopologyValidationProfile();
     const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
     const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
     const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false; // default true
@@ -2342,6 +3628,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         earlyPublishedPlan,
         ionifyDir,
         workspace.workspaceRoot,
+        path.join(ionifyDir, "cas"),
+        configHash,
       );
       logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
       const verifiedPraForDeployReadyOutput =
@@ -2495,20 +3783,58 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       ) {
         // ── T8 native parallel path ────────────────────────────────────────
         const sentinelPath = path.join(depsRoot, ".verified");
+        let depsSnapshotAlreadyFresh = false;
+        let skipGlobalRestore = false;
         if (fs.existsSync(sentinelPath)) {
-          logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
-        } else if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
+          const freshness = await checkVerifiedDepsSnapshotFreshness({
+            rootDir,
+            depsRoot,
+            resolvedEntries: entries,
+            allowedRoots: workspace.allowedRoots,
+            config,
+          });
+          if (freshness.fresh) {
+            const checkedLabel = freshness.checked > 0 ? `, checked=${freshness.checked}` : "";
+            logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified${checkedLabel})`);
+            depsMeasurementProfile.cacheMode = "local-verified-warm";
+            depsSnapshotAlreadyFresh = true;
+          } else {
+            try {
+              fs.unlinkSync(sentinelPath);
+            } catch {
+              // Non-fatal: this process will still run the optimizer repair path.
+            }
+            skipGlobalRestore = true;
+            const missingLabel = freshness.missing.length > 0 ? `, missing=${freshness.missing.length}` : "";
+            logWarn(
+              `[deps] Verified deps snapshot is stale (${freshness.reason ?? "unknown"}${missingLabel}); repairing`,
+            );
+          }
+        }
+        if (depsSnapshotAlreadyFresh) {
+          // prepareProductionAutoCorePack will find files already exist → alreadyReady fast path.
+        } else if (!skipGlobalRestore && restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
           // ── T20: Global cache hit ──────────────────────────────────────────
           try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
           logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+          depsMeasurementProfile.cacheMode = "global-cache-restored-cold";
         } else {
           // T6 artifact promotion (same as ensureOptimizedDeps)
+          depsMeasurementProfile.cacheMode =
+            depsMeasurementProfile.outputVersionMismatchSeen || hasPriorDepsOutputVersionMismatch(ionifyDir, depsRoot)
+            ? "first-run-after-output-version-bump"
+            : "no-cache-true-cold";
           if ((native as any)?.depsPromoteArtifacts) {
             const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
             if (prevRoot) {
               try {
                 const r = (native as any).depsPromoteArtifacts(prevRoot, depsRoot, depsHash, DEPS_OPTIMIZER_OUTPUT_VERSION) as { promoted: number; skipped: number };
-                if (r.promoted > 0) logInfo(`[deps] Promoted ${r.promoted} artifacts from previous deps dir (${r.skipped} need re-optimization)`);
+                depsMeasurementProfile.promoted += r.promoted;
+                depsMeasurementProfile.promotionSkipped += r.skipped;
+                if (r.promoted > 0) {
+                  depsMeasurementProfile.cacheMode = "cross-depshash-promotion";
+                  logInfo(`[deps] Promoted ${r.promoted} artifacts from previous deps dir (${r.skipped} need re-optimization)`);
+                }
               } catch { /* non-fatal */ }
             }
           }
@@ -2553,9 +3879,20 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
           if (batchEntryPaths.size > 0 || vendorExclude.size > 0) {
             fs.mkdirSync(depsRoot, { recursive: true });
-            const batchEntries = Array.from(batchEntryPaths).map((entryPath) => ({ entryPath, depsHash }));
+            const dplDemand = await scanDplUsageDemand({
+              rootDir,
+              depsRoot,
+              depsHash,
+              resolvedEntries: entries,
+              allowedRoots: workspace.allowedRoots,
+            });
+            const batchEntries = Array.from(batchEntryPaths).map((entryPath) =>
+              withDplUsageDemand(entryPath, depsHash, dplDemand.demandByEntryPath),
+            );
             // vendorExclude contains the fsPath set; build the OptimizeChunkedEntry array
-            const chunkedEntries = Array.from(vendorExclude).map((entryPath) => ({ entryPath, depsHash }));
+            const chunkedEntries = Array.from(vendorExclude).map((entryPath) =>
+              withDplUsageDemand(entryPath, depsHash, dplDemand.demandByEntryPath),
+            );
             let splitHadErrors = false;
             try {
               const splitResult = (native as any).optimizeDepsParallelSplit(batchEntries, chunkedEntries, ionifyDir) as {
@@ -2680,6 +4017,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // into node_modules source trees \u2014 saves ~500-1100ms on large apps (UP-Portal scale).
     const depStops = loadDepStopsFromManifest(depsRoot);
     logBuildProfile("depsAuthorityAndPacks", depsPhaseStart);
+    logTopologyValidationProfile(depsRoot);
 
     // Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit. The deps
     // optimizer pass above has already produced (or reused) every dep
@@ -2687,6 +4025,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // get an idempotent snapshot without paying for build plan + bundler +
     // compression.
     if (options.depsOnly) {
+      writeDepsMeasurementArtifacts(depsRoot);
       logInfo(
         `[deps] optimize-all: snapshot ready at .ionify/deps/${depsHash}/ (skipping bundler, no dist/ output).`,
       );
@@ -2723,7 +4062,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     );
     const productionReadinessRecord: ProductionReadinessRecord | null = readProductionReadinessRecord(ionifyDir);
     const sourceFreshnessPreflightStart = Date.now();
-    const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(plan, ionifyDir, workspace.workspaceRoot);
+    const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(
+      plan,
+      ionifyDir,
+      workspace.workspaceRoot,
+      path.join(ionifyDir, "cas"),
+      configHash,
+    );
     logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
     const verifiedPraForPublishedPlan =
       publishedPlan !== null &&
@@ -2807,6 +4152,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
         plan,
         rootDir,
+        ionifyDir,
         depsRoot,
         depsHash,
         resolvedEntries: entries,
@@ -3314,22 +4660,27 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     if (jobs.length > 0) {
       const transformStart = Date.now();
+      const transformCasProfile = createTransformCasProfile();
       const transformResultsById = new Map<string, TransformJobResult>();
       const nativeHandledIds = new Set<string>();
       const jobById = new Map(jobs.map((job) => [job.id, job]));
       const jsJobs = jobs.filter((job) => job.kind === "js");
+      const nativeTransformBatch = native?.nativeTransformBatch;
 
-      if (typeof native?.nativeTransformBatch === "function" && jsJobs.length > 0) {
+      if (typeof nativeTransformBatch === "function" && jsJobs.length > 0) {
         try {
-          const nativeResults = native.nativeTransformBatch(
-            jsJobs.map((job) => ({
-              id: job.id,
-              filePath: job.filePath,
-              ext: job.ext,
-              code: job.code,
-            })),
-            parserMode,
+          const nativeResults = profileElapsed(transformCasProfile, "nativeJsTransformMs", () =>
+            nativeTransformBatch(
+              jsJobs.map((job) => ({
+                id: job.id,
+                filePath: job.filePath,
+                ext: job.ext,
+                code: job.code,
+              })),
+              parserMode,
+            ),
           );
+          transformCasProfile.nativeJsTransformJobs += jsJobs.length;
 
           for (const result of nativeResults) {
             const job = jobById.get(result.id);
@@ -3358,18 +4709,53 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         }
       }
 
-      const workerJobs = jobs.filter((job) => job.kind !== "js" || !nativeHandledIds.has(job.id));
+      const cssJobs = jobs.filter((job) => job.kind === "css");
+      if (cssJobs.length > 0) {
+        const cssStart = Date.now();
+        const cssResults = await Promise.all(
+          cssJobs.map(async (job): Promise<TransformJobResult> => {
+            const result = await compileCss({
+              code: job.code,
+              filePath: job.filePath,
+              rootDir,
+              modules: job.cssNeedsJsWrapper === true,
+              modulesOptions: (config as any)?.css?.modules,
+              preprocessorOptions: (config as any)?.css?.preprocessorOptions,
+            });
+            return {
+              id: job.id,
+              filePath: job.filePath,
+              code: result.css,
+              type: "css",
+              tokens: result.tokens ?? null,
+              deps: result.deps.map((dep) => dep.filePath),
+              urlDeps: result.urlDeps.map((dep) => dep.filePath),
+              pipelineHash: result.pipelineHash,
+            };
+          }),
+        );
+        transformCasProfile.cssWorkerTransformStartupMs += Date.now() - cssStart;
+        transformCasProfile.cssWorkerJobs += cssJobs.length;
+        for (const result of cssResults) {
+          transformResultsById.set(result.id, result);
+        }
+      }
+
+      const workerJobs = jobs.filter((job) => job.kind !== "css" && (job.kind !== "js" || !nativeHandledIds.has(job.id)));
       if (workerJobs.length > 0) {
         const pool = new TransformWorkerPool();
         try {
+          const workerStart = Date.now();
           const results = await pool.runMany(
             workerJobs.map((job) => ({
               id: job.id,
               filePath: job.filePath,
               ext: job.ext,
               code: job.code,
-            }))
+            })),
           );
+          transformCasProfile.cssWorkerTransformStartupMs += Date.now() - workerStart;
+          transformCasProfile.workerTransformJobs += workerJobs.length;
           for (const result of results) {
             transformResultsById.set(result.id, result);
           }
@@ -3389,19 +4775,28 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
         const isJs = (result.type ?? "js") === "js";
         if (isJs) {
-          const baseDir = getCasArtifactPath(casRoot, configHash, job.baseHash);
-          const artifactDir = getCasArtifactPath(casRoot, configHash, job.artifactHash);
-          fs.mkdirSync(baseDir, { recursive: true });
-          fs.writeFileSync(path.join(baseDir, "transformed.js"), result.code, "utf8");
+          const baseDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCasArtifactPath(casRoot, configHash, job.baseHash),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          const artifactDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCasArtifactPath(casRoot, configHash, job.artifactHash),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          profileCasMkdir(transformCasProfile, baseDir);
+          profileCasWrite(transformCasProfile, path.join(baseDir, "transformed.js"), result.code, "base");
           if (result.map) {
-            fs.writeFileSync(path.join(baseDir, "transformed.js.map"), result.map, "utf8");
+            profileCasWrite(transformCasProfile, path.join(baseDir, "transformed.js.map"), result.map, "base");
           }
 
-          fs.mkdirSync(artifactDir, { recursive: true });
-          const finalCode = applyDefineReplacements(result.code, defineConfig);
-          fs.writeFileSync(path.join(artifactDir, "transformed.js"), finalCode, "utf8");
+          profileCasMkdir(transformCasProfile, artifactDir);
+          const finalCode = profileElapsed(transformCasProfile, "defineReplacementMs", () =>
+            applyDefineReplacements(result.code, defineConfig),
+          );
+          transformCasProfile.defineReplacementCalls += 1;
+          profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.js"), finalCode, "variant");
           if (result.map && finalCode === result.code) {
-            fs.writeFileSync(path.join(artifactDir, "transformed.js.map"), result.map, "utf8");
+            profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.js.map"), result.map, "variant");
           }
         } else {
           const deps = Array.isArray(result.deps)
@@ -3415,23 +4810,38 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               ? result.pipelineHash
               : "0";
 
-          const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => path.resolve(p))));
-          recordStructuralGraphFiles(depsAbs, workspace.workspaceRoot, configHash);
-          const depsStampHash = computeDepsContentStampHash(
-            depsAbs,
-            moduleMetaById,
-            workspace.workspaceRoot,
+          const depsAbs = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            Array.from(new Set([...deps, ...urlDeps].map((p) => path.resolve(p)))),
           );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            recordStructuralGraphFiles(depsAbs, workspace.workspaceRoot, configHash),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          const depsStampHash = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            computeDepsContentStampHash(
+              depsAbs,
+              moduleMetaById,
+              workspace.workspaceRoot,
+            ),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
 
           const cssNeedsJsWrapper = job.cssNeedsJsWrapper === true;
-          const artifactHash = getCacheKey(
-            `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`,
+          const artifactHash = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCacheKey(
+              `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`,
+            ),
           );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
           cssDerivedArtifactHashById.set(job.id, artifactHash);
 
           // Persist meta under the base hash (content-identity) for future artifact hash derivation.
-          const baseDir = getCasArtifactPath(casRoot, configHash, job.baseHash);
-          fs.mkdirSync(baseDir, { recursive: true });
+          const baseDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCasArtifactPath(casRoot, configHash, job.baseHash),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          profileCasMkdir(transformCasProfile, baseDir);
           const meta: CssCasMeta = {
             version: 1,
             baseHash: job.baseHash,
@@ -3441,11 +4851,14 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             modules: cssNeedsJsWrapper,
             generatedAt: new Date().toISOString(),
           };
-          writeJsonFile(path.join(baseDir, "meta.json"), meta);
+          profileJsonCasWrite(transformCasProfile, path.join(baseDir, "meta.json"), meta, "base");
 
-          const artifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
-          fs.mkdirSync(artifactDir, { recursive: true });
-          fs.writeFileSync(path.join(artifactDir, "transformed.css"), result.code, "utf8");
+          const artifactDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCasArtifactPath(casRoot, configHash, artifactHash),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
+          profileCasMkdir(transformCasProfile, artifactDir);
+          profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.css"), result.code, "variant");
 
           // CSS Modules build parity: provide a JS module exporting tokens for `.module.css`.
           if (cssNeedsJsWrapper) {
@@ -3454,10 +4867,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
                 ? (result.tokens as Record<string, string>)
                 : {};
             const js = renderCssTokensModule(tokens);
-            fs.writeFileSync(path.join(artifactDir, "transformed.js"), js, "utf8");
+            profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.js"), js, "variant");
             // Persist tokens for fast JS-wrapper synthesis on subsequent builds (tokens.json
             // allows the CAS hydration pass to skip PostCSS entirely for .module.css hits).
-            writeJsonFile(path.join(artifactDir, "tokens.json"), tokens);
+            profileJsonCasWrite(transformCasProfile, path.join(artifactDir, "tokens.json"), tokens, "variant");
           }
 
           // Ensure plan modules use the derived CSS artifact hash so native bundler can hydrate JS wrappers.
@@ -3466,10 +4879,16 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           job.artifactHash = artifactHash;
         }
         
-        const finalCode = isJs ? applyDefineReplacements(result.code, defineConfig) : result.code;
+        const finalCode = isJs
+          ? profileElapsed(transformCasProfile, "defineReplacementMs", () =>
+              applyDefineReplacements(result.code, defineConfig),
+            )
+          : result.code;
+        if (isJs) transformCasProfile.defineReplacementCalls += 1;
         moduleOutputs.set(job.id, { code: finalCode, type: result.type });
       }
       logBuildProfile("transformsAndCasWrites", transformStart);
+      logTransformCasProfile(transformCasProfile);
     } // end if (jobs.length > 0)
 
     // Ensure native bundler plan hashes are aligned with derived CSS artifact hashes so
@@ -3968,17 +5387,40 @@ async function ensureOptimizedDeps(options: {
   // (readProjectPackageJson, scanDepEntryPaths, N×resolveModule calls, optimizer
   // cache-check pass) — everything that takes ~5-8ms per build per 610 deps.
   const sentinelPath = path.join(depsRoot, ".verified");
+  let skipGlobalRestore = false;
   if (fs.existsSync(sentinelPath)) {
-    logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified)`);
-    return;
+    const freshness = await checkVerifiedDepsSnapshotFreshness({
+      rootDir,
+      depsRoot,
+      resolvedEntries,
+      allowedRoots,
+      config,
+    });
+    if (freshness.fresh) {
+      const checkedLabel = freshness.checked > 0 ? `, checked=${freshness.checked}` : "";
+      logInfo(`[deps] Skipping optimization (depsHash=${depsHash} already verified${checkedLabel})`);
+      depsMeasurementProfile.cacheMode = "local-verified-warm";
+      return;
+    }
+    try {
+      fs.unlinkSync(sentinelPath);
+    } catch {
+      // Non-fatal: this process will still run the optimizer repair path.
+    }
+    skipGlobalRestore = true;
+    const missingLabel = freshness.missing.length > 0 ? `, missing=${freshness.missing.length}` : "";
+    logWarn(
+      `[deps] Verified deps snapshot is stale (${freshness.reason ?? "unknown"}${missingLabel}); repairing`,
+    );
   }
 
   // ── T20: Global Tier-5 restore ────────────────────────────────────────────
   // If the global cache has a completed build for this depsHash, restore it to
   // the local depsRoot (hardlinks, ~5ms) and skip the full optimizer (~133ms).
-  if (restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
+  if (!skipGlobalRestore && restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
     try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
     logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
+    depsMeasurementProfile.cacheMode = "global-cache-restored-cold";
     return;
   }
 
@@ -3988,6 +5430,10 @@ async function ensureOptimizedDeps(options: {
   // promote artifacts whose sourceHash still matches the on-disk file — these
   // are pre-written as manifest entries so the optimizer treats them as cache
   // hits. Only new/changed deps are re-bundled from source.
+  depsMeasurementProfile.cacheMode =
+    depsMeasurementProfile.outputVersionMismatchSeen || hasPriorDepsOutputVersionMismatch(ionifyDir, depsRoot)
+    ? "first-run-after-output-version-bump"
+    : "no-cache-true-cold";
   if ((native as any)?.depsPromoteArtifacts) {
     const prevRoot = findPreviousDepsRoot(ionifyDir, depsRoot);
     if (prevRoot) {
@@ -3998,7 +5444,10 @@ async function ensureOptimizedDeps(options: {
           depsHash,
           DEPS_OPTIMIZER_OUTPUT_VERSION,
         ) as { promoted: number; skipped: number };
+        depsMeasurementProfile.promoted += result.promoted;
+        depsMeasurementProfile.promotionSkipped += result.skipped;
         if (result.promoted > 0) {
+          depsMeasurementProfile.cacheMode = "cross-depshash-promotion";
           logInfo(
             `[deps] Promoted ${result.promoted} artifacts from previous deps dir` +
             ` (${result.skipped} need re-optimization)`,
@@ -4082,7 +5531,16 @@ async function ensureOptimizedDeps(options: {
   if (entryPaths.size === 0) return;
   fs.mkdirSync(depsRoot, { recursive: true });
 
-  const entries = Array.from(entryPaths).map((entryPath) => ({ entryPath, depsHash }));
+  const dplDemand = await scanDplUsageDemand({
+    rootDir,
+    depsRoot,
+    depsHash,
+    resolvedEntries,
+    allowedRoots,
+  });
+  const entries = Array.from(entryPaths).map((entryPath) =>
+    withDplUsageDemand(entryPath, depsHash, dplDemand.demandByEntryPath),
+  );
 
   const depsSharedChunksRaw = config?.optimizeDeps?.sharedChunks;
   const depsSharedChunksMode =
@@ -4168,7 +5626,7 @@ function getGlobalDepCacheDir(depsHash: string): string {
  * Uses hardlinks for zero-copy performance (falls back to copy on EXDEV).
  * Returns true if restore succeeded.
  */
-function manifestEntryHasPdcC1Facts(entry: any, outputVersion: number): boolean {
+function manifestEntryHasPdcC1Facts(entry: any, depsRoot: string, outputVersion: number): boolean {
   if (!entry || typeof entry !== "object") return false;
   if (entry.outputVersion !== outputVersion) return false;
   if (typeof entry.outFile !== "string" || entry.outFile.length === 0) return false;
@@ -4180,15 +5638,16 @@ function manifestEntryHasPdcC1Facts(entry: any, outputVersion: number): boolean 
   if (entry.runtimeFormat !== "esm" && entry.runtimeFormat !== "cjs" && entry.runtimeFormat !== "unknown") return false;
   if (entry.sideEffects !== "none" && entry.sideEffects !== "present" && entry.sideEffects !== "unknown") return false;
   if (typeof entry.artifactHash !== "string" || entry.artifactHash.length === 0) return false;
+  if (!validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok) return false;
   return true;
 }
 
-function depsManifestSatisfiesPdcC1Contract(manifestPath: string, outputVersion: number): boolean {
+function depsManifestSatisfiesPdcC1Contract(manifestPath: string, depsRoot: string, outputVersion: number): boolean {
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
     if (!entries.length) return false;
-    return entries.every((entry) => manifestEntryHasPdcC1Facts(entry, outputVersion));
+    return entries.every((entry) => manifestEntryHasPdcC1Facts(entry, depsRoot, outputVersion));
   } catch {
     return false;
   }
@@ -4198,7 +5657,7 @@ function restoreDepArtifactsFromGlobalCache(depsHash: string, localDepsRoot: str
   const globalDir = getGlobalDepCacheDir(depsHash);
   const globalSentinel = path.join(globalDir, ".verified");
   if (!fs.existsSync(globalSentinel)) return false;
-  if (!depsManifestSatisfiesPdcC1Contract(path.join(globalDir, "manifest.json"), outputVersion)) {
+  if (!depsManifestSatisfiesPdcC1Contract(path.join(globalDir, "manifest.json"), globalDir, outputVersion)) {
     try { fs.rmSync(globalDir, { recursive: true, force: true }); } catch {}
     return false;
   }
@@ -4369,6 +5828,7 @@ function normalizePlanChunkForReuse(chunk: BuildPlan["chunks"][number]) {
       dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
       productionClosureHash: mod.productionClosureHash ?? undefined,
       sideEffects: mod.sideEffects ?? undefined,
+      artifactTopology: mod.artifactTopology ?? undefined,
       artifactHash: mod.hash ?? undefined,
     })),
   };
@@ -4420,6 +5880,7 @@ function tryReusePreviousBuildOutputs(
         dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
         productionClosureHash: mod.productionClosureHash ?? undefined,
         sideEffects: mod.sideEffects ?? undefined,
+        artifactTopology: mod.artifactTopology ?? undefined,
         artifactHash: mod.artifactHash,
       })),
     };

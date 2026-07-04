@@ -172,7 +172,7 @@ export interface NativeBinding {
     }>;
   };
   optimizeDependenciesBatch?(
-    entries: Array<{ entryPath: string; depsHash: string }>,
+    entries: Array<{ entryPath: string; depsHash: string; usedExports?: string[] | null }>,
     ionifyDir?: string | null,
   ): Array<{
     out_path?: string;
@@ -188,7 +188,7 @@ export interface NativeBinding {
    * (enforced by the TS caller via excludeEntryPaths / resolveAutoVendorEntryFsPaths).
    */
   optimizeDepsParallelSplit?(
-    batchEntries: Array<{ entryPath: string; depsHash: string }>,
+    batchEntries: Array<{ entryPath: string; depsHash: string; usedExports?: string[] | null }>,
     chunkedEntries: Array<{ entryPath: string; depsHash: string; usedExports?: string[] | null }>,
     ionifyDir?: string | null,
   ): {
@@ -219,6 +219,17 @@ export interface NativeBinding {
     gz?: Buffer | null;
   }>;
   depsOptimizerOutputVersion?(): number;
+  depsOptimizerTopologyProfile?(): {
+    topologyDecisionTimeMs?: number;
+    topologyProofValidationTimeMs?: number;
+    topologyByteScanTimeMs?: number;
+    esmNativeArtifactCount?: number;
+    wrapperArtifactCount?: number;
+    packageGraphBuildTimeMs?: number;
+    packageGraphCacheHit?: number;
+    packageGraphCacheMiss?: number;
+  };
+  depsOptimizerTopologyProfileReset?(): void;
 }
 
 function resolveCandidates(): string[] {

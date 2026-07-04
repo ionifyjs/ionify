@@ -248,6 +248,138 @@ function discoverUrlDeps(css: string, filePath: string, rootDir: string): string
   return deps;
 }
 
+const POSTCSS_DIR_DEPENDENCY_MAX_FILES = 5000;
+
+function normalizeDependencyPath(depPath: string, rootDir: string, fromFile: string): string | null {
+  const value = String(depPath || "").trim();
+  if (!value) return null;
+  if (/^(?:data:|https?:|\/\/)/i.test(value)) return null;
+  return path.isAbsolute(value) ? path.resolve(value) : path.resolve(path.dirname(fromFile) || rootDir, value);
+}
+
+function globToRegExp(glob: string): RegExp {
+  const normalized = glob.replace(/\\+/g, "/").replace(/^\.\//, "");
+  let out = "^";
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i]!;
+    if (ch === "*") {
+      if (normalized[i + 1] === "*") {
+        if (normalized[i + 2] === "/") {
+          out += "(?:.*/)?";
+          i += 2;
+        } else {
+          out += ".*";
+          i += 1;
+        }
+      } else {
+        out += "[^/]*";
+      }
+      continue;
+    }
+    if (ch === "?") {
+      out += "[^/]";
+      continue;
+    }
+    if (ch === "{") {
+      const end = normalized.indexOf("}", i + 1);
+      if (end !== -1) {
+        const body = normalized.slice(i + 1, end);
+        const parts = body
+          .split(",")
+          .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"));
+        out += `(?:${parts.join("|")})`;
+        i = end;
+        continue;
+      }
+    }
+    out += ch.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+  }
+  out += "$";
+  return new RegExp(out);
+}
+
+function expandDirectoryDependency(dir: string, glob: string | null): string[] {
+  const deps: string[] = [];
+  const root = path.resolve(dir);
+  if (!fs.existsSync(root)) return deps;
+  const stat = fs.statSync(root);
+  if (!stat.isDirectory()) return stat.isFile() ? [root] : deps;
+
+  const re = globToRegExp(glob && glob.trim() ? glob : "**/*");
+  const visit = (current: string) => {
+    if (deps.length >= POSTCSS_DIR_DEPENDENCY_MAX_FILES) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (deps.length >= POSTCSS_DIR_DEPENDENCY_MAX_FILES) return;
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".ionify" || entry.name === "dist") {
+        continue;
+      }
+      const abs = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const rel = path.relative(root, abs).replace(/\\+/g, "/");
+      if (re.test(rel)) deps.push(abs);
+    }
+  };
+  visit(root);
+  return deps;
+}
+
+function collectPostcssMessageDeps(messages: readonly unknown[], rootDir: string, filePath: string): string[] {
+  const deps: string[] = [];
+  const seen = new Set<string>();
+  const add = (depPath: string | null) => {
+    if (!depPath) return;
+    const normalized = depPath.replace(/\\+/g, "/");
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    deps.push(depPath);
+  };
+
+  for (const message of messages) {
+    const msg = message as any;
+    if (!msg || typeof msg !== "object") continue;
+    if (
+      (msg.type === "dependency" || msg.type === "build-dependency" || msg.type === "missing-dependency") &&
+      typeof msg.file === "string"
+    ) {
+      add(normalizeDependencyPath(msg.file, rootDir, filePath));
+      continue;
+    }
+    if (msg.type === "dir-dependency" && typeof msg.dir === "string") {
+      const baseDir = normalizeDependencyPath(msg.dir, rootDir, filePath);
+      if (!baseDir) continue;
+      for (const dep of expandDirectoryDependency(baseDir, typeof msg.glob === "string" ? msg.glob : null)) {
+        add(dep);
+      }
+      continue;
+    }
+    if (msg.type === "context-dependency") {
+      const raw = typeof msg.dir === "string" ? msg.dir : typeof msg.file === "string" ? msg.file : null;
+      const dep = raw ? normalizeDependencyPath(raw, rootDir, filePath) : null;
+      if (!dep) continue;
+      if (fs.existsSync(dep) && fs.statSync(dep).isDirectory()) {
+        for (const child of expandDirectoryDependency(dep, typeof msg.glob === "string" ? msg.glob : null)) {
+          add(child);
+        }
+      } else {
+        add(dep);
+      }
+    }
+  }
+
+  return deps;
+}
+
 /**
  * Rewrite **local** `url(...)` references in compiled CSS via a caller-supplied mapper.
  *
@@ -467,12 +599,9 @@ export async function compileCss({
   // Preprocessor import deps (@use/@import of partials resolved by sass/less) → watch/invalidation.
   for (const dep of preprocessorDeps) addDep(dep);
 
-  // PostCSS plugin dependency messages (e.g. postcss-import, tailwind, etc.)
-  for (const message of result.messages || []) {
-    const anyMsg = message as any;
-    if (anyMsg?.type === "dependency" && typeof anyMsg.file === "string") {
-      addDep(anyMsg.file);
-    }
+  // PostCSS plugin dependency messages (postcss-import, Tailwind content globs, etc.).
+  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, filePath)) {
+    addDep(dep);
   }
 
   // Lightweight @import discovery on the POST-preprocessor CSS (covers plain CSS @imports the

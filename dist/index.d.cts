@@ -395,6 +395,7 @@ interface BuildPlanModule {
     dependencyAbiHash?: string | null;
     productionClosureHash?: string | null;
     sideEffects?: "none" | "present" | "unknown" | null;
+    artifactTopology?: "wrapper" | "esm-native" | "esm-native-slim" | null;
 }
 interface BuildPlanChunk {
     id: string;

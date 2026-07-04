@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import "./chunk-GOMN5GJQ.js";
+import "./chunk-FHXXO743.js";
 
 // src/runtime/federation.ts
 function runtimeCache() {

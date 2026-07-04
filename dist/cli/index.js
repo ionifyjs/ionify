@@ -38,6 +38,7 @@ import {
   getCasArtifactPath,
   getDepEntry,
   hasReactRootRenderSideEffect,
+  importNativeConfigModule,
   instrumentReactRefresh,
   isCoreSingletonDepFileName,
   isCssLikeExt,
@@ -77,7 +78,7 @@ import {
   writeProductionPublicationPlan,
   writeProductionPublicationState,
   writeProductionReadinessRecord
-} from "../chunk-TZWK6MMG.js";
+} from "../chunk-GQYIVXY2.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -100,9 +101,7 @@ import {
   logInfo,
   logWarn
 } from "../chunk-SNACSSNX.js";
-import {
-  __require
-} from "../chunk-GOMN5GJQ.js";
+import "../chunk-FHXXO743.js";
 
 // src/cli/index.ts
 import { Command, Option } from "commander";
@@ -1454,7 +1453,7 @@ var TransformEngine = class {
     this.loaders.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
   async run(ctx) {
-    const { getCacheKey: getCacheKey2 } = await import("../cache-ZW5WMAZG.js");
+    const { getCacheKey: getCacheKey2 } = await import("../cache-FL2AOD3I.js");
     const path18 = await import("path");
     const fs17 = await import("fs");
     const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
@@ -10964,7 +10963,7 @@ async function runPushCommand(options = {}) {
         logInfo(chalk2.dim("[push] Cancelled \u2014 no token."));
         return;
       }
-      const { runLoginCommand: runLoginCommand2 } = await import("../login-B2577P4P.js");
+      const { runLoginCommand: runLoginCommand2 } = await import("../login-BSPQELJH.js");
       await runLoginCommand2();
       logInfo(chalk2.dim("[push] Login complete. Re-run `ionify bind --project <project-id>` if this folder is not bound yet."));
       token = resolveCloudToken();
@@ -11035,7 +11034,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11056,7 +11055,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11074,7 +11073,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -12585,7 +12584,7 @@ async function runMigrateCommand(options = {}) {
   let viteConfig = {};
   if (viteConfigPath) {
     try {
-      viteConfig = await loadViteConfig(viteConfigPath, cwd);
+      viteConfig = await loadViteConfig(viteConfigPath);
       logInfo(`Resolved ${path17.basename(viteConfigPath)}`);
     } catch (err) {
       logWarn(
@@ -12622,71 +12621,20 @@ async function runMigrateCommand(options = {}) {
   logInfo("   2. Start dev:       ionify dev");
   logInfo("   3. Review MIGRATION_REPORT.md for anything that needs manual attention.");
 }
-async function loadViteConfig(configPath, cwd) {
-  const ext = path17.extname(configPath).toLowerCase();
-  let importUrl;
-  let tmpFile = null;
-  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
-    importUrl = `file://${configPath}`;
-  } else {
-    const source = fs16.readFileSync(configPath, "utf8");
-    const code = transpileConfigToEsm(source, configPath);
-    tmpFile = path17.join(path17.dirname(configPath), `.ionify-migrate.${Date.now()}.mjs`);
-    fs16.writeFileSync(tmpFile, code, "utf8");
-    importUrl = `file://${tmpFile}`;
+async function loadViteConfig(configPath) {
+  const mod = await importNativeConfigModule(configPath);
+  let cfg = mod.default ?? mod;
+  if (typeof cfg === "function") {
+    cfg = await cfg({
+      command: "build",
+      mode: "production",
+      isSsrBuild: false,
+      isPreview: false,
+      ssrBuild: false
+    });
   }
-  try {
-    const mod = await import(importUrl);
-    let cfg = mod.default ?? mod;
-    if (typeof cfg === "function") {
-      cfg = await cfg({
-        command: "build",
-        mode: "production",
-        isSsrBuild: false,
-        isPreview: false,
-        ssrBuild: false
-      });
-    }
-    cfg = await cfg;
-    return cfg && typeof cfg === "object" ? cfg : {};
-  } finally {
-    if (tmpFile) {
-      try {
-        fs16.rmSync(tmpFile, { force: true });
-      } catch {
-      }
-    }
-  }
-}
-function transpileConfigToEsm(source, filename) {
-  let code = null;
-  const native2 = tryNativeTransform("swc", source, { filename, typescript: true, jsx: false });
-  if (native2?.code) {
-    code = native2.code;
-  } else {
-    try {
-      const swc = __require("@swc/core");
-      code = swc.transformSync(source, {
-        filename,
-        jsc: { parser: { syntax: "typescript", tsx: false }, target: "es2022" },
-        module: { type: "es6" },
-        sourceMaps: false
-      }).code;
-    } catch (err) {
-      throw new Error(`native transform unavailable and @swc/core fallback failed: ${String(err)}`);
-    }
-  }
-  const usesDirname = /\b__dirname\b/.test(source) || /\b__filename\b/.test(source);
-  const declaresDirname = /\b(?:const|let|var)\s+__(?:dir|file)name\b/.test(source);
-  if (usesDirname && !declaresDirname) {
-    const shim = `import { fileURLToPath as __ionifyFileURLToPath } from "url";
-import { dirname as __ionifyDirname } from "path";
-const __filename = __ionifyFileURLToPath(import.meta.url);
-const __dirname = __ionifyDirname(__filename);
-`;
-    code = shim + code;
-  }
-  return code;
+  cfg = await cfg;
+  return cfg && typeof cfg === "object" ? cfg : {};
 }
 function staticParseViteConfig(source) {
   const out = {};
@@ -12967,7 +12915,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-2Q57EQYI.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);

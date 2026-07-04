@@ -22,7 +22,7 @@
 import fs from "fs";
 import path from "path";
 import { logInfo, logWarn, logError } from "@cli/utils/logger";
-import { tryNativeTransform } from "@native/index";
+import { importNativeConfigModule } from "@cli/utils/native-config-loader";
 
 export interface MigrateOptions {
   cwd?: string;
@@ -74,7 +74,7 @@ export async function runMigrateCommand(options: MigrateOptions = {}): Promise<v
   let viteConfig: Record<string, unknown> = {};
   if (viteConfigPath) {
     try {
-      viteConfig = await loadViteConfig(viteConfigPath, cwd);
+      viteConfig = await loadViteConfig(viteConfigPath);
       logInfo(`Resolved ${path.basename(viteConfigPath)}`);
     } catch (err) {
       logWarn(
@@ -123,91 +123,20 @@ export async function runMigrateCommand(options: MigrateOptions = {}): Promise<v
 
 // ── Vite config resolution (Ionify-native transpile + dynamic import) ──────────
 
-async function loadViteConfig(configPath: string, cwd: string): Promise<Record<string, unknown>> {
-  const ext = path.extname(configPath).toLowerCase();
-  let importUrl: string;
-  let tmpFile: string | null = null;
-
-  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
-    // Plain JS config — import as-is, no transpile.
-    importUrl = `file://${configPath}`;
-  } else {
-    // .ts/.mts/.cts — strip types with Ionify's native SWC transform (no esbuild).
-    const source = fs.readFileSync(configPath, "utf8");
-    const code = transpileConfigToEsm(source, configPath);
-    // Emit next to the original config so BOTH relative (`./x`) and node_modules
-    // (`vite`, plugins) imports resolve exactly as the original would.
-    tmpFile = path.join(path.dirname(configPath), `.ionify-migrate.${Date.now()}.mjs`);
-    fs.writeFileSync(tmpFile, code, "utf8");
-    importUrl = `file://${tmpFile}`;
+async function loadViteConfig(configPath: string): Promise<Record<string, unknown>> {
+  const mod = await importNativeConfigModule(configPath);
+  let cfg: unknown = (mod as { default?: unknown }).default ?? mod;
+  if (typeof cfg === "function") {
+    cfg = await (cfg as (env: unknown) => unknown)({
+      command: "build",
+      mode: "production",
+      isSsrBuild: false,
+      isPreview: false,
+      ssrBuild: false,
+    });
   }
-
-  try {
-    const mod = await import(importUrl);
-    let cfg: unknown = (mod as { default?: unknown }).default ?? mod;
-    if (typeof cfg === "function") {
-      cfg = await (cfg as (env: unknown) => unknown)({
-        command: "build",
-        mode: "production",
-        isSsrBuild: false,
-        isPreview: false,
-        ssrBuild: false,
-      });
-    }
-    cfg = await cfg;
-    return cfg && typeof cfg === "object" ? (cfg as Record<string, unknown>) : {};
-  } finally {
-    if (tmpFile) {
-      try {
-        fs.rmSync(tmpFile, { force: true });
-      } catch {
-        /* best effort */
-      }
-    }
-  }
-}
-
-/** TypeScript → ESM JS using Ionify's native transform, with the in-repo @swc/core fallback. */
-function transpileConfigToEsm(source: string, filename: string): string {
-  let code: string | null = null;
-
-  // Primary: the engine's own native SWC NAPI (same path every .ts source uses).
-  const native = tryNativeTransform("swc", source, { filename, typescript: true, jsx: false });
-  if (native?.code) {
-    code = native.code;
-  } else {
-    // Fallback: @swc/core (already an Ionify dependency / used by the worker pool).
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const swc = require("@swc/core") as typeof import("@swc/core");
-      code = swc.transformSync(source, {
-        filename,
-        jsc: { parser: { syntax: "typescript", tsx: false }, target: "es2022" },
-        module: { type: "es6" },
-        sourceMaps: false,
-      }).code;
-    } catch (err) {
-      throw new Error(`native transform unavailable and @swc/core fallback failed: ${String(err)}`);
-    }
-  }
-
-  // Vite TS configs commonly use the CJS globals `__dirname` / `__filename` (e.g.
-  // `path.resolve(__dirname, "src")`). In an ESM module those are undefined, so shim them
-  // — the transpiled file is emitted in the original config's directory, so
-  // `import.meta.url` resolves `__dirname` to exactly the config's dir. Skip the shim if the
-  // config declares them itself (ESM-style) to avoid a redeclaration SyntaxError.
-  const usesDirname = /\b__dirname\b/.test(source) || /\b__filename\b/.test(source);
-  const declaresDirname = /\b(?:const|let|var)\s+__(?:dir|file)name\b/.test(source);
-  if (usesDirname && !declaresDirname) {
-    const shim =
-      `import { fileURLToPath as __ionifyFileURLToPath } from "url";\n` +
-      `import { dirname as __ionifyDirname } from "path";\n` +
-      `const __filename = __ionifyFileURLToPath(import.meta.url);\n` +
-      `const __dirname = __ionifyDirname(__filename);\n`;
-    code = shim + code;
-  }
-
-  return code;
+  cfg = await cfg;
+  return cfg && typeof cfg === "object" ? (cfg as Record<string, unknown>) : {};
 }
 
 // ── Best-effort static fallback (only when execution fails) ────────────────────
