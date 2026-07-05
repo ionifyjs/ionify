@@ -32,7 +32,6 @@ export type ProductionReadinessIdentity = {
   workspaceHash: string;
   depsHash: string;
   productionPlanHash: string;
-  pdcClosureHash: string | null;
   tier4ChunkManifestHash: string | null;
   distOutputManifestHash: string | null;
   compressionManifestHash: string | null;
@@ -81,7 +80,6 @@ export type CreateProductionReadinessRecordInput = {
   projectRoot: string;
   depsHash: string;
   plan: BuildPlan;
-  pdcClosureHash?: string | null;
   artifacts: ProductionReadinessChunkArtifact[];
   dist: {
     manifestHash: string;
@@ -110,7 +108,6 @@ export type CreatePartialProductionReadinessRecordInput = {
   projectRoot: string;
   depsHash: string;
   plan: BuildPlan;
-  pdcClosureHash?: string | null;
   tier4ChunkManifestHash?: string | null;
   integrityPolicyHash?: string | null;
   engineVersion?: string | null;
@@ -170,7 +167,6 @@ export function computeProductionPlanHash(plan: BuildPlan): string {
         dependencyFormat: mod.dependencyFormat ?? null,
         usedExports: mod.usedExports ? [...mod.usedExports].sort() : null,
         dependencyAbiHash: mod.dependencyAbiHash ?? null,
-        productionClosureHash: mod.productionClosureHash ?? null,
         sideEffects: mod.sideEffects ?? null,
       })),
     })),
@@ -252,7 +248,6 @@ export function createProductionReadinessRecord(
     workspaceHash,
     depsHash: input.depsHash,
     productionPlanHash,
-    pdcClosureHash: input.pdcClosureHash ?? null,
     tier4ChunkManifestHash,
     distOutputManifestHash,
     compressionManifestHash,
@@ -310,7 +305,6 @@ export function createPartialProductionReadinessRecord(
     workspaceHash,
     depsHash: input.depsHash,
     productionPlanHash: computeProductionPlanHash(input.plan),
-    pdcClosureHash: input.pdcClosureHash ?? null,
     tier4ChunkManifestHash: input.tier4ChunkManifestHash ?? null,
     distOutputManifestHash: null,
     compressionManifestHash: null,

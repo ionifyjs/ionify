@@ -54,6 +54,7 @@ import {
   publicPathForFile,
   readLockfile,
   reconcilePackEntries,
+  registerCssDemandGraphSourceFiles,
   registerDepEntry,
   renderCssModule,
   renderCssRawStringModule,
@@ -78,7 +79,7 @@ import {
   writeProductionPublicationPlan,
   writeProductionPublicationState,
   writeProductionReadinessRecord
-} from "../chunk-GQYIVXY2.js";
+} from "../chunk-XXQ4WOL2.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -5849,6 +5850,16 @@ ${refreshCode}
     });
   };
   const graph = new Graph(rawVersionInputs, { ionifyDir });
+  const registerDevCssGraphSources = () => {
+    registerCssDemandGraphSourceFiles(
+      rootDir,
+      graph.listFilesByKind("js").filter((filePath) => {
+        if (filePath.includes("node_modules") || filePath.includes(`${path6.sep}.ionify${path6.sep}`)) return false;
+        const clean = filePath.split("?")[0].split("#")[0].toLowerCase();
+        return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+      })
+    );
+  };
   const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
   if (userConfig?.federation) {
     syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
@@ -6668,6 +6679,7 @@ ${refreshCode}
           }
           if (finalBuffer && !fs7.existsSync(baseCssFile)) {
             try {
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
@@ -6712,6 +6724,7 @@ ${refreshCode}
               body = renderCssUrlModule(rawUrl);
               if (!fs7.existsSync(baseCssFile)) {
                 try {
+                  registerDevCssGraphSources();
                   const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                     code: cssSource,
                     filePath: effectiveFsPath,
@@ -6750,6 +6763,7 @@ ${refreshCode}
                 }
               }
             } else {
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
@@ -9347,9 +9361,12 @@ async function publishProductionTransformCas(options) {
       writeJsonFile4(path8.join(baseDir, "meta.json"), {
         version: 1,
         baseHash: job.baseHash,
+        artifactHash,
         pipelineHash,
+        depsStampHash,
         deps: depsAbs.sort(),
         urlDeps: Array.from(new Set(urlDeps.map((p) => path8.resolve(p)))).sort(),
+        depsProof: buildCssCasDepProof(depsAbs, moduleMetaById, options.workspaceRoot),
         modules: job.cssNeedsJsWrapper === true,
         generatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
@@ -9473,6 +9490,41 @@ function computeDepsContentStampHash(depsAbs, moduleMetaById, workspaceRoot) {
   }
   entries.sort();
   return getCacheKey(entries.join("|"));
+}
+function buildCssCasDepProof(depsAbs, moduleMetaById, workspaceRoot) {
+  const proofs = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const depAbs of depsAbs) {
+    const abs = path8.resolve(depAbs);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId && moduleMetaById.has(depId)) continue;
+    try {
+      const st = fs9.statSync(abs);
+      if (!st.isFile()) continue;
+      proofs.push({
+        filePath: abs,
+        dev: st.dev,
+        ino: st.ino,
+        mtimeMs: st.mtimeMs,
+        ctimeMs: st.ctimeMs,
+        size: st.size,
+        hash: getCacheKey(fs9.readFileSync(abs))
+      });
+    } catch {
+      proofs.push({
+        filePath: abs,
+        dev: 0,
+        ino: 0,
+        mtimeMs: 0,
+        ctimeMs: 0,
+        size: -1,
+        hash: "missing"
+      });
+    }
+  }
+  return proofs.sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 function readJsonFile4(filePath) {
   if (!fs9.existsSync(filePath)) return null;
@@ -9668,7 +9720,7 @@ async function runPublishCommand(options = {}) {
       ms: state.tiers.graph.ms
     };
     state.timingsMs.plan = state.tiers.plan.ms ?? 0;
-    state.timingsMs.pdc = canonicalDeps.pdcMs;
+    state.timingsMs.pdc = 0;
     state.tiers.transforms = { state: "publishing" };
     writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const transformResult = await publishProductionTransformCas({
@@ -9731,7 +9783,6 @@ async function runPublishCommand(options = {}) {
           projectRoot: rootDir,
           depsHash,
           plan,
-          pdcClosureHash: canonicalDeps.productionClosure?.closureHash ?? null,
           tier4ChunkManifestHash,
           depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2
         })
@@ -11034,7 +11085,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11055,7 +11106,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11073,7 +11124,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -12915,7 +12966,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-V4QWPPPN.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);

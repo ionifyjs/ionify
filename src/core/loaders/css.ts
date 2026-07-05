@@ -13,6 +13,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { performance } from "perf_hooks";
 import { createRequire } from "module";
 import { pathToFileURL, fileURLToPath } from "url";
 import postcss, { AcceptedPlugin, ProcessOptions } from "postcss";
@@ -20,6 +21,11 @@ import postcssLoadConfig from "postcss-load-config";
 import postcssModules from "postcss-modules";
 import { getCacheKey } from "@core/cache";
 import type { IonifyCSSConfig } from "@core/types/config";
+import {
+  buildCssDemandAnalysis,
+  getCssDemandGraphSourceFiles,
+  type CssDemandAnalysis,
+} from "./css-demand";
 
 type CssTokens = Record<string, string>;
 
@@ -143,7 +149,41 @@ export interface CompileCssResult {
   deps: CssDependency[];
   urlDeps: CssDependency[];
   pipelineHash: string;
+  cssDemand?: CssDemandAnalysis | null;
+  tailwindGraphContent?: CssTailwindGraphContentProfile | null;
+  profile?: CompileCssProfile;
 }
+
+export type CssTailwindGraphContentProfile = {
+  attempted: boolean;
+  enabled: boolean;
+  ms: number;
+  files: number;
+  plugins: number;
+  configPath: string | null;
+  fallbackReason: string | null;
+};
+
+export type CompileCssProfile = {
+  totalMs: number;
+  preprocessorMs: number;
+  postcssConfigLoadMs: number;
+  postcssConfigWaitMs: number;
+  postcssConfigCacheHit: boolean;
+  tailwindGraphContentMs: number;
+  postcssProcessMs: number;
+  postcssPluginMs: number;
+  tailwindPluginMs: number;
+  autoprefixerPluginMs: number;
+  rtlcssPluginMs: number;
+  otherPostcssPluginMs: number;
+  dependencyCollectionMs: number;
+  importDependencyDiscoveryMs: number;
+  urlDependencyDiscoveryMs: number;
+  pipelineHashMs: number;
+  cssDemandProofMs: number;
+  postcssPluginTimings: Record<string, number>;
+};
 
 interface RenderCssModuleOptions {
   css: string;
@@ -160,33 +200,56 @@ type LoadedPostcssConfig = {
 };
 
 const cachedPostcssConfigByRoot = new Map<string, LoadedPostcssConfig>();
+const pendingPostcssConfigByRoot = new Map<string, Promise<LoadedPostcssConfig>>();
 const postcssConfigFailedRoots = new Set<string>();
 
-async function getPostcssConfig(rootDir: string) {
+async function getPostcssConfigProfiled(rootDir: string): Promise<{
+  config: LoadedPostcssConfig;
+  loadMs: number;
+  waitMs: number;
+  cacheHit: boolean;
+}> {
   const key = path.resolve(rootDir);
   const cached = cachedPostcssConfigByRoot.get(key);
-  if (cached) return cached;
+  if (cached) return { config: cached, loadMs: 0, waitMs: 0, cacheHit: true };
+  const pending = pendingPostcssConfigByRoot.get(key);
+  if (pending) {
+    const started = cssProfileNow();
+    return { config: await pending, loadMs: 0, waitMs: cssProfileNow() - started, cacheHit: false };
+  }
   if (postcssConfigFailedRoots.has(key)) {
     const empty: LoadedPostcssConfig = { plugins: [], options: {}, configFile: null };
     cachedPostcssConfigByRoot.set(key, empty);
-    return empty;
+    return { config: empty, loadMs: 0, waitMs: 0, cacheHit: true };
   }
-  try {
-    const result = await postcssLoadConfig({}, rootDir);
-    const configFile =
-      typeof (result as any)?.file === "string" ? ((result as any).file as string) : null;
-    const loaded: LoadedPostcssConfig = {
-      plugins: Array.isArray(result.plugins) ? result.plugins : [],
-      options: result.options ?? {},
-      configFile,
-    };
-    cachedPostcssConfigByRoot.set(key, loaded);
-  } catch {
-    postcssConfigFailedRoots.add(key);
-    const empty: LoadedPostcssConfig = { plugins: [], options: {}, configFile: null };
-    cachedPostcssConfigByRoot.set(key, empty);
-  }
-  return cachedPostcssConfigByRoot.get(key)!;
+  const started = cssProfileNow();
+  const load = (async (): Promise<LoadedPostcssConfig> => {
+    try {
+      const result = await postcssLoadConfig({}, rootDir);
+      const configFile =
+        typeof (result as any)?.file === "string" ? ((result as any).file as string) : null;
+      const loaded: LoadedPostcssConfig = {
+        plugins: Array.isArray(result.plugins) ? result.plugins : [],
+        options: result.options ?? {},
+        configFile,
+      };
+      cachedPostcssConfigByRoot.set(key, loaded);
+      return loaded;
+    } catch {
+      postcssConfigFailedRoots.add(key);
+      const empty: LoadedPostcssConfig = { plugins: [], options: {}, configFile: null };
+      cachedPostcssConfigByRoot.set(key, empty);
+      return empty;
+    } finally {
+      pendingPostcssConfigByRoot.delete(key);
+    }
+  })();
+  pendingPostcssConfigByRoot.set(key, load);
+  return { config: await load, loadMs: cssProfileNow() - started, waitMs: 0, cacheHit: false };
+}
+
+async function getPostcssConfig(rootDir: string) {
+  return (await getPostcssConfigProfiled(rootDir)).config;
 }
 
 function stablePluginName(plugin: unknown): string {
@@ -200,6 +263,286 @@ function stablePluginName(plugin: unknown): string {
     return "anonymous";
   }
   return "unknown";
+}
+
+function cssProfileNow(): number {
+  return performance.now();
+}
+
+function addCssTiming(timings: Map<string, number>, label: string, ms: number): void {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  timings.set(label, (timings.get(label) ?? 0) + ms);
+}
+
+function labelPostcssPlugin(plugin: AcceptedPlugin, index: number): string {
+  const anyPlugin = plugin as any;
+  const direct =
+    typeof anyPlugin?.postcssPlugin === "string" && anyPlugin.postcssPlugin.length > 0
+      ? anyPlugin.postcssPlugin
+      : typeof anyPlugin?.name === "string" && anyPlugin.name.length > 0
+        ? anyPlugin.name
+        : "";
+  return direct || `postcss-plugin-${index}`;
+}
+
+function timeMaybePromise<T>(timings: Map<string, number>, label: string, started: number, value: T): T {
+  if (value && typeof (value as any).then === "function") {
+    return (value as any).finally(() => addCssTiming(timings, label, cssProfileNow() - started)) as T;
+  }
+  addCssTiming(timings, label, cssProfileNow() - started);
+  return value;
+}
+
+function wrapPostcssVisitorObject<T>(visitor: T, label: string, timings: Map<string, number>): T {
+  if (!visitor || typeof visitor !== "object") return visitor;
+  const source = visitor as Record<string, any>;
+  const out: Record<string, any> = Array.isArray(source) ? [...(source as any[])] : { ...source };
+  for (const key of Object.keys(out)) {
+    if (key === "postcssPlugin") continue;
+    const value = out[key];
+    if (typeof value === "function") {
+      out[key] = function timedPostcssVisitor(this: unknown, ...args: unknown[]) {
+        const started = cssProfileNow();
+        const result = value.apply(this, args);
+        if (key === "prepare" && result && typeof result === "object" && typeof (result as any).then !== "function") {
+          addCssTiming(timings, label, cssProfileNow() - started);
+          return wrapPostcssVisitorObject(result, label, timings);
+        }
+        if (key === "prepare" && result && typeof (result as any).then === "function") {
+          return (result as Promise<unknown>).then((prepared) => {
+            addCssTiming(timings, label, cssProfileNow() - started);
+            return wrapPostcssVisitorObject(prepared, label, timings);
+          });
+        }
+        return timeMaybePromise(timings, label, started, result);
+      };
+      continue;
+    }
+    if (value && typeof value === "object") {
+      out[key] = wrapPostcssVisitorObject(value, label, timings);
+    }
+  }
+  return out as T;
+}
+
+function wrapPostcssPluginsForTiming(
+  plugins: AcceptedPlugin[],
+  timings: Map<string, number>,
+): AcceptedPlugin[] {
+  return plugins.map((plugin, index) => {
+    const label = labelPostcssPlugin(plugin, index);
+    if (typeof plugin === "function") {
+      const original = plugin as any;
+      const wrapped = function timedPostcssPlugin(this: unknown, ...args: unknown[]) {
+        const started = cssProfileNow();
+        const result = original.apply(this, args);
+        if (result && typeof result === "object" && typeof result.then !== "function") {
+          addCssTiming(timings, label, cssProfileNow() - started);
+          return wrapPostcssVisitorObject(result, label, timings);
+        }
+        if (result && typeof result.then === "function") {
+          return result.then((prepared: unknown) => {
+            addCssTiming(timings, label, cssProfileNow() - started);
+            return wrapPostcssVisitorObject(prepared, label, timings);
+          });
+        }
+        return timeMaybePromise(timings, label, started, result);
+      };
+      Object.assign(wrapped, original);
+      return wrapped as AcceptedPlugin;
+    }
+    return wrapPostcssVisitorObject(plugin, label, timings) as AcceptedPlugin;
+  });
+}
+
+function classifyPostcssPluginTimings(timings: Record<string, number>): Pick<
+  CompileCssProfile,
+  "tailwindPluginMs" | "autoprefixerPluginMs" | "rtlcssPluginMs" | "otherPostcssPluginMs"
+> {
+  let tailwindPluginMs = 0;
+  let autoprefixerPluginMs = 0;
+  let rtlcssPluginMs = 0;
+  let otherPostcssPluginMs = 0;
+  const entries = Object.entries(timings).sort(([a], [b]) => a.localeCompare(b));
+  for (const [label, ms] of entries) {
+    const normalized = label.toLowerCase();
+    if (normalized.includes("tailwind")) {
+      tailwindPluginMs += ms;
+    } else if (normalized.includes("autoprefixer") || normalized === "plugin") {
+      autoprefixerPluginMs += ms;
+    } else if (normalized.includes("rtlcss")) {
+      rtlcssPluginMs += ms;
+    } else {
+      otherPostcssPluginMs += ms;
+    }
+  }
+  return { tailwindPluginMs, autoprefixerPluginMs, rtlcssPluginMs, otherPostcssPluginMs };
+}
+
+function emptyTailwindGraphContentProfile(fallbackReason: string | null): CssTailwindGraphContentProfile {
+  return {
+    attempted: false,
+    enabled: false,
+    ms: 0,
+    files: 0,
+    plugins: 0,
+    configPath: null,
+    fallbackReason,
+  };
+}
+
+function findTailwindConfigPath(rootDir: string): string | null {
+  const candidates = [
+    "tailwind.config.js",
+    "tailwind.config.cjs",
+    "tailwind.config.mjs",
+    "tailwind.config.ts",
+    "tailwind.config.cts",
+    "tailwind.config.mts",
+  ];
+  for (const candidate of candidates) {
+    const abs = path.join(rootDir, candidate);
+    if (fs.existsSync(abs)) return abs;
+  }
+  return null;
+}
+
+function isTailwindPluginFactory(plugin: AcceptedPlugin): boolean {
+  if (typeof plugin !== "function") return false;
+  const fn = plugin as unknown as { name?: string; postcss?: boolean; toString?: () => string };
+  if (fn.name === "tailwindcss" && fn.postcss === true) return true;
+  const source = typeof fn.toString === "function" ? fn.toString() : "";
+  return fn.postcss === true && source.includes('postcssPlugin: "tailwindcss"');
+}
+
+function cssMayUseTailwindSyntax(css: string): boolean {
+  return /@(?:tailwind|apply|config|import|layer|screen|variants|responsive|theme|utility|variant|custom-variant)\b|\b(?:theme|screen)\s*\(/.test(css);
+}
+
+function cssNeedsTailwindContentScan(css: string): boolean {
+  return /@tailwind\s+utilities\b|@(?:source|plugin)\b/.test(css);
+}
+
+function graphTailwindContent(originalContent: unknown, files: string[]): unknown {
+  if (originalContent && typeof originalContent === "object" && !Array.isArray(originalContent)) {
+    return {
+      ...(originalContent as Record<string, unknown>),
+      files,
+    };
+  }
+  return { files };
+}
+
+function stripPresetContent(preset: unknown): unknown {
+  if (!preset || typeof preset !== "object" || Array.isArray(preset)) return preset;
+  const input = preset as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const key of Object.keys(input)) {
+    if (key === "content") continue;
+    output[key] = key === "presets" && Array.isArray(input[key])
+      ? (input[key] as unknown[]).map(stripPresetContent)
+      : input[key];
+  }
+  return output;
+}
+
+function cloneTailwindConfigForGraphContent(config: unknown, files: string[]): Record<string, unknown> {
+  const source = config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : {};
+  return {
+    ...source,
+    content: graphTailwindContent(source.content, files),
+    presets: Array.isArray(source.presets) ? source.presets.map(stripPresetContent) : source.presets,
+  };
+}
+
+function createTailwindGraphContentPipeline(
+  rootDir: string,
+  css: string,
+  plugins: AcceptedPlugin[],
+): { plugins: AcceptedPlugin[]; profile: CssTailwindGraphContentProfile } {
+  const started = Date.now();
+  const tailwindIndexes = plugins
+    .map((plugin, index) => (isTailwindPluginFactory(plugin) ? index : -1))
+    .filter((index) => index >= 0);
+  if (tailwindIndexes.length === 0) return { plugins, profile: emptyTailwindGraphContentProfile("no-tailwind-plugin") };
+
+  if (!cssMayUseTailwindSyntax(css)) {
+    const tailwindIndexSet = new Set(tailwindIndexes);
+    return {
+      plugins: plugins.filter((_plugin, index) => !tailwindIndexSet.has(index)),
+      profile: {
+        ...emptyTailwindGraphContentProfile("no-tailwind-syntax"),
+        attempted: true,
+        ms: Date.now() - started,
+        plugins: tailwindIndexes.length,
+      },
+    };
+  }
+
+  const graphFiles = getCssDemandGraphSourceFiles(rootDir);
+  if (graphFiles.length === 0) return { plugins, profile: emptyTailwindGraphContentProfile("no-graph-source-files") };
+
+  const configPath = findTailwindConfigPath(rootDir);
+  if (!configPath) return { plugins, profile: emptyTailwindGraphContentProfile("no-tailwind-config") };
+
+  try {
+    const req = createRequire(path.join(rootDir, "package.json"));
+    const tailwindFactory = req("tailwindcss") as (configOrPath?: unknown) => AcceptedPlugin;
+    const tailwindEntry = req.resolve("tailwindcss");
+    const loadConfigPath =
+      [
+        path.join(path.dirname(tailwindEntry), "lib", "load-config.js"),
+        path.join(path.dirname(tailwindEntry), "lib", "lib", "load-config.js"),
+      ].find((candidate) => fs.existsSync(candidate)) ?? path.join(path.dirname(tailwindEntry), "lib", "load-config.js");
+    const loadConfigModule = req(loadConfigPath) as { loadConfig?: (filePath: string) => unknown };
+    if (typeof tailwindFactory !== "function" || typeof loadConfigModule.loadConfig !== "function") {
+      return {
+        plugins,
+        profile: {
+          ...emptyTailwindGraphContentProfile("tailwind-loader-unavailable"),
+          attempted: true,
+          ms: Date.now() - started,
+          files: graphFiles.length,
+          configPath,
+        },
+      };
+    }
+
+    const userConfig = loadConfigModule.loadConfig(configPath);
+    const contentFiles = cssNeedsTailwindContentScan(css) ? graphFiles : [];
+    const graphConfig = cloneTailwindConfigForGraphContent(userConfig, contentFiles);
+    let replaced = 0;
+    const nextPlugins = plugins.map((plugin, index) => {
+      if (!tailwindIndexes.includes(index)) return plugin;
+      replaced += 1;
+      return tailwindFactory(graphConfig);
+    });
+    return {
+      plugins: nextPlugins,
+      profile: {
+        attempted: true,
+        enabled: replaced > 0,
+        ms: Date.now() - started,
+        files: contentFiles.length,
+        plugins: replaced,
+        configPath,
+        fallbackReason: replaced > 0 ? null : "tailwind-plugin-not-replaced",
+      },
+    };
+  } catch (err) {
+    return {
+      plugins,
+      profile: {
+        ...emptyTailwindGraphContentProfile(`tailwind-graph-content-error:${String(err).split("\n")[0]}`),
+        attempted: true,
+        ms: Date.now() - started,
+        files: graphFiles.length,
+        configPath,
+      },
+    };
+  }
 }
 
 function sortObjectKeys<T extends Record<string, any>>(value: T): T {
@@ -540,6 +883,20 @@ export async function compileCss({
   modulesOptions,
   preprocessorOptions,
 }: CompileCssOptions): Promise<CompileCssResult> {
+  const totalStart = cssProfileNow();
+  let preprocessorMs = 0;
+  let postcssConfigLoadMs = 0;
+  let postcssConfigWaitMs = 0;
+  let postcssConfigCacheHit = false;
+  let tailwindGraphContentMs = 0;
+  let postcssProcessMs = 0;
+  let dependencyCollectionMs = 0;
+  let importDependencyDiscoveryMs = 0;
+  let urlDependencyDiscoveryMs = 0;
+  let pipelineHashMs = 0;
+  let cssDemandProofMs = 0;
+  const pluginTimingMap = new Map<string, number>();
+
   // Preprocessor pre-pass (Sass/SCSS/Less) → CSS, BEFORE PostCSS (css-pipeline-contract §8).
   // Unified across dev/build/worker; preprocessor import deps + lib identity are tracked below.
   const preprocessorLang = detectPreprocessorLang(filePath);
@@ -547,14 +904,23 @@ export async function compileCss({
   let preprocessorIdentity: { lang: string; version: string; options?: Record<string, any> } | null = null;
   const preprocessorDeps: string[] = [];
   if (preprocessorLang) {
+    const started = cssProfileNow();
     const pre = await runPreprocessor(code, filePath, rootDir, preprocessorLang, preprocessorOptions);
+    preprocessorMs += cssProfileNow() - started;
     sourceCss = pre.css;
     preprocessorDeps.push(...pre.deps);
     preprocessorIdentity = { lang: preprocessorLang, version: pre.version, options: preprocessorOptions };
   }
 
-  const { plugins, options, configFile } = await getPostcssConfig(rootDir);
-  const pipeline = [...plugins];
+  const configProfile = await getPostcssConfigProfiled(rootDir);
+  const { plugins, options, configFile } = configProfile.config;
+  postcssConfigLoadMs += configProfile.loadMs;
+  postcssConfigWaitMs += configProfile.waitMs;
+  postcssConfigCacheHit = configProfile.cacheHit;
+  const tailwindStart = cssProfileNow();
+  const tailwindGraphContent = createTailwindGraphContentPipeline(rootDir, sourceCss, plugins);
+  tailwindGraphContentMs += cssProfileNow() - tailwindStart;
+  const pipeline = [...tailwindGraphContent.plugins];
   let tokens: CssTokens | undefined;
 
   if (modules) {
@@ -570,13 +936,17 @@ export async function compileCss({
     );
   }
 
-  const runner = postcss(pipeline);
+  const timedPipeline = wrapPostcssPluginsForTiming(pipeline, pluginTimingMap);
+  const runner = postcss(timedPipeline);
+  const processStart = cssProfileNow();
   const result = await runner.process(sourceCss, {
     ...options,
     from: filePath,
     map: false,
   });
+  postcssProcessMs += cssProfileNow() - processStart;
 
+  const depStart = cssProfileNow();
   const deps: CssDependency[] = [];
   const urlDeps: CssDependency[] = [];
   const seenDeps = new Set<string>();
@@ -603,10 +973,12 @@ export async function compileCss({
   for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, filePath)) {
     addDep(dep);
   }
+  dependencyCollectionMs += cssProfileNow() - depStart;
 
   // Lightweight @import discovery on the POST-preprocessor CSS (covers plain CSS @imports the
   // preprocessor passed through; preprocessor-level @use/@import are already recorded above).
   // Note: This is best-effort; external URLs are ignored.
+  const importStart = cssProfileNow();
   const importRe =
     /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
   let match: RegExpExecArray | null;
@@ -616,13 +988,35 @@ export async function compileCss({
     const resolved = resolveCssSpecifier(spec, filePath, rootDir);
     if (resolved) addDep(resolved);
   }
+  importDependencyDiscoveryMs += cssProfileNow() - importStart;
 
   // url() dependency discovery (assets referenced from CSS)
+  const urlStart = cssProfileNow();
   for (const dep of discoverUrlDeps(result.css, filePath, rootDir)) {
     addUrlDep(dep);
   }
+  urlDependencyDiscoveryMs += cssProfileNow() - urlStart;
 
+  const pipelineHashStart = cssProfileNow();
   const pipelineHash = await computePipelineHash(rootDir, modules, modulesOptions, preprocessorIdentity);
+  pipelineHashMs += cssProfileNow() - pipelineHashStart;
+  const depsForDemand = Array.from(new Set([...deps.map((dep) => dep.filePath), ...urlDeps.map((dep) => dep.filePath)]));
+  const demandStart = cssProfileNow();
+  const cssDemand = buildCssDemandAnalysis({
+    rootDir,
+    cssFile: filePath,
+    cssHash: getCacheKey(code),
+    pipelineHash,
+    deps: depsForDemand,
+  });
+  cssDemandProofMs += cssProfileNow() - demandStart;
+
+  const postcssPluginTimings = Object.fromEntries(
+    Array.from(pluginTimingMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, ms]) => [label, Number(ms.toFixed(2))]),
+  );
+  const pluginClassifications = classifyPostcssPluginTimings(postcssPluginTimings);
 
   const compiled: CompileCssResult = {
     css: result.css,
@@ -630,6 +1024,25 @@ export async function compileCss({
     deps,
     urlDeps,
     pipelineHash,
+    cssDemand,
+    tailwindGraphContent: tailwindGraphContent.profile,
+    profile: {
+      totalMs: cssProfileNow() - totalStart,
+      preprocessorMs,
+      postcssConfigLoadMs,
+      postcssConfigWaitMs,
+      postcssConfigCacheHit,
+      tailwindGraphContentMs,
+      postcssProcessMs,
+      postcssPluginMs: Object.values(postcssPluginTimings).reduce((sum, ms) => sum + ms, 0),
+      ...pluginClassifications,
+      dependencyCollectionMs,
+      importDependencyDiscoveryMs,
+      urlDependencyDiscoveryMs,
+      pipelineHashMs,
+      cssDemandProofMs,
+      postcssPluginTimings,
+    },
   };
 
   return compiled;

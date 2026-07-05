@@ -10,6 +10,11 @@ export interface TransformJob {
   code: string;
   filePath: string;
   ext: string;
+  rootDir?: string;
+  cssModules?: boolean;
+  cssModulesOptions?: unknown;
+  cssPreprocessorOptions?: unknown;
+  cssDemandGraphFiles?: string[];
 }
 
 export interface TransformJobResult {
@@ -22,6 +27,9 @@ export interface TransformJobResult {
   deps?: string[] | null;
   urlDeps?: string[] | null;
   pipelineHash?: string | null;
+  cssDemand?: unknown;
+  tailwindGraphContent?: unknown;
+  cssProfile?: unknown;
   error?: string;
 }
 

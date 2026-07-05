@@ -3224,6 +3224,15 @@ var init_graph = __esm({
       getDeps(absPath) {
         return this.getNode(absPath)?.deps ?? [];
       }
+      listFilesByKind(kind) {
+        const out = [];
+        for (const node of this.nodes.values()) {
+          if (node.kind !== kind) continue;
+          const abs = this.pathForModuleId(node.id);
+          if (abs) out.push(abs);
+        }
+        return out.sort((a, b) => a.localeCompare(b));
+      }
       /** Reverse edges: who depends on target? */
       getDependents(targetAbs) {
         const targetId = this.moduleIdForPath(targetAbs);
@@ -3484,9 +3493,235 @@ var init_pool = __esm({
   }
 });
 
+// src/core/loaders/css-demand.ts
+function nowMs() {
+  return Date.now();
+}
+function cloneProfile(profile) {
+  return { ...profile };
+}
+function createCssDemandProfile() {
+  return cloneProfile(EMPTY_PROFILE);
+}
+function isCssDemandSourceFile(filePath) {
+  const clean = filePath.split("?")[0].split("#")[0].toLowerCase();
+  return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx") || clean.endsWith(".html");
+}
+function cssDemandRoot(rootDir) {
+  return import_path14.default.join(process.env.IONIFY_STATE_DIR || import_path14.default.join(rootDir, ".ionify"), "css-demand");
+}
+function canonicalPath(filePath) {
+  const abs = import_path14.default.resolve(filePath);
+  try {
+    return import_fs14.default.realpathSync.native(abs);
+  } catch {
+    return abs;
+  }
+}
+function sourceFactPath(rootDir, filePath, contentHash) {
+  const key = getCacheKey(`css-demand-source:v${CSS_CLASS_EXTRACTOR_VERSION}:${canonicalPath(filePath)}:${contentHash}`);
+  return import_path14.default.join(cssDemandRoot(rootDir), "sources", `${key}.json`);
+}
+function proofPath(rootDir, cssFile, cssHash, pipelineHash) {
+  const key = getCacheKey(`css-demand-proof:v${CSS_DEMAND_PROOF_VERSION}:${canonicalPath(cssFile)}:${cssHash}:${pipelineHash}`);
+  return import_path14.default.join(cssDemandRoot(rootDir), "proofs", `${key}.json`);
+}
+function readJson(filePath) {
+  try {
+    return JSON.parse(import_fs14.default.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeJson(filePath, value) {
+  import_fs14.default.mkdirSync(import_path14.default.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  import_fs14.default.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}
+`, "utf8");
+  import_fs14.default.renameSync(tmp, filePath);
+}
+function normalizeToken(token) {
+  const value = token.trim();
+  if (!value || value.length > 240) return null;
+  if (/[\s"'`<>]/.test(value)) return null;
+  if (!/[A-Za-z0-9_\-\[\]():/%#.!]/.test(value)) return null;
+  return value;
+}
+function addTokensFromClassString(value, tokens) {
+  for (const raw of value.split(/\s+/g)) {
+    const token = normalizeToken(raw);
+    if (token) tokens.add(token);
+  }
+}
+function extractClassDemandTokens(code) {
+  const tokens = /* @__PURE__ */ new Set();
+  const reasons = /* @__PURE__ */ new Set();
+  let uncertain = false;
+  const classAttrRe = /\b(?:class|className)\s*=\s*(?:"([^"]*)"|'([^']*)'|`([^`$]*)`|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`$]*)`)\s*\})/g;
+  let match;
+  while (match = classAttrRe.exec(code)) {
+    addTokensFromClassString(match[1] || match[2] || match[3] || match[4] || match[5] || match[6] || "", tokens);
+  }
+  const classMapKeyRe = /(?:^|[\s,{])(?:"([^"]+)"|'([^']+)'|`([^`$]+)`)\s*:/g;
+  while (match = classMapKeyRe.exec(code)) {
+    const value = match[1] || match[2] || match[3] || "";
+    if (value.includes(" ") || /[:\[\]\/!-]/.test(value)) addTokensFromClassString(value, tokens);
+  }
+  const quotedUtilityRe = /(?:"([^"]*[\w\]-](?:[:\[\]\/!-][^"]*)?)"|'([^']*[\w\]-](?:[:\[\]\/!-][^']*)?)'|`([^`$]*[\w\]-](?:[:\[\]\/!-][^`$]*)?)`)/g;
+  while (match = quotedUtilityRe.exec(code)) {
+    const value = match[1] || match[2] || match[3] || "";
+    if (value.includes(" ") || /[:\[\]\/!-]/.test(value)) addTokensFromClassString(value, tokens);
+  }
+  if (/\b(?:class|className)\s*=\s*\{(?!\s*["'`])/.test(code)) {
+    uncertain = true;
+    reasons.add("dynamic-class-expression");
+  }
+  if (/`[^`]*\$\{/.test(code)) {
+    uncertain = true;
+    reasons.add("dynamic-template-literal");
+  }
+  return {
+    tokens: Array.from(tokens).sort(),
+    uncertain,
+    reasons: Array.from(reasons).sort()
+  };
+}
+function loadOrExtractSourceFact(rootDir, filePath, profile) {
+  if (!isCssDemandSourceFile(filePath)) return null;
+  let raw;
+  try {
+    raw = import_fs14.default.readFileSync(filePath);
+  } catch {
+    return null;
+  }
+  const contentHash = getCacheKey(raw);
+  const canonical = canonicalPath(filePath);
+  const cacheKey = `${canonical}:${contentHash}`;
+  const memory = inMemorySourceFacts.get(cacheKey);
+  if (memory) {
+    profile.cacheHits += 1;
+    profile.tokens += memory.tokenCount;
+    return memory;
+  }
+  const diskPath = sourceFactPath(rootDir, filePath, contentHash);
+  const disk = readJson(diskPath);
+  if (disk && disk.version === CSS_DEMAND_PROOF_VERSION && disk.extractorVersion === CSS_CLASS_EXTRACTOR_VERSION && disk.filePath === canonical && disk.contentHash === contentHash && Array.isArray(disk.tokens)) {
+    inMemorySourceFacts.set(cacheKey, disk);
+    profile.cacheHits += 1;
+    profile.tokens += disk.tokenCount;
+    return disk;
+  }
+  const started = nowMs();
+  const extracted = extractClassDemandTokens(raw.toString("utf8"));
+  const fact = {
+    version: CSS_DEMAND_PROOF_VERSION,
+    extractorVersion: CSS_CLASS_EXTRACTOR_VERSION,
+    filePath: canonical,
+    contentHash,
+    tokens: extracted.tokens,
+    tokenCount: extracted.tokens.length,
+    uncertain: extracted.uncertain,
+    uncertaintyReasons: extracted.reasons
+  };
+  profile.extractionMs += nowMs() - started;
+  profile.filesScanned += 1;
+  profile.cacheMisses += 1;
+  profile.tokens += fact.tokenCount;
+  inMemorySourceFacts.set(cacheKey, fact);
+  try {
+    writeJson(diskPath, fact);
+  } catch {
+  }
+  return fact;
+}
+function buildCssDemandAnalysis(options) {
+  const profile = createCssDemandProfile();
+  const sourceFacts = [];
+  const seen = /* @__PURE__ */ new Set();
+  const sortedDeps = Array.from(new Set(options.deps.map((dep) => canonicalPath(dep)))).sort();
+  for (const dep of sortedDeps) {
+    if (seen.has(dep)) continue;
+    seen.add(dep);
+    const fact = loadOrExtractSourceFact(options.rootDir, dep, profile);
+    if (fact) sourceFacts.push(fact);
+  }
+  if (sourceFacts.length === 0) return null;
+  const tokenSet = /* @__PURE__ */ new Set();
+  const uncertaintyReasons = /* @__PURE__ */ new Set();
+  let uncertain = false;
+  for (const fact of sourceFacts) {
+    for (const token of fact.tokens) tokenSet.add(token);
+    if (fact.uncertain) uncertain = true;
+    for (const reason of fact.uncertaintyReasons) uncertaintyReasons.add(reason);
+  }
+  const tokens = Array.from(tokenSet).sort();
+  const dependencyHash = getCacheKey(sortedDeps.map((dep) => {
+    const fact = sourceFacts.find((item) => item.filePath === dep);
+    return `${dep}:${fact?.contentHash ?? "unknown"}`;
+  }).join("|"));
+  const proof = {
+    proofVersion: CSS_DEMAND_PROOF_VERSION,
+    extractorVersion: CSS_CLASS_EXTRACTOR_VERSION,
+    cssFile: canonicalPath(options.cssFile),
+    cssHash: options.cssHash,
+    pipelineHash: options.pipelineHash,
+    dependencyCount: sortedDeps.length,
+    dependencyHash,
+    classDemandHash: getCacheKey(tokens.join(" ")),
+    tokenCount: tokens.length,
+    sourceFiles: sourceFacts.map((fact) => ({
+      filePath: fact.filePath,
+      contentHash: fact.contentHash,
+      tokenCount: fact.tokenCount,
+      uncertain: fact.uncertain
+    })).sort((a, b) => a.filePath.localeCompare(b.filePath)),
+    uncertain,
+    uncertaintyReasons: Array.from(uncertaintyReasons).sort()
+  };
+  const writeStart = nowMs();
+  try {
+    writeJson(proofPath(options.rootDir, options.cssFile, options.cssHash, options.pipelineHash), proof);
+  } catch {
+  } finally {
+    profile.proofWriteMs += nowMs() - writeStart;
+  }
+  return { proof, profile };
+}
+function registerCssDemandGraphSourceFiles(rootDir, files) {
+  const canonicalFiles = files.map((item) => canonicalPath(item)).filter((item) => isCssDemandSourceFile(item)).sort();
+  const unique = Array.from(new Set(canonicalFiles));
+  graphSourceFilesByRoot.set(canonicalPath(rootDir), unique);
+  return unique;
+}
+function getCssDemandGraphSourceFiles(rootDir) {
+  return graphSourceFilesByRoot.get(canonicalPath(rootDir))?.slice() ?? [];
+}
+var import_fs14, import_path14, CSS_DEMAND_PROOF_VERSION, CSS_CLASS_EXTRACTOR_VERSION, EMPTY_PROFILE, inMemorySourceFacts, graphSourceFilesByRoot;
+var init_css_demand = __esm({
+  "src/core/loaders/css-demand.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs14 = __toESM(require("fs"), 1);
+    import_path14 = __toESM(require("path"), 1);
+    init_cache();
+    CSS_DEMAND_PROOF_VERSION = 1;
+    CSS_CLASS_EXTRACTOR_VERSION = 1;
+    EMPTY_PROFILE = {
+      extractionMs: 0,
+      filesScanned: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      tokens: 0,
+      proofWriteMs: 0
+    };
+    inMemorySourceFacts = /* @__PURE__ */ new Map();
+    graphSourceFilesByRoot = /* @__PURE__ */ new Map();
+  }
+});
+
 // src/core/loaders/css.ts
 function detectPreprocessorLang(filePath) {
-  const ext = import_path14.default.extname(filePath.split("?")[0].split("#")[0]).toLowerCase();
+  const ext = import_path15.default.extname(filePath.split("?")[0].split("#")[0]).toLowerCase();
   if (ext === ".scss") return "scss";
   if (ext === ".sass") return "sass";
   if (ext === ".less") return "less";
@@ -3494,7 +3729,7 @@ function detectPreprocessorLang(filePath) {
   return null;
 }
 function loadProjectPreprocessor(name, rootDir, fromFile) {
-  for (const base of [fromFile, import_path14.default.join(rootDir, "package.json")]) {
+  for (const base of [fromFile, import_path15.default.join(rootDir, "package.json")]) {
     try {
       const req = (0, import_module3.createRequire)(base);
       req.resolve(name);
@@ -3514,14 +3749,14 @@ async function runPreprocessor(code, filePath, rootDir, lang, options) {
     const sass = loadProjectPreprocessor("sass", rootDir, filePath);
     if (!sass) {
       throw new Error(
-        `[ionify:css] "${import_path14.default.basename(filePath)}" requires the "sass" package \u2014 install it in your project: pnpm add -D sass`
+        `[ionify:css] "${import_path15.default.basename(filePath)}" requires the "sass" package \u2014 install it in your project: pnpm add -D sass`
       );
     }
     const langOpts = options?.[lang] ?? options?.scss ?? {};
     const result = sass.compileString(code, {
       syntax: lang === "sass" ? "indented" : "scss",
       url: (0, import_url4.pathToFileURL)(filePath),
-      loadPaths: [import_path14.default.dirname(filePath), rootDir, import_path14.default.join(rootDir, "node_modules")],
+      loadPaths: [import_path15.default.dirname(filePath), rootDir, import_path15.default.join(rootDir, "node_modules")],
       ...langOpts
     });
     for (const u of result.loadedUrls ?? []) {
@@ -3537,13 +3772,13 @@ async function runPreprocessor(code, filePath, rootDir, lang, options) {
     const less = loadProjectPreprocessor("less", rootDir, filePath);
     if (!less) {
       throw new Error(
-        `[ionify:css] "${import_path14.default.basename(filePath)}" requires the "less" package \u2014 install it in your project: pnpm add -D less`
+        `[ionify:css] "${import_path15.default.basename(filePath)}" requires the "less" package \u2014 install it in your project: pnpm add -D less`
       );
     }
     const langOpts = options?.less ?? {};
     const result = await less.render(code, {
       filename: filePath,
-      paths: [import_path14.default.dirname(filePath), rootDir],
+      paths: [import_path15.default.dirname(filePath), rootDir],
       ...langOpts
     });
     for (const p of result.imports ?? []) {
@@ -3555,30 +3790,46 @@ async function runPreprocessor(code, filePath, rootDir, lang, options) {
     `[ionify:css] Stylus (.styl) is not yet wired into Ionify's preprocessor pre-pass \u2014 Sass/SCSS and Less are supported. (Native-Rust + Stylus are future-planned: css-pipeline-contract \xA78.)`
   );
 }
-async function getPostcssConfig(rootDir) {
-  const key = import_path14.default.resolve(rootDir);
+async function getPostcssConfigProfiled(rootDir) {
+  const key = import_path15.default.resolve(rootDir);
   const cached = cachedPostcssConfigByRoot.get(key);
-  if (cached) return cached;
+  if (cached) return { config: cached, loadMs: 0, waitMs: 0, cacheHit: true };
+  const pending = pendingPostcssConfigByRoot.get(key);
+  if (pending) {
+    const started2 = cssProfileNow();
+    return { config: await pending, loadMs: 0, waitMs: cssProfileNow() - started2, cacheHit: false };
+  }
   if (postcssConfigFailedRoots.has(key)) {
     const empty = { plugins: [], options: {}, configFile: null };
     cachedPostcssConfigByRoot.set(key, empty);
-    return empty;
+    return { config: empty, loadMs: 0, waitMs: 0, cacheHit: true };
   }
-  try {
-    const result = await (0, import_postcss_load_config.default)({}, rootDir);
-    const configFile = typeof result?.file === "string" ? result.file : null;
-    const loaded = {
-      plugins: Array.isArray(result.plugins) ? result.plugins : [],
-      options: result.options ?? {},
-      configFile
-    };
-    cachedPostcssConfigByRoot.set(key, loaded);
-  } catch {
-    postcssConfigFailedRoots.add(key);
-    const empty = { plugins: [], options: {}, configFile: null };
-    cachedPostcssConfigByRoot.set(key, empty);
-  }
-  return cachedPostcssConfigByRoot.get(key);
+  const started = cssProfileNow();
+  const load = (async () => {
+    try {
+      const result = await (0, import_postcss_load_config.default)({}, rootDir);
+      const configFile = typeof result?.file === "string" ? result.file : null;
+      const loaded = {
+        plugins: Array.isArray(result.plugins) ? result.plugins : [],
+        options: result.options ?? {},
+        configFile
+      };
+      cachedPostcssConfigByRoot.set(key, loaded);
+      return loaded;
+    } catch {
+      postcssConfigFailedRoots.add(key);
+      const empty = { plugins: [], options: {}, configFile: null };
+      cachedPostcssConfigByRoot.set(key, empty);
+      return empty;
+    } finally {
+      pendingPostcssConfigByRoot.delete(key);
+    }
+  })();
+  pendingPostcssConfigByRoot.set(key, load);
+  return { config: await load, loadMs: cssProfileNow() - started, waitMs: 0, cacheHit: false };
+}
+async function getPostcssConfig(rootDir) {
+  return (await getPostcssConfigProfiled(rootDir)).config;
 }
 function stablePluginName(plugin) {
   if (!plugin || typeof plugin !== "function") return "unknown";
@@ -3592,6 +3843,243 @@ function stablePluginName(plugin) {
   }
   return "unknown";
 }
+function cssProfileNow() {
+  return import_perf_hooks.performance.now();
+}
+function addCssTiming(timings, label, ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  timings.set(label, (timings.get(label) ?? 0) + ms);
+}
+function labelPostcssPlugin(plugin, index) {
+  const anyPlugin = plugin;
+  const direct = typeof anyPlugin?.postcssPlugin === "string" && anyPlugin.postcssPlugin.length > 0 ? anyPlugin.postcssPlugin : typeof anyPlugin?.name === "string" && anyPlugin.name.length > 0 ? anyPlugin.name : "";
+  return direct || `postcss-plugin-${index}`;
+}
+function timeMaybePromise(timings, label, started, value) {
+  if (value && typeof value.then === "function") {
+    return value.finally(() => addCssTiming(timings, label, cssProfileNow() - started));
+  }
+  addCssTiming(timings, label, cssProfileNow() - started);
+  return value;
+}
+function wrapPostcssVisitorObject(visitor, label, timings) {
+  if (!visitor || typeof visitor !== "object") return visitor;
+  const source = visitor;
+  const out = Array.isArray(source) ? [...source] : { ...source };
+  for (const key of Object.keys(out)) {
+    if (key === "postcssPlugin") continue;
+    const value = out[key];
+    if (typeof value === "function") {
+      out[key] = function timedPostcssVisitor(...args) {
+        const started = cssProfileNow();
+        const result = value.apply(this, args);
+        if (key === "prepare" && result && typeof result === "object" && typeof result.then !== "function") {
+          addCssTiming(timings, label, cssProfileNow() - started);
+          return wrapPostcssVisitorObject(result, label, timings);
+        }
+        if (key === "prepare" && result && typeof result.then === "function") {
+          return result.then((prepared) => {
+            addCssTiming(timings, label, cssProfileNow() - started);
+            return wrapPostcssVisitorObject(prepared, label, timings);
+          });
+        }
+        return timeMaybePromise(timings, label, started, result);
+      };
+      continue;
+    }
+    if (value && typeof value === "object") {
+      out[key] = wrapPostcssVisitorObject(value, label, timings);
+    }
+  }
+  return out;
+}
+function wrapPostcssPluginsForTiming(plugins, timings) {
+  return plugins.map((plugin, index) => {
+    const label = labelPostcssPlugin(plugin, index);
+    if (typeof plugin === "function") {
+      const original = plugin;
+      const wrapped = function timedPostcssPlugin(...args) {
+        const started = cssProfileNow();
+        const result = original.apply(this, args);
+        if (result && typeof result === "object" && typeof result.then !== "function") {
+          addCssTiming(timings, label, cssProfileNow() - started);
+          return wrapPostcssVisitorObject(result, label, timings);
+        }
+        if (result && typeof result.then === "function") {
+          return result.then((prepared) => {
+            addCssTiming(timings, label, cssProfileNow() - started);
+            return wrapPostcssVisitorObject(prepared, label, timings);
+          });
+        }
+        return timeMaybePromise(timings, label, started, result);
+      };
+      Object.assign(wrapped, original);
+      return wrapped;
+    }
+    return wrapPostcssVisitorObject(plugin, label, timings);
+  });
+}
+function classifyPostcssPluginTimings(timings) {
+  let tailwindPluginMs = 0;
+  let autoprefixerPluginMs = 0;
+  let rtlcssPluginMs = 0;
+  let otherPostcssPluginMs = 0;
+  const entries = Object.entries(timings).sort(([a], [b]) => a.localeCompare(b));
+  for (const [label, ms] of entries) {
+    const normalized = label.toLowerCase();
+    if (normalized.includes("tailwind")) {
+      tailwindPluginMs += ms;
+    } else if (normalized.includes("autoprefixer") || normalized === "plugin") {
+      autoprefixerPluginMs += ms;
+    } else if (normalized.includes("rtlcss")) {
+      rtlcssPluginMs += ms;
+    } else {
+      otherPostcssPluginMs += ms;
+    }
+  }
+  return { tailwindPluginMs, autoprefixerPluginMs, rtlcssPluginMs, otherPostcssPluginMs };
+}
+function emptyTailwindGraphContentProfile(fallbackReason) {
+  return {
+    attempted: false,
+    enabled: false,
+    ms: 0,
+    files: 0,
+    plugins: 0,
+    configPath: null,
+    fallbackReason
+  };
+}
+function findTailwindConfigPath(rootDir) {
+  const candidates = [
+    "tailwind.config.js",
+    "tailwind.config.cjs",
+    "tailwind.config.mjs",
+    "tailwind.config.ts",
+    "tailwind.config.cts",
+    "tailwind.config.mts"
+  ];
+  for (const candidate of candidates) {
+    const abs = import_path15.default.join(rootDir, candidate);
+    if (import_fs15.default.existsSync(abs)) return abs;
+  }
+  return null;
+}
+function isTailwindPluginFactory(plugin) {
+  if (typeof plugin !== "function") return false;
+  const fn = plugin;
+  if (fn.name === "tailwindcss" && fn.postcss === true) return true;
+  const source = typeof fn.toString === "function" ? fn.toString() : "";
+  return fn.postcss === true && source.includes('postcssPlugin: "tailwindcss"');
+}
+function cssMayUseTailwindSyntax(css) {
+  return /@(?:tailwind|apply|config|import|layer|screen|variants|responsive|theme|utility|variant|custom-variant)\b|\b(?:theme|screen)\s*\(/.test(css);
+}
+function cssNeedsTailwindContentScan(css) {
+  return /@tailwind\s+utilities\b|@(?:source|plugin)\b/.test(css);
+}
+function graphTailwindContent(originalContent, files) {
+  if (originalContent && typeof originalContent === "object" && !Array.isArray(originalContent)) {
+    return {
+      ...originalContent,
+      files
+    };
+  }
+  return { files };
+}
+function stripPresetContent(preset) {
+  if (!preset || typeof preset !== "object" || Array.isArray(preset)) return preset;
+  const input = preset;
+  const output = {};
+  for (const key of Object.keys(input)) {
+    if (key === "content") continue;
+    output[key] = key === "presets" && Array.isArray(input[key]) ? input[key].map(stripPresetContent) : input[key];
+  }
+  return output;
+}
+function cloneTailwindConfigForGraphContent(config, files) {
+  const source = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+  return {
+    ...source,
+    content: graphTailwindContent(source.content, files),
+    presets: Array.isArray(source.presets) ? source.presets.map(stripPresetContent) : source.presets
+  };
+}
+function createTailwindGraphContentPipeline(rootDir, css, plugins) {
+  const started = Date.now();
+  const tailwindIndexes = plugins.map((plugin, index) => isTailwindPluginFactory(plugin) ? index : -1).filter((index) => index >= 0);
+  if (tailwindIndexes.length === 0) return { plugins, profile: emptyTailwindGraphContentProfile("no-tailwind-plugin") };
+  if (!cssMayUseTailwindSyntax(css)) {
+    const tailwindIndexSet = new Set(tailwindIndexes);
+    return {
+      plugins: plugins.filter((_plugin, index) => !tailwindIndexSet.has(index)),
+      profile: {
+        ...emptyTailwindGraphContentProfile("no-tailwind-syntax"),
+        attempted: true,
+        ms: Date.now() - started,
+        plugins: tailwindIndexes.length
+      }
+    };
+  }
+  const graphFiles = getCssDemandGraphSourceFiles(rootDir);
+  if (graphFiles.length === 0) return { plugins, profile: emptyTailwindGraphContentProfile("no-graph-source-files") };
+  const configPath = findTailwindConfigPath(rootDir);
+  if (!configPath) return { plugins, profile: emptyTailwindGraphContentProfile("no-tailwind-config") };
+  try {
+    const req = (0, import_module3.createRequire)(import_path15.default.join(rootDir, "package.json"));
+    const tailwindFactory = req("tailwindcss");
+    const tailwindEntry = req.resolve("tailwindcss");
+    const loadConfigPath = [
+      import_path15.default.join(import_path15.default.dirname(tailwindEntry), "lib", "load-config.js"),
+      import_path15.default.join(import_path15.default.dirname(tailwindEntry), "lib", "lib", "load-config.js")
+    ].find((candidate) => import_fs15.default.existsSync(candidate)) ?? import_path15.default.join(import_path15.default.dirname(tailwindEntry), "lib", "load-config.js");
+    const loadConfigModule = req(loadConfigPath);
+    if (typeof tailwindFactory !== "function" || typeof loadConfigModule.loadConfig !== "function") {
+      return {
+        plugins,
+        profile: {
+          ...emptyTailwindGraphContentProfile("tailwind-loader-unavailable"),
+          attempted: true,
+          ms: Date.now() - started,
+          files: graphFiles.length,
+          configPath
+        }
+      };
+    }
+    const userConfig = loadConfigModule.loadConfig(configPath);
+    const contentFiles = cssNeedsTailwindContentScan(css) ? graphFiles : [];
+    const graphConfig = cloneTailwindConfigForGraphContent(userConfig, contentFiles);
+    let replaced = 0;
+    const nextPlugins = plugins.map((plugin, index) => {
+      if (!tailwindIndexes.includes(index)) return plugin;
+      replaced += 1;
+      return tailwindFactory(graphConfig);
+    });
+    return {
+      plugins: nextPlugins,
+      profile: {
+        attempted: true,
+        enabled: replaced > 0,
+        ms: Date.now() - started,
+        files: contentFiles.length,
+        plugins: replaced,
+        configPath,
+        fallbackReason: replaced > 0 ? null : "tailwind-plugin-not-replaced"
+      }
+    };
+  } catch (err) {
+    return {
+      plugins,
+      profile: {
+        ...emptyTailwindGraphContentProfile(`tailwind-graph-content-error:${String(err).split("\n")[0]}`),
+        attempted: true,
+        ms: Date.now() - started,
+        files: graphFiles.length,
+        configPath
+      }
+    };
+  }
+}
 function sortObjectKeys(value) {
   const out = {};
   for (const key of Object.keys(value).sort()) {
@@ -3603,14 +4091,14 @@ function resolveCssSpecifier(spec, filePath, rootDir) {
   const trimmed = spec.trim();
   if (!trimmed) return null;
   if (/^(data:|https?:|\/\/)/i.test(trimmed)) return null;
-  if (trimmed.startsWith("/")) return import_path14.default.resolve(rootDir, "." + trimmed);
-  if (trimmed.startsWith("@/")) return import_path14.default.resolve(rootDir, "src", trimmed.slice(2));
-  if (trimmed.startsWith(".") || trimmed.startsWith("..")) return import_path14.default.resolve(import_path14.default.dirname(filePath), trimmed);
+  if (trimmed.startsWith("/")) return import_path15.default.resolve(rootDir, "." + trimmed);
+  if (trimmed.startsWith("@/")) return import_path15.default.resolve(rootDir, "src", trimmed.slice(2));
+  if (trimmed.startsWith(".") || trimmed.startsWith("..")) return import_path15.default.resolve(import_path15.default.dirname(filePath), trimmed);
   const specifier = trimmed.startsWith("~") ? trimmed.slice(1) : trimmed;
   try {
     return (0, import_module3.createRequire)(filePath).resolve(specifier);
   } catch {
-    return import_path14.default.resolve(import_path14.default.dirname(filePath), trimmed);
+    return import_path15.default.resolve(import_path15.default.dirname(filePath), trimmed);
   }
 }
 function discoverUrlDeps(css, filePath, rootDir) {
@@ -3635,7 +4123,7 @@ function normalizeDependencyPath(depPath, rootDir, fromFile) {
   const value = String(depPath || "").trim();
   if (!value) return null;
   if (/^(?:data:|https?:|\/\/)/i.test(value)) return null;
-  return import_path14.default.isAbsolute(value) ? import_path14.default.resolve(value) : import_path14.default.resolve(import_path14.default.dirname(fromFile) || rootDir, value);
+  return import_path15.default.isAbsolute(value) ? import_path15.default.resolve(value) : import_path15.default.resolve(import_path15.default.dirname(fromFile) || rootDir, value);
 }
 function globToRegExp(glob) {
   const normalized = glob.replace(/\\+/g, "/").replace(/^\.\//, "");
@@ -3677,16 +4165,16 @@ function globToRegExp(glob) {
 }
 function expandDirectoryDependency(dir, glob) {
   const deps = [];
-  const root = import_path14.default.resolve(dir);
-  if (!import_fs14.default.existsSync(root)) return deps;
-  const stat = import_fs14.default.statSync(root);
+  const root = import_path15.default.resolve(dir);
+  if (!import_fs15.default.existsSync(root)) return deps;
+  const stat = import_fs15.default.statSync(root);
   if (!stat.isDirectory()) return stat.isFile() ? [root] : deps;
   const re = globToRegExp(glob && glob.trim() ? glob : "**/*");
   const visit = (current) => {
     if (deps.length >= POSTCSS_DIR_DEPENDENCY_MAX_FILES) return;
     let entries;
     try {
-      entries = import_fs14.default.readdirSync(current, { withFileTypes: true });
+      entries = import_fs15.default.readdirSync(current, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3696,13 +4184,13 @@ function expandDirectoryDependency(dir, glob) {
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".ionify" || entry.name === "dist") {
         continue;
       }
-      const abs = import_path14.default.join(current, entry.name);
+      const abs = import_path15.default.join(current, entry.name);
       if (entry.isDirectory()) {
         visit(abs);
         continue;
       }
       if (!entry.isFile()) continue;
-      const rel = import_path14.default.relative(root, abs).replace(/\\+/g, "/");
+      const rel = import_path15.default.relative(root, abs).replace(/\\+/g, "/");
       if (re.test(rel)) deps.push(abs);
     }
   };
@@ -3738,7 +4226,7 @@ function collectPostcssMessageDeps(messages, rootDir, filePath) {
       const raw = typeof msg.dir === "string" ? msg.dir : typeof msg.file === "string" ? msg.file : null;
       const dep = raw ? normalizeDependencyPath(raw, rootDir, filePath) : null;
       if (!dep) continue;
-      if (import_fs14.default.existsSync(dep) && import_fs14.default.statSync(dep).isDirectory()) {
+      if (import_fs15.default.existsSync(dep) && import_fs15.default.statSync(dep).isDirectory()) {
         for (const child of expandDirectoryDependency(dep, typeof msg.glob === "string" ? msg.glob : null)) {
           add(child);
         }
@@ -3768,13 +4256,13 @@ async function computePipelineHash(rootDir, modules, modulesOptions, preprocesso
   const pluginNames = plugins.map(stablePluginName).filter(Boolean).sort();
   let configFileHash = null;
   let configFileId = null;
-  if (configFile && import_fs14.default.existsSync(configFile)) {
+  if (configFile && import_fs15.default.existsSync(configFile)) {
     try {
-      const raw = import_fs14.default.readFileSync(configFile);
+      const raw = import_fs15.default.readFileSync(configFile);
       configFileHash = getCacheKey(raw);
-      const abs = import_path14.default.resolve(configFile);
-      const rel = import_path14.default.relative(rootDir, abs).replace(/\\+/g, "/");
-      configFileId = rel && !rel.startsWith("../") ? rel : import_path14.default.basename(abs);
+      const abs = import_path15.default.resolve(configFile);
+      const rel = import_path15.default.relative(rootDir, abs).replace(/\\+/g, "/");
+      configFileId = rel && !rel.startsWith("../") ? rel : import_path15.default.basename(abs);
     } catch {
       configFileHash = null;
     }
@@ -3818,8 +4306,8 @@ function createScopedNameGenerator({
   if (typeof custom === "string" && custom.trim().length > 0) {
     const pattern = custom;
     return (name, filename) => {
-      const baseName = import_path14.default.basename(filename || filePath).replace(/\.[^.]+$/, "");
-      const rel = import_path14.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
+      const baseName = import_path15.default.basename(filename || filePath).replace(/\.[^.]+$/, "");
+      const rel = import_path15.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
       const hashHex = import_crypto4.default.createHash("sha256").update(`${rel}:${name}`).digest("hex");
       return pattern.replace(/\[name\]/g, baseName).replace(/\[local\]/g, name).replace(/\[hash(?::(hex|base64))?(?::(\d+))?\]/g, (_m, enc, lenRaw) => {
         const len = lenRaw ? Math.max(1, Math.min(32, Number(lenRaw))) : 6;
@@ -3832,7 +4320,7 @@ function createScopedNameGenerator({
     };
   }
   return (name, filename) => {
-    const relative = import_path14.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
+    const relative = import_path15.default.relative(rootDir, filename || filePath).replace(/\\+/g, "/");
     const seed = import_crypto4.default.createHash("sha1").update(relative).digest("hex").slice(0, 6);
     return `${name}___${seed}`;
   };
@@ -3845,18 +4333,40 @@ async function compileCss({
   modulesOptions,
   preprocessorOptions
 }) {
+  const totalStart = cssProfileNow();
+  let preprocessorMs = 0;
+  let postcssConfigLoadMs = 0;
+  let postcssConfigWaitMs = 0;
+  let postcssConfigCacheHit = false;
+  let tailwindGraphContentMs = 0;
+  let postcssProcessMs = 0;
+  let dependencyCollectionMs = 0;
+  let importDependencyDiscoveryMs = 0;
+  let urlDependencyDiscoveryMs = 0;
+  let pipelineHashMs = 0;
+  let cssDemandProofMs = 0;
+  const pluginTimingMap = /* @__PURE__ */ new Map();
   const preprocessorLang = detectPreprocessorLang(filePath);
   let sourceCss = code;
   let preprocessorIdentity = null;
   const preprocessorDeps = [];
   if (preprocessorLang) {
+    const started = cssProfileNow();
     const pre = await runPreprocessor(code, filePath, rootDir, preprocessorLang, preprocessorOptions);
+    preprocessorMs += cssProfileNow() - started;
     sourceCss = pre.css;
     preprocessorDeps.push(...pre.deps);
     preprocessorIdentity = { lang: preprocessorLang, version: pre.version, options: preprocessorOptions };
   }
-  const { plugins, options, configFile } = await getPostcssConfig(rootDir);
-  const pipeline = [...plugins];
+  const configProfile = await getPostcssConfigProfiled(rootDir);
+  const { plugins, options, configFile } = configProfile.config;
+  postcssConfigLoadMs += configProfile.loadMs;
+  postcssConfigWaitMs += configProfile.waitMs;
+  postcssConfigCacheHit = configProfile.cacheHit;
+  const tailwindStart = cssProfileNow();
+  const tailwindGraphContent = createTailwindGraphContentPipeline(rootDir, sourceCss, plugins);
+  tailwindGraphContentMs += cssProfileNow() - tailwindStart;
+  const pipeline = [...tailwindGraphContent.plugins];
   let tokens;
   if (modules) {
     const scopedName = createScopedNameGenerator({ rootDir, filePath, modulesOptions });
@@ -3870,12 +4380,16 @@ async function compileCss({
       })
     );
   }
-  const runner = (0, import_postcss.default)(pipeline);
+  const timedPipeline = wrapPostcssPluginsForTiming(pipeline, pluginTimingMap);
+  const runner = (0, import_postcss.default)(timedPipeline);
+  const processStart = cssProfileNow();
   const result = await runner.process(sourceCss, {
     ...options,
     from: filePath,
     map: false
   });
+  postcssProcessMs += cssProfileNow() - processStart;
+  const depStart = cssProfileNow();
   const deps = [];
   const urlDeps = [];
   const seenDeps = /* @__PURE__ */ new Set();
@@ -3897,6 +4411,8 @@ async function compileCss({
   for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, filePath)) {
     addDep(dep);
   }
+  dependencyCollectionMs += cssProfileNow() - depStart;
+  const importStart = cssProfileNow();
   const importRe = /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
   let match;
   while (match = importRe.exec(sourceCss)) {
@@ -3905,16 +4421,54 @@ async function compileCss({
     const resolved = resolveCssSpecifier(spec, filePath, rootDir);
     if (resolved) addDep(resolved);
   }
+  importDependencyDiscoveryMs += cssProfileNow() - importStart;
+  const urlStart = cssProfileNow();
   for (const dep of discoverUrlDeps(result.css, filePath, rootDir)) {
     addUrlDep(dep);
   }
+  urlDependencyDiscoveryMs += cssProfileNow() - urlStart;
+  const pipelineHashStart = cssProfileNow();
   const pipelineHash = await computePipelineHash(rootDir, modules, modulesOptions, preprocessorIdentity);
+  pipelineHashMs += cssProfileNow() - pipelineHashStart;
+  const depsForDemand = Array.from(/* @__PURE__ */ new Set([...deps.map((dep) => dep.filePath), ...urlDeps.map((dep) => dep.filePath)]));
+  const demandStart = cssProfileNow();
+  const cssDemand = buildCssDemandAnalysis({
+    rootDir,
+    cssFile: filePath,
+    cssHash: getCacheKey(code),
+    pipelineHash,
+    deps: depsForDemand
+  });
+  cssDemandProofMs += cssProfileNow() - demandStart;
+  const postcssPluginTimings = Object.fromEntries(
+    Array.from(pluginTimingMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([label, ms]) => [label, Number(ms.toFixed(2))])
+  );
+  const pluginClassifications = classifyPostcssPluginTimings(postcssPluginTimings);
   const compiled = {
     css: result.css,
     tokens,
     deps,
     urlDeps,
-    pipelineHash
+    pipelineHash,
+    cssDemand,
+    tailwindGraphContent: tailwindGraphContent.profile,
+    profile: {
+      totalMs: cssProfileNow() - totalStart,
+      preprocessorMs,
+      postcssConfigLoadMs,
+      postcssConfigWaitMs,
+      postcssConfigCacheHit,
+      tailwindGraphContentMs,
+      postcssProcessMs,
+      postcssPluginMs: Object.values(postcssPluginTimings).reduce((sum, ms) => sum + ms, 0),
+      ...pluginClassifications,
+      dependencyCollectionMs,
+      importDependencyDiscoveryMs,
+      urlDependencyDiscoveryMs,
+      pipelineHashMs,
+      cssDemandProofMs,
+      postcssPluginTimings
+    }
   };
   return compiled;
 }
@@ -3978,21 +4532,24 @@ export { url };
 export default url;
 `.trim();
 }
-var import_fs14, import_path14, import_crypto4, import_module3, import_url4, import_postcss, import_postcss_load_config, import_postcss_modules, cachedPostcssConfigByRoot, postcssConfigFailedRoots, POSTCSS_DIR_DEPENDENCY_MAX_FILES;
+var import_fs15, import_path15, import_crypto4, import_perf_hooks, import_module3, import_url4, import_postcss, import_postcss_load_config, import_postcss_modules, cachedPostcssConfigByRoot, pendingPostcssConfigByRoot, postcssConfigFailedRoots, POSTCSS_DIR_DEPENDENCY_MAX_FILES;
 var init_css = __esm({
   "src/core/loaders/css.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs14 = __toESM(require("fs"), 1);
-    import_path14 = __toESM(require("path"), 1);
+    import_fs15 = __toESM(require("fs"), 1);
+    import_path15 = __toESM(require("path"), 1);
     import_crypto4 = __toESM(require("crypto"), 1);
+    import_perf_hooks = require("perf_hooks");
     import_module3 = require("module");
     import_url4 = require("url");
     import_postcss = __toESM(require("postcss"), 1);
     import_postcss_load_config = __toESM(require("postcss-load-config"), 1);
     import_postcss_modules = __toESM(require("postcss-modules"), 1);
     init_cache();
+    init_css_demand();
     cachedPostcssConfigByRoot = /* @__PURE__ */ new Map();
+    pendingPostcssConfigByRoot = /* @__PURE__ */ new Map();
     postcssConfigFailedRoots = /* @__PURE__ */ new Set();
     POSTCSS_DIR_DEPENDENCY_MAX_FILES = 5e3;
   }
@@ -4000,15 +4557,15 @@ var init_css = __esm({
 
 // src/core/utils/public-path.ts
 function publicPathForFile(rootDir, absPath) {
-  const normalizedRoot = import_path15.default.resolve(rootDir);
-  const normalizedFile = import_path15.default.resolve(absPath);
-  if (normalizedFile.startsWith(normalizedRoot + import_path15.default.sep) || normalizedFile === normalizedRoot) {
-    const relative = import_path15.default.relative(normalizedRoot, normalizedFile).split(import_path15.default.sep).join("/");
+  const normalizedRoot = import_path16.default.resolve(rootDir);
+  const normalizedFile = import_path16.default.resolve(absPath);
+  if (normalizedFile.startsWith(normalizedRoot + import_path16.default.sep) || normalizedFile === normalizedRoot) {
+    const relative = import_path16.default.relative(normalizedRoot, normalizedFile).split(import_path16.default.sep).join("/");
     return "/" + (relative.length ? relative : "");
   }
   const logicalNodeModulesPath = mapRealPathToProjectNodeModules(normalizedRoot, normalizedFile);
   if (logicalNodeModulesPath) {
-    const relative = import_path15.default.relative(normalizedRoot, logicalNodeModulesPath).split(import_path15.default.sep).join("/");
+    const relative = import_path16.default.relative(normalizedRoot, logicalNodeModulesPath).split(import_path16.default.sep).join("/");
     return "/" + relative;
   }
   const wsId = toWsModuleId(normalizedFile, null);
@@ -4017,36 +4574,36 @@ function publicPathForFile(rootDir, absPath) {
 }
 function realpathOrResolve2(absPath) {
   try {
-    const fn = import_fs15.default.realpathSync.native;
+    const fn = import_fs16.default.realpathSync.native;
     if (fn) return fn(absPath);
-    return import_fs15.default.realpathSync(absPath);
+    return import_fs16.default.realpathSync(absPath);
   } catch {
-    return import_path15.default.resolve(absPath);
+    return import_path16.default.resolve(absPath);
   }
 }
 function mapRealPathToProjectNodeModules(rootDir, absPath) {
-  const normalizedRoot = import_path15.default.resolve(rootDir);
+  const normalizedRoot = import_path16.default.resolve(rootDir);
   const normalizedFile = realpathOrResolve2(absPath);
-  const parts = normalizedFile.split(import_path15.default.sep).filter(Boolean);
+  const parts = normalizedFile.split(import_path16.default.sep).filter(Boolean);
   for (let index = 0; index < parts.length; index += 1) {
     if (parts[index] !== "node_modules") continue;
     if (index === parts.length - 1) continue;
     const suffix = parts.slice(index + 1);
     if (suffix[0]?.startsWith("@") && suffix.length < 2) continue;
-    const candidate = import_path15.default.join(normalizedRoot, "node_modules", ...suffix);
-    if (!import_fs15.default.existsSync(candidate)) continue;
+    const candidate = import_path16.default.join(normalizedRoot, "node_modules", ...suffix);
+    if (!import_fs16.default.existsSync(candidate)) continue;
     if (realpathOrResolve2(candidate) !== normalizedFile) continue;
     return candidate;
   }
   return null;
 }
 function isWithinRoots(filePath, roots) {
-  const exists = import_fs15.default.existsSync(filePath);
-  const normalizedFile = exists ? realpathOrResolve2(filePath) : import_path15.default.resolve(filePath);
+  const exists = import_fs16.default.existsSync(filePath);
+  const normalizedFile = exists ? realpathOrResolve2(filePath) : import_path16.default.resolve(filePath);
   for (const root of roots) {
     const normalizedRoot = realpathOrResolve2(root);
     if (normalizedFile === normalizedRoot) return true;
-    if (normalizedFile.startsWith(normalizedRoot + import_path15.default.sep)) return true;
+    if (normalizedFile.startsWith(normalizedRoot + import_path16.default.sep)) return true;
   }
   return false;
 }
@@ -4075,21 +4632,21 @@ function decodePublicPath(rootDir, urlPath, opts) {
       return null;
     }
   }
-  const normalizedRoot = import_path15.default.resolve(rootDir);
-  const joined = import_path15.default.resolve(normalizedRoot, "." + urlPath);
-  if (!joined.startsWith(normalizedRoot + import_path15.default.sep) && joined !== normalizedRoot) {
+  const normalizedRoot = import_path16.default.resolve(rootDir);
+  const joined = import_path16.default.resolve(normalizedRoot, "." + urlPath);
+  if (!joined.startsWith(normalizedRoot + import_path16.default.sep) && joined !== normalizedRoot) {
     return null;
   }
   if (isForbiddenPath(joined)) return null;
   return joined;
 }
-var import_path15, import_fs15, MODULE_PREFIX;
+var import_path16, import_fs16, MODULE_PREFIX;
 var init_public_path = __esm({
   "src/core/utils/public-path.ts"() {
     "use strict";
     init_cjs_shims();
-    import_path15 = __toESM(require("path"), 1);
-    import_fs15 = __toESM(require("fs"), 1);
+    import_path16 = __toESM(require("path"), 1);
+    import_fs16 = __toESM(require("fs"), 1);
     init_module_id();
     MODULE_PREFIX = "/__ionify__/modules/";
   }
@@ -4097,19 +4654,19 @@ var init_public_path = __esm({
 
 // src/core/utils/cas.ts
 function getCasArtifactPath(casRoot, versionHash, moduleHash) {
-  return import_path17.default.join(casRoot, versionHash, moduleHash);
+  return import_path18.default.join(casRoot, versionHash, moduleHash);
 }
 function getCompressionCasArtifactPath(casRoot, finalOutputHash, opts) {
   const shard = finalOutputHash.slice(0, 2) || "00";
   const settingsKey = `br${Math.max(0, Math.floor(opts.brotliQuality))}-gz${Math.max(0, Math.floor(opts.gzipLevel))}`;
-  return import_path17.default.join(casRoot, "compression", `v${COMPRESSION_CAS_VERSION}`, shard, finalOutputHash, settingsKey);
+  return import_path18.default.join(casRoot, "compression", `v${COMPRESSION_CAS_VERSION}`, shard, finalOutputHash, settingsKey);
 }
-var import_path17, COMPRESSION_CAS_VERSION;
+var import_path18, COMPRESSION_CAS_VERSION;
 var init_cas = __esm({
   "src/core/utils/cas.ts"() {
     "use strict";
     init_cjs_shims();
-    import_path17 = __toESM(require("path"), 1);
+    import_path18 = __toESM(require("path"), 1);
     COMPRESSION_CAS_VERSION = 1;
   }
 });
@@ -4159,7 +4716,7 @@ function computeSubpathFromEntryPath(entryPath) {
     }
     return "";
   }
-  let rel = import_path18.default.relative(packageRoot, entryPath).replace(/\\/g, "/");
+  let rel = import_path19.default.relative(packageRoot, entryPath).replace(/\\/g, "/");
   const extIndex = rel.lastIndexOf(".");
   if (extIndex !== -1) {
     rel = rel.substring(0, extIndex);
@@ -4167,9 +4724,9 @@ function computeSubpathFromEntryPath(entryPath) {
   if (rel.endsWith("/index")) {
     rel = rel.substring(0, rel.length - "/index".length);
   }
-  const pkgName = import_path18.default.basename(packageRoot);
+  const pkgName = import_path19.default.basename(packageRoot);
   if (process.env.DEBUG_DEPS) {
-    console.log(`[subpath] entry: ${import_path18.default.basename(entryPath)}, root: ${pkgName}, rel: "${rel}", isMain: ${rel === pkgName}`);
+    console.log(`[subpath] entry: ${import_path19.default.basename(entryPath)}, root: ${pkgName}, rel: "${rel}", isMain: ${rel === pkgName}`);
   }
   if (rel === pkgName || rel === "index" || rel === "" || rel === ".") {
     return "";
@@ -4177,20 +4734,20 @@ function computeSubpathFromEntryPath(entryPath) {
   return rel || "";
 }
 function findPackageRoot(entryPath) {
-  let currentDir = import_path18.default.dirname(entryPath);
+  let currentDir = import_path19.default.dirname(entryPath);
   let previousDir = entryPath;
   while (currentDir && currentDir !== previousDir) {
-    const parent = import_path18.default.dirname(currentDir);
-    const grandparent = import_path18.default.dirname(parent);
-    if (import_path18.default.basename(parent) === "node_modules") {
-      const pkgJsonPath = import_path18.default.join(currentDir, "package.json");
-      if (import_fs16.default.existsSync(pkgJsonPath)) {
+    const parent = import_path19.default.dirname(currentDir);
+    const grandparent = import_path19.default.dirname(parent);
+    if (import_path19.default.basename(parent) === "node_modules") {
+      const pkgJsonPath = import_path19.default.join(currentDir, "package.json");
+      if (import_fs17.default.existsSync(pkgJsonPath)) {
         return currentDir;
       }
     }
-    if (import_path18.default.basename(grandparent) === "node_modules" && import_path18.default.basename(parent).startsWith("@")) {
-      const pkgJsonPath = import_path18.default.join(currentDir, "package.json");
-      if (import_fs16.default.existsSync(pkgJsonPath)) {
+    if (import_path19.default.basename(grandparent) === "node_modules" && import_path19.default.basename(parent).startsWith("@")) {
+      const pkgJsonPath = import_path19.default.join(currentDir, "package.json");
+      if (import_fs17.default.existsSync(pkgJsonPath)) {
         return currentDir;
       }
     }
@@ -4209,10 +4766,10 @@ function normalizeSubpath(subpath) {
   return cleaned.replace(/\//g, "__");
 }
 function buildDepIdentityFingerprint(options) {
-  const canonicalPath = realpathOrSelf2(options.entryPath);
-  const peerIdentity = resolvePeerIdentitySignature(canonicalPath);
+  const canonicalPath2 = realpathOrSelf2(options.entryPath);
+  const peerIdentity = resolvePeerIdentitySignature(canonicalPath2);
   if (!peerIdentity) {
-    return canonicalPath;
+    return canonicalPath2;
   }
   return [
     "peer-aware:v1",
@@ -4238,7 +4795,7 @@ function resolvePeerIdentitySignature(entryPath) {
     peerIdentityCache.set(canonicalEntry, null);
     return null;
   }
-  const startDir = import_path18.default.dirname(packageRoot);
+  const startDir = import_path19.default.dirname(packageRoot);
   const signature = peerNames.map((peerName) => `${peerName}@${resolveInstalledPackageVersion(startDir, peerName) ?? "missing"}`).join("|");
   peerIdentityCache.set(canonicalEntry, signature);
   return signature;
@@ -4247,12 +4804,12 @@ function resolveInstalledPackageVersion(startDir, packageName) {
   let currentDir = startDir;
   let previousDir = "";
   while (currentDir && currentDir !== previousDir) {
-    const manifestPath = import_path18.default.join(currentDir, "node_modules", packageName, "package.json");
-    if (import_fs16.default.existsSync(manifestPath)) {
-      return readPackageManifest(import_path18.default.dirname(manifestPath))?.version ?? null;
+    const manifestPath = import_path19.default.join(currentDir, "node_modules", packageName, "package.json");
+    if (import_fs17.default.existsSync(manifestPath)) {
+      return readPackageManifest(import_path19.default.dirname(manifestPath))?.version ?? null;
     }
     previousDir = currentDir;
-    currentDir = import_path18.default.dirname(currentDir);
+    currentDir = import_path19.default.dirname(currentDir);
   }
   return null;
 }
@@ -4261,9 +4818,9 @@ function readPackageManifest(packageRoot) {
   if (manifestCache.has(canonicalRoot)) {
     return manifestCache.get(canonicalRoot) ?? null;
   }
-  const manifestPath = import_path18.default.join(canonicalRoot, "package.json");
+  const manifestPath = import_path19.default.join(canonicalRoot, "package.json");
   try {
-    const parsed = JSON.parse(import_fs16.default.readFileSync(manifestPath, "utf8"));
+    const parsed = JSON.parse(import_fs17.default.readFileSync(manifestPath, "utf8"));
     manifestCache.set(canonicalRoot, parsed);
     return parsed;
   } catch {
@@ -4273,19 +4830,19 @@ function readPackageManifest(packageRoot) {
 }
 function realpathOrSelf2(targetPath) {
   try {
-    return import_fs16.default.realpathSync(targetPath);
+    return import_fs17.default.realpathSync(targetPath);
   } catch {
     return targetPath;
   }
 }
-var import_crypto5, import_fs16, import_path18, registry, manifestCache, peerIdentityCache;
+var import_crypto5, import_fs17, import_path19, registry, manifestCache, peerIdentityCache;
 var init_registry = __esm({
   "src/core/deps/registry.ts"() {
     "use strict";
     init_cjs_shims();
     import_crypto5 = __toESM(require("crypto"), 1);
-    import_fs16 = __toESM(require("fs"), 1);
-    import_path18 = __toESM(require("path"), 1);
+    import_fs17 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
     registry = /* @__PURE__ */ new Map();
     manifestCache = /* @__PURE__ */ new Map();
     peerIdentityCache = /* @__PURE__ */ new Map();
@@ -4480,11 +5037,11 @@ function loadEnv(mode = "development", rootDir = process.cwd()) {
   const candidates = [".env", ".env.local", `.env.${modeName}`, `.env.${modeName}.local`];
   const merged = {};
   for (const name of candidates) {
-    const filePath = import_path20.default.resolve(rootDir, name);
-    if (!import_fs18.default.existsSync(filePath) || !import_fs18.default.statSync(filePath).isFile()) {
+    const filePath = import_path21.default.resolve(rootDir, name);
+    if (!import_fs19.default.existsSync(filePath) || !import_fs19.default.statSync(filePath).isFile()) {
       continue;
     }
-    const contents = import_fs18.default.readFileSync(filePath, "utf8");
+    const contents = import_fs19.default.readFileSync(filePath, "utf8");
     const parsed = parseEnvFile(contents);
     Object.assign(merged, parsed);
   }
@@ -4497,46 +5054,46 @@ function loadEnv(mode = "development", rootDir = process.cwd()) {
     ...merged
   };
 }
-var import_fs18, import_path20;
+var import_fs19, import_path21;
 var init_env = __esm({
   "src/cli/utils/env.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs18 = __toESM(require("fs"), 1);
-    import_path20 = __toESM(require("path"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
+    import_path21 = __toESM(require("path"), 1);
   }
 });
 
 // src/cli/utils/native-config-loader.ts
 async function importNativeConfigModule(configPath) {
-  const ext = import_path21.default.extname(configPath).toLowerCase();
+  const ext = import_path22.default.extname(configPath).toLowerCase();
   let importUrl;
   let tmpFile = null;
   let helperFile = null;
   const tempPrefix = `.ionify-config.${process.pid}.${Date.now()}`;
   if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
-    const source = import_fs19.default.readFileSync(configPath, "utf8");
+    const source = import_fs20.default.readFileSync(configPath, "utf8");
     const helper = ionifyConfigHelperImportPath(source, tempPrefix);
     if (helper) {
-      helperFile = import_path21.default.join(import_path21.default.dirname(configPath), helper.fileName);
-      tmpFile = import_path21.default.join(import_path21.default.dirname(configPath), `${tempPrefix}.mjs`);
-      import_fs19.default.writeFileSync(helperFile, configHelperModuleSource(), "utf8");
-      import_fs19.default.writeFileSync(tmpFile, rewriteIonifyConfigHelperImports(source, `./${helper.fileName}`), "utf8");
+      helperFile = import_path22.default.join(import_path22.default.dirname(configPath), helper.fileName);
+      tmpFile = import_path22.default.join(import_path22.default.dirname(configPath), `${tempPrefix}.mjs`);
+      import_fs20.default.writeFileSync(helperFile, configHelperModuleSource(), "utf8");
+      import_fs20.default.writeFileSync(tmpFile, rewriteIonifyConfigHelperImports(source, `./${helper.fileName}`), "utf8");
       importUrl = (0, import_url5.pathToFileURL)(tmpFile).href;
     } else {
       importUrl = (0, import_url5.pathToFileURL)(configPath).href;
     }
   } else {
-    const source = import_fs19.default.readFileSync(configPath, "utf8");
+    const source = import_fs20.default.readFileSync(configPath, "utf8");
     const helper = ionifyConfigHelperImportPath(source, tempPrefix);
     const rewrittenSource = helper ? rewriteIonifyConfigHelperImports(source, `./${helper.fileName}`) : source;
     const code = transpileConfigToEsm(rewrittenSource, configPath);
-    tmpFile = import_path21.default.join(import_path21.default.dirname(configPath), `${tempPrefix}.mjs`);
+    tmpFile = import_path22.default.join(import_path22.default.dirname(configPath), `${tempPrefix}.mjs`);
     if (helper) {
-      helperFile = import_path21.default.join(import_path21.default.dirname(configPath), helper.fileName);
-      import_fs19.default.writeFileSync(helperFile, configHelperModuleSource(), "utf8");
+      helperFile = import_path22.default.join(import_path22.default.dirname(configPath), helper.fileName);
+      import_fs20.default.writeFileSync(helperFile, configHelperModuleSource(), "utf8");
     }
-    import_fs19.default.writeFileSync(tmpFile, code, "utf8");
+    import_fs20.default.writeFileSync(tmpFile, code, "utf8");
     importUrl = (0, import_url5.pathToFileURL)(tmpFile).href;
   }
   try {
@@ -4544,13 +5101,13 @@ async function importNativeConfigModule(configPath) {
   } finally {
     if (tmpFile) {
       try {
-        import_fs19.default.rmSync(tmpFile, { force: true });
+        import_fs20.default.rmSync(tmpFile, { force: true });
       } catch {
       }
     }
     if (helperFile) {
       try {
-        import_fs19.default.rmSync(helperFile, { force: true });
+        import_fs20.default.rmSync(helperFile, { force: true });
       } catch {
       }
     }
@@ -4598,13 +5155,13 @@ const __dirname = __ionifyDirname(__filename);
   }
   return code;
 }
-var import_fs19, import_path21, import_module4, import_url5, require2;
+var import_fs20, import_path22, import_module4, import_url5, require2;
 var init_native_config_loader = __esm({
   "src/cli/utils/native-config-loader.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs19 = __toESM(require("fs"), 1);
-    import_path21 = __toESM(require("path"), 1);
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
     import_module4 = require("module");
     import_url5 = require("url");
     init_native();
@@ -4634,14 +5191,14 @@ function buildConfigEnv(mode, rootDir) {
   return merged;
 }
 function findProjectRoot(startDir) {
-  let dir = import_path22.default.resolve(startDir);
+  let dir = import_path23.default.resolve(startDir);
   for (let i = 0; i < 15; i++) {
-    const pkg = import_path22.default.join(dir, "package.json");
+    const pkg = import_path23.default.join(dir, "package.json");
     try {
-      if (import_fs20.default.existsSync(pkg) && import_fs20.default.statSync(pkg).isFile()) return dir;
+      if (import_fs21.default.existsSync(pkg) && import_fs21.default.statSync(pkg).isFile()) return dir;
     } catch {
     }
-    const parent = import_path22.default.dirname(dir);
+    const parent = import_path23.default.dirname(dir);
     if (!parent || parent === dir) break;
     dir = parent;
   }
@@ -4649,8 +5206,8 @@ function findProjectRoot(startDir) {
 }
 function findConfigFile(cwd) {
   for (const name of CONFIG_BASENAMES) {
-    const candidate = import_path22.default.resolve(cwd, name);
-    if (import_fs20.default.existsSync(candidate) && import_fs20.default.statSync(candidate).isFile()) {
+    const candidate = import_path23.default.resolve(cwd, name);
+    if (import_fs21.default.existsSync(candidate) && import_fs21.default.statSync(candidate).isFile()) {
       return candidate;
     }
   }
@@ -4669,7 +5226,7 @@ async function loadIonifyConfig(cwd = process.cwd(), mode) {
     return cachedConfig;
   }
   try {
-    const configDir = import_path22.default.dirname(configPath);
+    const configDir = import_path23.default.dirname(configPath);
     const configEnv = buildConfigEnv(configMode, configDir);
     const imported = await importNativeConfigModule(configPath);
     let resolved = imported?.default ?? imported?.config ?? imported ?? null;
@@ -4681,25 +5238,25 @@ async function loadIonifyConfig(cwd = process.cwd(), mode) {
     }
     if (resolved && typeof resolved === "object") {
       if (resolved.root) {
-        const rootPath = import_path22.default.isAbsolute(resolved.root) ? resolved.root : import_path22.default.resolve(import_path22.default.dirname(configPath), resolved.root);
-        if (!import_fs20.default.existsSync(rootPath)) {
+        const rootPath = import_path23.default.isAbsolute(resolved.root) ? resolved.root : import_path23.default.resolve(import_path23.default.dirname(configPath), resolved.root);
+        if (!import_fs21.default.existsSync(rootPath)) {
           logError(`Config error: root directory does not exist: ${rootPath}`);
           throw new Error(`Invalid root: ${rootPath}`);
         }
-        if (!import_fs20.default.statSync(rootPath).isDirectory()) {
+        if (!import_fs21.default.statSync(rootPath).isDirectory()) {
           logError(`Config error: root must be a directory: ${rootPath}`);
           throw new Error(`Invalid root: ${rootPath}`);
         }
         resolved.root = rootPath;
-        logInfo(`Using project root: ${import_path22.default.relative(cwd, rootPath)}`);
+        logInfo(`Using project root: ${import_path23.default.relative(cwd, rootPath)}`);
       } else {
-        resolved.root = import_path22.default.dirname(configPath);
+        resolved.root = import_path23.default.dirname(configPath);
       }
       if (resolved.optimizeDeps?.esbuildOptions) {
         logWarn("optimizeDeps.esbuildOptions is not supported in Ionify (uses native Rust optimizer). This option will be ignored.");
       }
       cachedConfig = resolved;
-      const baseDir = typeof resolved.root === "string" && resolved.root.length > 0 ? resolved.root : import_path22.default.dirname(configPath);
+      const baseDir = typeof resolved.root === "string" && resolved.root.length > 0 ? resolved.root : import_path23.default.dirname(configPath);
       const aliases = resolved?.resolve?.alias;
       if (aliases && typeof aliases === "object") {
         configureResolverAliases(aliases, baseDir);
@@ -4712,7 +5269,7 @@ async function loadIonifyConfig(cwd = process.cwd(), mode) {
         configureResolverAliases(void 0, baseDir);
         delete process.env.IONIFY_RESOLVE_ALIAS;
       }
-      logInfo(`Loaded ionify config from ${import_path22.default.relative(cwd, configPath)}`);
+      logInfo(`Loaded ionify config from ${import_path23.default.relative(cwd, configPath)}`);
     } else {
       throw new Error("Config did not export an object");
     }
@@ -4724,13 +5281,13 @@ async function loadIonifyConfig(cwd = process.cwd(), mode) {
   }
   return cachedConfig;
 }
-var import_fs20, import_path22, CONFIG_BASENAMES, cachedConfig, configLoaded;
+var import_fs21, import_path23, CONFIG_BASENAMES, cachedConfig, configLoaded;
 var init_config = __esm({
   "src/cli/utils/config.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs20 = __toESM(require("fs"), 1);
-    import_path22 = __toESM(require("path"), 1);
+    import_fs21 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
     init_logger();
     init_resolver();
     init_env();
@@ -4752,14 +5309,14 @@ function readLockfile(workspaceRoot, projectRoot) {
   const roots = [workspaceRoot, projectRoot].filter(Boolean);
   const uniqueRoots2 = [];
   for (const r of roots) {
-    const abs = import_path23.default.resolve(r);
+    const abs = import_path24.default.resolve(r);
     if (!uniqueRoots2.includes(abs)) uniqueRoots2.push(abs);
   }
   for (const root of uniqueRoots2) {
     for (const name of LOCKFILE_ORDER) {
-      const filePath = import_path23.default.join(root, name);
-      if (!import_fs21.default.existsSync(filePath)) continue;
-      const contents = import_fs21.default.readFileSync(filePath);
+      const filePath = import_path24.default.join(root, name);
+      if (!import_fs22.default.existsSync(filePath)) continue;
+      const contents = import_fs22.default.readFileSync(filePath);
       return { name, path: filePath, contents, packageCount: estimateLockfilePackageCount(name, contents) };
     }
   }
@@ -4797,13 +5354,13 @@ function estimateLockfilePackageCount(name, contents) {
   }
   return null;
 }
-var import_fs21, import_path23, LOCKFILE_ORDER;
+var import_fs22, import_path24, LOCKFILE_ORDER;
 var init_lockfile = __esm({
   "src/cli/utils/lockfile.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs21 = __toESM(require("fs"), 1);
-    import_path23 = __toESM(require("path"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
     LOCKFILE_ORDER = [
       "pnpm-lock.yaml",
       "package-lock.json",
@@ -5018,36 +5575,36 @@ var init_parser = __esm({
 // src/core/workspace.ts
 function realpathOrResolve3(absPath) {
   try {
-    const fn = import_fs22.default.realpathSync.native;
+    const fn = import_fs23.default.realpathSync.native;
     if (fn) return fn(absPath);
-    return import_fs22.default.realpathSync(absPath);
+    return import_fs23.default.realpathSync(absPath);
   } catch {
-    return import_path24.default.resolve(absPath);
+    return import_path25.default.resolve(absPath);
   }
 }
 function fileExists(filePath) {
   try {
-    return import_fs22.default.existsSync(filePath) && import_fs22.default.statSync(filePath).isFile();
+    return import_fs23.default.existsSync(filePath) && import_fs23.default.statSync(filePath).isFile();
   } catch {
     return false;
   }
 }
 function dirExists(dirPath) {
   try {
-    return import_fs22.default.existsSync(dirPath) && import_fs22.default.statSync(dirPath).isDirectory();
+    return import_fs23.default.existsSync(dirPath) && import_fs23.default.statSync(dirPath).isDirectory();
   } catch {
     return false;
   }
 }
 function hasGitRootMarker(dir) {
-  const dotGit = import_path24.default.join(dir, ".git");
+  const dotGit = import_path25.default.join(dir, ".git");
   return fileExists(dotGit) || dirExists(dotGit);
 }
 function hasWorkspacesField(dir) {
-  const pkgPath = import_path24.default.join(dir, "package.json");
+  const pkgPath = import_path25.default.join(dir, "package.json");
   if (!fileExists(pkgPath)) return false;
   try {
-    const raw = import_fs22.default.readFileSync(pkgPath, "utf8");
+    const raw = import_fs23.default.readFileSync(pkgPath, "utf8");
     const parsed = JSON.parse(raw);
     const ws = parsed?.workspaces;
     if (Array.isArray(ws) && ws.length > 0) return true;
@@ -5058,29 +5615,29 @@ function hasWorkspacesField(dir) {
   return false;
 }
 function findUp(startDir, predicate) {
-  let current = import_path24.default.resolve(startDir);
+  let current = import_path25.default.resolve(startDir);
   for (let i = 0; i < 50; i++) {
     const markers = predicate(current);
     if (markers && markers.length) return { dir: current, markers };
-    const parent = import_path24.default.dirname(current);
+    const parent = import_path25.default.dirname(current);
     if (!parent || parent === current) break;
     current = parent;
   }
   return null;
 }
 function findNearestPackageRoot(startDir) {
-  const found = findUp(startDir, (dir) => fileExists(import_path24.default.join(dir, "package.json")) ? ["package.json"] : null);
+  const found = findUp(startDir, (dir) => fileExists(import_path25.default.join(dir, "package.json")) ? ["package.json"] : null);
   return found?.dir ?? null;
 }
 function detectWorkspaceRoot(projectRoot) {
   const explicit = findUp(projectRoot, (dir) => {
     const markers = [];
     for (const name of WORKSPACE_MARKERS) {
-      if (fileExists(import_path24.default.join(dir, name))) markers.push(name);
+      if (fileExists(import_path25.default.join(dir, name))) markers.push(name);
     }
     if (hasWorkspacesField(dir)) markers.push("package.json#workspaces");
     for (const name of LOCKFILE_MARKERS) {
-      if (fileExists(import_path24.default.join(dir, name))) markers.push(name);
+      if (fileExists(import_path25.default.join(dir, name))) markers.push(name);
     }
     return markers.length ? markers : null;
   });
@@ -5090,11 +5647,11 @@ function detectWorkspaceRoot(projectRoot) {
   return { dir: projectRoot, markers: [] };
 }
 function readGitSubmoduleRoots(workspaceRoot) {
-  const gitmodulesPath = import_path24.default.join(workspaceRoot, ".gitmodules");
+  const gitmodulesPath = import_path25.default.join(workspaceRoot, ".gitmodules");
   if (!fileExists(gitmodulesPath)) return [];
   let text;
   try {
-    text = import_fs22.default.readFileSync(gitmodulesPath, "utf8");
+    text = import_fs23.default.readFileSync(gitmodulesPath, "utf8");
   } catch {
     return [];
   }
@@ -5104,10 +5661,10 @@ function readGitSubmoduleRoots(workspaceRoot) {
     if (!m) continue;
     const raw = m[1] ? String(m[1]).trim() : "";
     if (!raw) continue;
-    const abs = import_path24.default.resolve(workspaceRoot, raw);
+    const abs = import_path25.default.resolve(workspaceRoot, raw);
     const normalizedWs = realpathOrResolve3(workspaceRoot);
     const normalizedAbs = realpathOrResolve3(abs);
-    if (normalizedAbs === normalizedWs || normalizedAbs.startsWith(normalizedWs + import_path24.default.sep)) {
+    if (normalizedAbs === normalizedWs || normalizedAbs.startsWith(normalizedWs + import_path25.default.sep)) {
       roots.push(abs);
     }
   }
@@ -5126,12 +5683,12 @@ function computeWorkspaceId(workspaceRoot) {
     ".gitmodules"
   ];
   for (const name of identityFiles) {
-    const p = import_path24.default.join(workspaceRoot, name);
+    const p = import_path25.default.join(workspaceRoot, name);
     if (!fileExists(p)) continue;
     try {
       hash.update(name);
       hash.update("\0");
-      hash.update(import_fs22.default.readFileSync(p));
+      hash.update(import_fs23.default.readFileSync(p));
       hash.update("\0");
     } catch {
     }
@@ -5139,7 +5696,7 @@ function computeWorkspaceId(workspaceRoot) {
   return hash.digest("hex").slice(0, 12);
 }
 function computeProjectId(workspaceRoot, projectRoot) {
-  const rel = import_path24.default.relative(workspaceRoot, projectRoot).split(import_path24.default.sep).join("/");
+  const rel = import_path25.default.relative(workspaceRoot, projectRoot).split(import_path25.default.sep).join("/");
   const normalizedRel = rel && rel !== "." ? rel : "root";
   const hash = import_crypto6.default.createHash("sha256").update(`ionify:project:v1:${normalizedRel}`).digest("hex");
   return { id: hash.slice(0, 10), rel: normalizedRel };
@@ -5148,7 +5705,7 @@ function uniqueRoots(roots) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   for (const r of roots) {
-    const normalized = realpathOrResolve3(import_path24.default.resolve(r));
+    const normalized = realpathOrResolve3(import_path25.default.resolve(r));
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     out.push(normalized);
@@ -5156,11 +5713,11 @@ function uniqueRoots(roots) {
   return out;
 }
 function resolveWorkspace(startDir, opts = {}) {
-  const startAbs = realpathOrResolve3(import_path24.default.resolve(startDir));
-  const projectRoot = opts.projectRootOverride ? realpathOrResolve3(import_path24.default.resolve(opts.projectRootOverride)) : realpathOrResolve3(findNearestPackageRoot(startAbs) ?? startAbs);
+  const startAbs = realpathOrResolve3(import_path25.default.resolve(startDir));
+  const projectRoot = opts.projectRootOverride ? realpathOrResolve3(import_path25.default.resolve(opts.projectRootOverride)) : realpathOrResolve3(findNearestPackageRoot(startAbs) ?? startAbs);
   const ws = detectWorkspaceRoot(projectRoot);
   const workspaceRoot = realpathOrResolve3(ws.dir);
-  const ionifyDir = import_path24.default.join(workspaceRoot, ".ionify");
+  const ionifyDir = import_path25.default.join(workspaceRoot, ".ionify");
   const submoduleRoots = readGitSubmoduleRoots(workspaceRoot);
   const markers = ws.markers;
   const workspaceId = computeWorkspaceId(workspaceRoot);
@@ -5178,13 +5735,13 @@ function resolveWorkspace(startDir, opts = {}) {
     allowedRoots
   };
 }
-var import_fs22, import_path24, import_crypto6, WORKSPACE_MARKERS, LOCKFILE_MARKERS;
+var import_fs23, import_path25, import_crypto6, WORKSPACE_MARKERS, LOCKFILE_MARKERS;
 var init_workspace = __esm({
   "src/core/workspace.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs22 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
+    import_fs23 = __toESM(require("fs"), 1);
+    import_path25 = __toESM(require("path"), 1);
     import_crypto6 = __toESM(require("crypto"), 1);
     WORKSPACE_MARKERS = [
       "pnpm-workspace.yaml",
@@ -5324,7 +5881,7 @@ function collectImportedBindingValueReferences(node, importedLocals, out, shadow
   }
 }
 function parseModuleForUsage(absPath, code) {
-  const ext = import_path25.default.extname(absPath).toLowerCase();
+  const ext = import_path26.default.extname(absPath).toLowerCase();
   const isTypeScript = ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts";
   const isTsx = ext === ".tsx";
   const isJsx = ext === ".jsx";
@@ -5447,10 +6004,10 @@ function resolveDepEntryForBareImport(spec, importerAbs) {
   return { fileName: dep.fileName, entryPath: fsPath, packageName, packageVersion, moduleFormat };
 }
 function safeRealpath(absPath) {
-  const resolved = import_path25.default.resolve(absPath);
+  const resolved = import_path26.default.resolve(absPath);
   try {
-    const nativeFn = import_fs23.default.realpathSync.native;
-    return nativeFn ? nativeFn(resolved) : import_fs23.default.realpathSync(resolved);
+    const nativeFn = import_fs24.default.realpathSync.native;
+    return nativeFn ? nativeFn(resolved) : import_fs24.default.realpathSync(resolved);
   } catch {
     return resolved;
   }
@@ -5536,14 +6093,14 @@ function normalizeAllowedRoots(roots) {
 function isWithinAllowedRoots(absPath, allowedRoots) {
   for (const root of allowedRoots) {
     if (absPath === root) return true;
-    if (absPath.startsWith(root + import_path25.default.sep)) return true;
+    if (absPath.startsWith(root + import_path26.default.sep)) return true;
   }
   return false;
 }
 function normalizeProjectKey(rootDir, absPath) {
   const normalizedRoot = safeRealpath(rootDir);
   const normalizedPath = safeRealpath(absPath);
-  const rel = import_path25.default.relative(normalizedRoot, normalizedPath).replace(/\\/g, "/");
+  const rel = import_path26.default.relative(normalizedRoot, normalizedPath).replace(/\\/g, "/");
   if (!rel || rel === ".") return ".";
   return rel;
 }
@@ -5557,7 +6114,7 @@ async function scanDepUsage(options) {
   const visitedFiles = /* @__PURE__ */ new Set();
   for (const entry of entries) {
     if (typeof entry !== "string" || entry.length === 0) continue;
-    const abs = import_path25.default.isAbsolute(entry) ? entry : import_path25.default.resolve(rootDir, entry);
+    const abs = import_path26.default.isAbsolute(entry) ? entry : import_path26.default.resolve(rootDir, entry);
     queue.push({
       absPath: abs,
       entryRootKey: normalizeProjectKey(rootDir, abs)
@@ -5571,14 +6128,14 @@ async function scanDepUsage(options) {
     if (visitedFiles.has(visitKey)) continue;
     visitedFiles.add(visitKey);
     if (!isWithinAllowedRoots(absPath, allowedRoots)) continue;
-    if (absPath.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) continue;
-    const ext = import_path25.default.extname(absPath).toLowerCase();
+    if (absPath.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) continue;
+    const ext = import_path26.default.extname(absPath).toLowerCase();
     if (!SCAN_EXTS.has(ext)) continue;
     if (absPath.endsWith(".d.ts")) continue;
-    if (!import_fs23.default.existsSync(absPath)) continue;
+    if (!import_fs24.default.existsSync(absPath)) continue;
     let code = "";
     try {
-      code = import_fs23.default.readFileSync(absPath, "utf8");
+      code = import_fs24.default.readFileSync(absPath, "utf8");
     } catch {
       continue;
     }
@@ -5587,7 +6144,7 @@ async function scanDepUsage(options) {
       const source = record.source;
       if (typeof source !== "string" || source.length === 0) continue;
       const resolvedImport = resolveImport(source, absPath);
-      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`) ? resolvedImport : null;
+      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`) ? resolvedImport : null;
       if (resolvedLocalImport) {
         queue.push({ absPath: resolvedLocalImport, entryRootKey });
         continue;
@@ -5651,21 +6208,21 @@ async function scanDepEntryPaths(options) {
   const entryPaths = /* @__PURE__ */ new Map();
   for (const entry of entries) {
     if (typeof entry !== "string" || entry.length === 0) continue;
-    queue.push(import_path25.default.isAbsolute(entry) ? entry : import_path25.default.resolve(rootDir, entry));
+    queue.push(import_path26.default.isAbsolute(entry) ? entry : import_path26.default.resolve(rootDir, entry));
   }
   while (queue.length) {
     const absPath = safeRealpath(queue.shift());
     if (visitedFiles.has(absPath)) continue;
     visitedFiles.add(absPath);
     if (!isWithinAllowedRoots(absPath, allowedRoots)) continue;
-    if (absPath.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`)) continue;
-    const ext = import_path25.default.extname(absPath).toLowerCase();
+    if (absPath.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) continue;
+    const ext = import_path26.default.extname(absPath).toLowerCase();
     if (!SCAN_EXTS.has(ext)) continue;
     if (absPath.endsWith(".d.ts")) continue;
-    if (!import_fs23.default.existsSync(absPath)) continue;
+    if (!import_fs24.default.existsSync(absPath)) continue;
     let code = "";
     try {
-      code = import_fs23.default.readFileSync(absPath, "utf8");
+      code = import_fs24.default.readFileSync(absPath, "utf8");
     } catch {
       continue;
     }
@@ -5674,7 +6231,7 @@ async function scanDepEntryPaths(options) {
       const source = record.source;
       if (typeof source !== "string" || source.length === 0) continue;
       const resolvedImport = resolveImport(source, absPath);
-      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path25.default.sep}node_modules${import_path25.default.sep}`) ? resolvedImport : null;
+      const resolvedLocalImport = resolvedImport && isWithinAllowedRoots(safeRealpath(resolvedImport), allowedRoots) && !resolvedImport.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`) ? resolvedImport : null;
       if (resolvedLocalImport) {
         queue.push(resolvedLocalImport);
         continue;
@@ -5693,13 +6250,13 @@ async function scanDepEntryPaths(options) {
   }
   return Array.from(entryPaths.values()).sort((a, b) => a.entryPath.localeCompare(b.entryPath));
 }
-var import_fs23, import_path25, import_core2, SCAN_EXTS;
+var import_fs24, import_path26, import_core2, SCAN_EXTS;
 var init_usage = __esm({
   "src/core/deps/usage.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs23 = __toESM(require("fs"), 1);
-    import_path25 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
     import_core2 = require("@swc/core");
     init_resolver();
     init_native();
@@ -5960,14 +6517,14 @@ var init_optimization_level = __esm({
 // src/core/bundler.ts
 function resolveIonifyDir4() {
   const fromEnv = process.env.IONIFY_STATE_DIR;
-  if (fromEnv && import_path28.default.isAbsolute(fromEnv)) return fromEnv;
+  if (fromEnv && import_path29.default.isAbsolute(fromEnv)) return fromEnv;
   const projectRoot = process.env.IONIFY_PROJECT_ROOT;
-  if (projectRoot && import_path28.default.isAbsolute(projectRoot)) return import_path28.default.join(projectRoot, ".ionify");
-  return import_path28.default.join(process.cwd(), ".ionify");
+  if (projectRoot && import_path29.default.isAbsolute(projectRoot)) return import_path29.default.join(projectRoot, ".ionify");
+  return import_path29.default.join(process.cwd(), ".ionify");
 }
 function classifyModuleKind(id) {
   const raw = id.startsWith(WS_MODULE_PREFIX) ? id.slice(WS_MODULE_PREFIX.length) : id;
-  const ext = import_path28.default.posix.extname(raw.replace(/\\/g, "/")).toLowerCase();
+  const ext = import_path29.default.posix.extname(raw.replace(/\\/g, "/")).toLowerCase();
   if (CSS_EXTENSIONS.has(ext)) return "css";
   if (JS_EXTENSIONS2.has(ext)) return "js";
   return "asset";
@@ -5975,38 +6532,38 @@ function classifyModuleKind(id) {
 async function writeTextFileIfChanged(filePath, contents) {
   const nextBytes = Buffer.byteLength(contents, "utf8");
   try {
-    const stat = await import_fs26.default.promises.stat(filePath);
+    const stat = await import_fs27.default.promises.stat(filePath);
     if (stat.isFile() && stat.size === nextBytes) {
-      const existing = await import_fs26.default.promises.readFile(filePath, "utf8");
+      const existing = await import_fs27.default.promises.readFile(filePath, "utf8");
       if (existing === contents) return false;
     }
   } catch (err) {
     if (err?.code !== "ENOENT") throw err;
   }
-  await import_fs26.default.promises.mkdir(import_path28.default.dirname(filePath), { recursive: true });
-  await import_fs26.default.promises.writeFile(filePath, contents, "utf8");
+  await import_fs27.default.promises.mkdir(import_path29.default.dirname(filePath), { recursive: true });
+  await import_fs27.default.promises.writeFile(filePath, contents, "utf8");
   return true;
 }
 async function writeBufferFileIfChanged(filePath, contents) {
   try {
-    const stat = await import_fs26.default.promises.stat(filePath);
+    const stat = await import_fs27.default.promises.stat(filePath);
     if (stat.isFile() && stat.size === contents.length) {
-      const existing = await import_fs26.default.promises.readFile(filePath);
+      const existing = await import_fs27.default.promises.readFile(filePath);
       if (Buffer.compare(existing, contents) === 0) return false;
     }
   } catch (err) {
     if (err?.code !== "ENOENT") throw err;
   }
-  await import_fs26.default.promises.mkdir(import_path28.default.dirname(filePath), { recursive: true });
-  await import_fs26.default.promises.writeFile(filePath, contents);
+  await import_fs27.default.promises.mkdir(import_path29.default.dirname(filePath), { recursive: true });
+  await import_fs27.default.promises.writeFile(filePath, contents);
   return true;
 }
 function loadPreviousOutputStats(outputDir) {
-  const statsPath = import_path28.default.join(outputDir, "build.stats.json");
+  const statsPath = import_path29.default.join(outputDir, "build.stats.json");
   try {
-    const statsFile = import_fs26.default.statSync(statsPath);
+    const statsFile = import_fs27.default.statSync(statsPath);
     if (!statsFile.isFile()) return null;
-    const raw = import_fs26.default.readFileSync(statsPath, "utf8");
+    const raw = import_fs27.default.readFileSync(statsPath, "utf8");
     const parsed = JSON.parse(raw);
     const files = /* @__PURE__ */ new Map();
     for (const [rel, entry] of Object.entries(parsed)) {
@@ -6020,12 +6577,12 @@ function loadPreviousOutputStats(outputDir) {
   }
 }
 async function writeTextFileIfStatsMatch(outputDir, previousStats, filePath, contents, hash) {
-  const rel = toPosix(import_path28.default.relative(outputDir, filePath));
+  const rel = toPosix(import_path29.default.relative(outputDir, filePath));
   const bytes = Buffer.byteLength(contents, "utf8");
   const previous = previousStats?.files.get(rel);
   if (previous && previous.bytes === bytes && previous.hash === hash) {
     try {
-      const stat = await import_fs26.default.promises.stat(filePath);
+      const stat = await import_fs27.default.promises.stat(filePath);
       if (stat.isFile() && stat.size === bytes && stat.mtimeMs <= previousStats.statsMtimeMs + 1) {
         return false;
       }
@@ -6033,12 +6590,76 @@ async function writeTextFileIfStatsMatch(outputDir, previousStats, filePath, con
       if (err?.code !== "ENOENT") throw err;
     }
   }
-  await import_fs26.default.promises.mkdir(import_path28.default.dirname(filePath), { recursive: true });
-  await import_fs26.default.promises.writeFile(filePath, contents, "utf8");
+  await import_fs27.default.promises.mkdir(import_path29.default.dirname(filePath), { recursive: true });
+  await import_fs27.default.promises.writeFile(filePath, contents, "utf8");
   return true;
 }
+function toCssHexByte(value) {
+  return Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0");
+}
+function compactCssRgb(r, g, b, alpha) {
+  const red = Number(r);
+  const green = Number(g);
+  const blue = Number(b);
+  if (![red, green, blue].every((value) => Number.isFinite(value) && value >= 0 && value <= 255)) return "";
+  const base = `#${toCssHexByte(red)}${toCssHexByte(green)}${toCssHexByte(blue)}`;
+  if (alpha === void 0) return base;
+  const opacity = alpha.startsWith(".") ? Number(`0${alpha}`) : Number(alpha);
+  if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return "";
+  return `${base}${toCssHexByte(Math.round(opacity * 255))}`;
+}
+function compactCssColors(input) {
+  return input.replace(/\btransparent\b/g, "#0000").replace(/rgb\((\d+) (\d+) (\d+)\)/gi, (match, r, g, b) => {
+    const compact = compactCssRgb(r, g, b);
+    return compact && compact.length < match.length ? compact : match;
+  }).replace(/rgba\((\d+),(\d+),(\d+),([01]?(?:\.\d+)?)\)/gi, (match, r, g, b, a) => {
+    const compact = compactCssRgb(r, g, b, a);
+    return compact && compact.length < match.length ? compact : match;
+  }).replace(/rgb\((\d+) (\d+) (\d+) \/ ?([01]?(?:\.\d+)?)\)/gi, (match, r, g, b, a) => {
+    const compact = compactCssRgb(r, g, b, a);
+    return compact && compact.length < match.length ? compact : match;
+  }).replace(/#([0-9a-fA-F]{6})([0-9a-fA-F]{2})\b/g, (match, rgb, alpha) => {
+    const value = `${rgb}${alpha}`.toLowerCase();
+    if (value[0] !== value[1] || value[2] !== value[3] || value[4] !== value[5] || value[6] !== value[7]) {
+      return match;
+    }
+    const compact = `#${value[0]}${value[2]}${value[4]}${value[6]}`;
+    return compact.length < match.length ? compact : match;
+  });
+}
+function compactCssTime(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0 || ms >= 1e3) return `${value}ms`;
+  const seconds = `${String(ms / 1e3).replace(/^0/, "")}s`;
+  const millis = `${value}ms`;
+  return seconds.length < millis.length ? seconds : millis;
+}
+function compactCssFunctionWhitespace(input) {
+  return input.replace(
+    /((?:-webkit-)?(?:backdrop-)?filter:[^;}]+)(?=[;}])/g,
+    (match) => match.replace(/\)\s+(?=[a-zA-Z-]+\()/g, ")")
+  );
+}
+function mergeAdjacentIdenticalCssRules(input) {
+  let css = input;
+  const adjacentRule = /(^|[}])([^@{}][^{}]*)\{([^{}]+)\}([^@{}][^{}]*)\{\3\}/g;
+  for (; ; ) {
+    const next = css.replace(adjacentRule, (_match, prefix, left, body, right) => {
+      const leftSelector = String(left).trim();
+      const rightSelector = String(right).trim();
+      if (!leftSelector || !rightSelector) return _match;
+      return `${prefix}${leftSelector},${rightSelector}{${body}}`;
+    });
+    if (next === css) return css;
+    css = next;
+  }
+}
 function minifyCss(input) {
-  return input.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").replace(/\s*([{};:,])\s*/g, "$1").trim();
+  const compacted = input.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").replace(/\s*([{};:,])\s*/g, "$1").replace(/\s*([>+~])\s*/g, "$1").replace(/;}/g, "}").replace(/(:|\s)0(?:px|em|rem|vh|vw|vmin|vmax|cm|mm|in|pt|pc|q|%)(?=[;}, ])/gi, "$10").replace(/(:|\s|\(|,)0\.(\d+)/g, "$1.$2").replace(/\b(\d+)ms\b/g, (_match, ms) => compactCssTime(ms)).replace(/(\b|[\s,])((?:\.\d+|\d+(?:\.\d+)?)s) ease(?=[,;} ])/g, "$1$2").replace(/border-width:([^;{}]+);border-style:([^;{}]+);border-color:([^;{}]+)(?=[;}])/g, "border:$1 $2 $3").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").replace(/\s*!important/g, "!important").replace(/\[([A-Za-z0-9_-]+)=['"]([A-Za-z0-9_-]+)['"]\]/g, "[$1=$2]").replace(/"([A-Za-z][A-Za-z0-9 -]*[A-Za-z0-9])"/g, "$1").replace(/::(before|after|first-letter|first-line)\b/g, ":$1").replace(/#([0-9a-fA-F])\1([0-9a-fA-F])\2([0-9a-fA-F])\3\b/g, "#$1$2$3").replace(/translateX\(([^()]+)\)/g, (match, value) => {
+    const compact = `translate(${value})`;
+    return compact.length < match.length ? compact : match;
+  }).replace(/flex:1 1 0(?=[;}])/g, "flex:1").replace(/flex:1 1 auto(?=[;}])/g, "flex:auto").replace(/min\(calc\(([^()]+)\),([^()]+)\)/g, "min($1,$2)").replace(/\*:(focus-visible)/g, ":$1").replace(/\*::(-webkit-scrollbar)/g, "::$1").trim();
+  return mergeAdjacentIdenticalCssRules(compactCssColors(compactCssFunctionWhitespace(compacted)));
 }
 function orderCssModules(chunk) {
   const cssModules = chunk.modules.filter((m) => m.kind === "css");
@@ -6182,8 +6803,8 @@ function buildGraphSeedNodesFromEntries(entryPaths, workspaceRoot, depStopMap, e
   const graphSeedNodes = [];
   while (queue.length) {
     const file = queue.shift();
-    if (!import_fs26.default.existsSync(file)) continue;
-    const code = import_fs26.default.readFileSync(file, "utf8");
+    if (!import_fs27.default.existsSync(file)) continue;
+    const code = import_fs27.default.readFileSync(file, "utf8");
     let hash = getCacheKey(code);
     let specs = [];
     let dynamicSpecs = [];
@@ -6228,9 +6849,9 @@ function buildGraphSeedNodesFromEntries(entryPaths, workspaceRoot, depStopMap, e
         if (depStopMap && depStopMap.size > 0) {
           let canonical;
           try {
-            canonical = import_fs26.default.realpathSync.native(dep);
+            canonical = import_fs27.default.realpathSync.native(dep);
           } catch {
-            canonical = import_path28.default.resolve(dep);
+            canonical = import_path29.default.resolve(dep);
           }
           const artifactHash = depStopMap.get(canonical);
           if (artifactHash) {
@@ -6274,9 +6895,9 @@ function rebuildGraphFromEntries(entryPaths, workspaceRoot, depStops, externalSp
     depStops.filter((s) => s.artifactHash.length > 0).map((s) => {
       let canonical;
       try {
-        canonical = import_fs26.default.realpathSync.native(s.entryPath);
+        canonical = import_fs27.default.realpathSync.native(s.entryPath);
       } catch {
-        canonical = import_path28.default.resolve(s.entryPath);
+        canonical = import_path29.default.resolve(s.entryPath);
       }
       return [canonical, s.artifactHash];
     })
@@ -6309,18 +6930,18 @@ async function generateBuildPlan(entries, versionInputs, depStops, externalSpeci
   const entryIds = Array.isArray(entries) ? entries.map((entry) => {
     if (typeof entry !== "string" || entry.length === 0) return null;
     if (entry.startsWith(WS_MODULE_PREFIX)) return entry;
-    if (!import_path28.default.isAbsolute(entry)) return null;
+    if (!import_path29.default.isAbsolute(entry)) return null;
     return toWsModuleId(entry, workspaceRoot);
   }).filter((id) => typeof id === "string" && id.length > 0) : [];
   const entryPaths = Array.isArray(entries) ? entries.map((entry) => {
     if (typeof entry !== "string" || entry.length === 0) return null;
-    if (import_path28.default.isAbsolute(entry)) return entry;
+    if (import_path29.default.isAbsolute(entry)) return entry;
     if (entry.startsWith(WS_MODULE_PREFIX)) return fromWsModuleId(entry, workspaceRoot);
     return null;
   }).filter((p) => typeof p === "string" && p.length > 0) : [];
   const version = versionInputs ? computeGraphVersion(versionInputs) : void 0;
   logInfo(`Graph version: ${version || "default"}`);
-  const graphDbPath = import_path28.default.join(resolveIonifyDir4(), "graph.db");
+  const graphDbPath = import_path29.default.join(resolveIonifyDir4(), "graph.db");
   const graphInitStart = Date.now();
   let nativeGraphReady = ensureNativeGraph(graphDbPath, version, {
     retryMs: 1500,
@@ -6351,9 +6972,9 @@ async function generateBuildPlan(entries, versionInputs, depStops, externalSpeci
   let graphValidation = nativeGraphReady ? validateGraphForEntries(persistedGraph, entryIds, externalSpecifiers) : { ok: false, reason: "native graph unavailable" };
   if (!graphValidation.ok && entryPaths.length > 0 && native) {
     if (!nativeGraphReady) {
-      const buildGraphDbPath = import_path28.default.join(resolveIonifyDir4(), "build", "graph.db");
+      const buildGraphDbPath = import_path29.default.join(resolveIonifyDir4(), "build", "graph.db");
       try {
-        import_fs26.default.rmSync(buildGraphDbPath, { recursive: true, force: true });
+        import_fs27.default.rmSync(buildGraphDbPath, { recursive: true, force: true });
       } catch {
       }
       const buildGraphVersion = version ? `${version}-build` : "build";
@@ -6396,11 +7017,11 @@ async function generateBuildPlan(entries, versionInputs, depStops, externalSpeci
       const fp = typeof native.planCacheFingerprint === "function" ? native.planCacheFingerprint() : native.graphStateFingerprint();
       profileLog(`planFingerprint_ms=${Date.now() - fpStart}`);
       if (fp) {
-        planCachePath = import_path28.default.join(resolveIonifyDir4(), "cas", version, "plan-v1", `${fp}.json`);
-        if (import_fs26.default.existsSync(planCachePath)) {
+        planCachePath = import_path29.default.join(resolveIonifyDir4(), "cas", version, "plan-v1", `${fp}.json`);
+        if (import_fs27.default.existsSync(planCachePath)) {
           try {
             const planReadStart = Date.now();
-            const cached = JSON.parse(import_fs26.default.readFileSync(planCachePath, "utf8"));
+            const cached = JSON.parse(import_fs27.default.readFileSync(planCachePath, "utf8"));
             profileLog(`planCacheRead_ms=${Date.now() - planReadStart}`);
             logInfo(`[Planner] Plan cache HIT (fp=${fp.slice(0, 8)}): skipped graphLoadMap + BFS`);
             return normalizePlan(cached);
@@ -6423,8 +7044,8 @@ async function generateBuildPlan(entries, versionInputs, depStops, externalSpeci
       const normalized = normalizePlan(plan);
       if (planCachePath) {
         try {
-          import_fs26.default.mkdirSync(import_path28.default.dirname(planCachePath), { recursive: true });
-          import_fs26.default.writeFileSync(planCachePath, JSON.stringify(normalized), "utf8");
+          import_fs27.default.mkdirSync(import_path29.default.dirname(planCachePath), { recursive: true });
+          import_fs27.default.writeFileSync(planCachePath, JSON.stringify(normalized), "utf8");
         } catch {
         }
       }
@@ -6455,7 +7076,6 @@ async function writeBuildManifest(outputDir, plan, artifacts, options) {
         dependencyFormat: mod.dependencyFormat ?? void 0,
         usedExports: mod.usedExports ?? void 0,
         dependencyAbiHash: mod.dependencyAbiHash ?? void 0,
-        productionClosureHash: mod.productionClosureHash ?? void 0,
         sideEffects: mod.sideEffects ?? void 0,
         artifactTopology: mod.artifactTopology ?? void 0,
         // artifactHash is the final computed transform hash (set via plan refs during build/dev).
@@ -6466,13 +7086,13 @@ async function writeBuildManifest(outputDir, plan, artifacts, options) {
     })),
     federation: options?.federation ?? void 0
   };
-  const dir = import_path28.default.resolve(outputDir);
-  await import_fs26.default.promises.mkdir(dir, { recursive: true });
-  const file = import_path28.default.join(dir, "manifest.json");
+  const dir = import_path29.default.resolve(outputDir);
+  await import_fs27.default.promises.mkdir(dir, { recursive: true });
+  const file = import_path29.default.join(dir, "manifest.json");
   const contents = JSON.stringify(manifest, null, 2);
   await writeTextFileIfChanged(file, contents);
   return {
-    file: toPosix(import_path28.default.relative(dir, file)),
+    file: toPosix(import_path29.default.relative(dir, file)),
     bytes: Buffer.byteLength(contents, "utf8"),
     hash: getCacheKey(contents)
   };
@@ -6499,7 +7119,7 @@ function inlineOneCssImport(match, fromFsPath, visited, ctx) {
   if (/^(?:[a-z]+:)?\/\//i.test(spec) || spec.startsWith("data:")) return full;
   let target = null;
   if (spec.startsWith(".")) {
-    target = import_path28.default.resolve(import_path28.default.dirname(fromFsPath), spec);
+    target = import_path29.default.resolve(import_path29.default.dirname(fromFsPath), spec);
   } else {
     try {
       const r = native?.resolveModule?.(spec, fromFsPath);
@@ -6510,10 +7130,10 @@ function inlineOneCssImport(match, fromFsPath, visited, ctx) {
   }
   if (!target) return full;
   target = target.split("?")[0].split("#")[0];
-  if (!import_fs26.default.existsSync(target)) return full;
+  if (!import_fs27.default.existsSync(target)) return full;
   let real;
   try {
-    real = import_fs26.default.realpathSync(target);
+    real = import_fs27.default.realpathSync(target);
   } catch {
     real = target;
   }
@@ -6521,7 +7141,7 @@ function inlineOneCssImport(match, fromFsPath, visited, ctx) {
   visited.add(real);
   let imported;
   try {
-    imported = import_fs26.default.readFileSync(target, "utf8");
+    imported = import_fs27.default.readFileSync(target, "utf8");
   } catch {
     return full;
   }
@@ -6564,7 +7184,7 @@ ${output.code}`);
       const assetPath = idToFsPath.get(assetId);
       if (!assetPath) continue;
       try {
-        const data = import_fs26.default.readFileSync(assetPath);
+        const data = import_fs27.default.readFileSync(assetPath);
         if (data.length < 4096) {
           const mime = "application/octet-stream";
           const inline = `data:${mime};base64,${data.toString("base64")}`;
@@ -6573,14 +7193,14 @@ export const __ionify_asset = "${inline}";`);
           continue;
         }
         const hash = import_crypto9.default.createHash("sha256").update(data).digest("hex").slice(0, 16);
-        const ext = import_path28.default.extname(assetPath) || ".bin";
+        const ext = import_path29.default.extname(assetPath) || ".bin";
         const fileName = `assets/${hash}${ext}`;
         assets.push({
           source: assetPath,
           file_name: fileName
         });
       } catch {
-        const fileName = import_path28.default.basename(assetPath) || "asset";
+        const fileName = import_path29.default.basename(assetPath) || "asset";
         assets.push({
           source: assetPath,
           file_name: fileName
@@ -6613,15 +7233,15 @@ function normalizeNativeArtifact(raw) {
   const map_bytes = typeof raw.map_bytes === "number" ? raw.map_bytes : map ? Buffer.byteLength(map, "utf8") : 0;
   const assets = Array.isArray(raw.assets) ? raw.assets.map((asset) => ({
     source: asset.source,
-    file_name: asset.file_name ?? asset.fileName ?? import_path28.default.basename(asset.source ?? "asset")
+    file_name: asset.file_name ?? asset.fileName ?? import_path29.default.basename(asset.source ?? "asset")
   })) : [];
   return { id, file_name, code, map, assets, code_bytes, map_bytes };
 }
 async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifacts) {
-  const chunkDir = import_path28.default.join(outputDir, "chunks");
-  await import_fs26.default.promises.mkdir(chunkDir, { recursive: true });
-  const assetsDir = import_path28.default.join(outputDir, "assets");
-  await import_fs26.default.promises.mkdir(assetsDir, { recursive: true });
+  const chunkDir = import_path29.default.join(outputDir, "chunks");
+  await import_fs27.default.promises.mkdir(chunkDir, { recursive: true });
+  const assetsDir = import_path29.default.join(outputDir, "assets");
+  await import_fs27.default.promises.mkdir(assetsDir, { recursive: true });
   const previousOutputStats = loadPreviousOutputStats(outputDir);
   const enableSourceMaps = process.env.IONIFY_SOURCEMAPS === "true";
   const cssProfile = isBundleProfileEnabled() ? {
@@ -6652,20 +7272,20 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
     rootDir: cssUrlRootDir,
     emitUrlAsset: (absPath) => {
       try {
-        if (isForbiddenFsPath(absPath) || !import_fs26.default.existsSync(absPath)) return null;
-        const data = import_fs26.default.readFileSync(absPath);
-        const ext = import_path28.default.extname(absPath);
-        const safeBase = import_path28.default.basename(absPath, ext).replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
+        if (isForbiddenFsPath(absPath) || !import_fs27.default.existsSync(absPath)) return null;
+        const data = import_fs27.default.readFileSync(absPath);
+        const ext = import_path29.default.extname(absPath);
+        const safeBase = import_path29.default.basename(absPath, ext).replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
         const hash = getCacheKey(data).slice(0, 8);
         const fileName = `${safeBase}.${hash}${ext}`;
         if (!emittedUrlAssets.has(fileName)) {
-          const destAbs = import_path28.default.join(assetsDir, fileName);
+          const destAbs = import_path29.default.join(assetsDir, fileName);
           let needWrite = true;
           try {
-            if (import_fs26.default.existsSync(destAbs) && import_fs26.default.readFileSync(destAbs).equals(data)) needWrite = false;
+            if (import_fs27.default.existsSync(destAbs) && import_fs27.default.readFileSync(destAbs).equals(data)) needWrite = false;
           } catch {
           }
-          if (needWrite) import_fs26.default.writeFileSync(destAbs, data);
+          if (needWrite) import_fs27.default.writeFileSync(destAbs, data);
           buildStats[`assets/${fileName}`] = {
             bytes: data.length,
             hash: getCacheKey(data),
@@ -6685,8 +7305,8 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
     if (!artifacts || !artifacts.length) {
       throw new Error(`Native bundler did not emit artifacts for ${chunk.id}`);
     }
-    const chunkOutDir = import_path28.default.join(chunkDir, chunk.id);
-    await import_fs26.default.promises.mkdir(chunkOutDir, { recursive: true });
+    const chunkOutDir = import_path29.default.join(chunkDir, chunk.id);
+    await import_fs27.default.promises.mkdir(chunkOutDir, { recursive: true });
     artifacts.sort((a, b) => {
       if (a.id === chunk.id) return -1;
       if (b.id === chunk.id) return 1;
@@ -6706,13 +7326,13 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
     const copyAssets = async (assets) => {
       for (const asset of assets) {
         if (!asset?.source) continue;
-        const relName = asset.file_name ?? import_path28.default.basename(asset.source);
-        const assetFile = import_path28.default.join(outputDir, relName);
+        const relName = asset.file_name ?? import_path29.default.basename(asset.source);
+        const assetFile = import_path29.default.join(outputDir, relName);
         if (assetWritten.has(assetFile)) continue;
         try {
-          const data = await import_fs26.default.promises.readFile(asset.source);
+          const data = await import_fs27.default.promises.readFile(asset.source);
           await writeBufferFileIfChanged(assetFile, data);
-          const rel = toPosix(import_path28.default.relative(outputDir, assetFile));
+          const rel = toPosix(import_path29.default.relative(outputDir, assetFile));
           buildStats[rel] = {
             bytes: data.length,
             hash: getCacheKey(data),
@@ -6740,9 +7360,9 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
         if (cssProfile) cssProfile.cssModulesVisited += 1;
         let cssSource = moduleOutputs.get(cssId)?.code;
         const cssPath = idToFsPath.get(cssId) ?? null;
-        if (!cssSource && cssPath && import_fs26.default.existsSync(cssPath)) {
+        if (!cssSource && cssPath && import_fs27.default.existsSync(cssPath)) {
           try {
-            cssSource = await import_fs26.default.promises.readFile(cssPath, "utf8");
+            cssSource = await import_fs27.default.promises.readFile(cssPath, "utf8");
             if (cssProfile) cssProfile.cssFsFallbackReads += 1;
           } catch (err) {
             logWarn(`Failed to read CSS source ${cssId}: ${String(err)}`);
@@ -6768,7 +7388,7 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
         if (cssProfile) cssProfile.cssOutputBytes += Buffer.byteLength(combinedCss, "utf8");
         const cssHash = getCacheKey(combinedCss).slice(0, 8);
         const cssFileName = `assets/${chunk.id}.${cssHash}.css`;
-        const cssFilePath = import_path28.default.join(outputDir, cssFileName);
+        const cssFilePath = import_path29.default.join(outputDir, cssFileName);
         const cssFullHash = getCacheKey(combinedCss);
         const emitStart = cssProfile ? process.hrtime.bigint() : 0n;
         const cssChanged = await writeTextFileIfStatsMatch(
@@ -6782,7 +7402,7 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
           cssProfile.nsEmit += process.hrtime.bigint() - emitStart;
           if (cssChanged) cssProfile.cssFilesWritten += 1;
         }
-        cssFileRel = toPosix(import_path28.default.relative(outputDir, cssFilePath));
+        cssFileRel = toPosix(import_path29.default.relative(outputDir, cssFilePath));
         buildStats[cssFileRel] = {
           bytes: Buffer.byteLength(combinedCss),
           hash: cssFullHash,
@@ -6793,11 +7413,11 @@ async function emitChunksFromArtifacts(outputDir, plan, moduleOutputs, rawArtifa
       }
     }
     for (const artifact of artifacts) {
-      const nativeFile = import_path28.default.join(chunkOutDir, artifact.file_name);
+      const nativeFile = import_path29.default.join(chunkOutDir, artifact.file_name);
       let nativeCode = artifact.code;
       if (cssFileRel && !chunk.entry) {
-        const absCss = import_path28.default.join(outputDir, cssFileRel);
-        const relCss = toPosix(import_path28.default.relative(import_path28.default.dirname(nativeFile), absCss));
+        const absCss = import_path29.default.join(outputDir, cssFileRel);
+        const relCss = toPosix(import_path29.default.relative(import_path29.default.dirname(nativeFile), absCss));
         const inject = `(()=>{const url=new URL(${JSON.stringify(
           relCss
         )},import.meta.url).toString();if(typeof document!=="undefined"&&!document.querySelector('link[data-ionify-css="'+url+'"]')){const l=document.createElement("link");l.rel="stylesheet";l.href=url;l.setAttribute("data-ionify-css",url);document.head.appendChild(l);}})();`;
@@ -6809,8 +7429,8 @@ ${nativeCode}`;
         const mapHash = getCacheKey(artifact.map);
         await writeTextFileIfStatsMatch(outputDir, previousOutputStats, mapFile, artifact.map, mapHash);
         nativeCode = `${nativeCode}
-//# sourceMappingURL=${import_path28.default.basename(mapFile)}`;
-        const relMap = toPosix(import_path28.default.relative(outputDir, mapFile));
+//# sourceMappingURL=${import_path29.default.basename(mapFile)}`;
+        const relMap = toPosix(import_path29.default.relative(outputDir, mapFile));
         buildStats[relMap] = {
           bytes: Buffer.byteLength(artifact.map, "utf8"),
           hash: mapHash,
@@ -6827,7 +7447,7 @@ ${nativeCode}`;
         nativeCode,
         nativeHash
       );
-      const relNative = toPosix(import_path28.default.relative(outputDir, nativeFile));
+      const relNative = toPosix(import_path29.default.relative(outputDir, nativeFile));
       buildStats[relNative] = {
         bytes: Buffer.byteLength(nativeCode, "utf8"),
         hash: nativeHash,
@@ -6870,27 +7490,27 @@ ${nativeCode}`;
   return { artifacts: results, stats: buildStats };
 }
 async function writeAssetsManifest(outputDir, artifacts) {
-  const dir = import_path28.default.resolve(outputDir);
-  await import_fs26.default.promises.mkdir(dir, { recursive: true });
-  const file = import_path28.default.join(dir, "manifest.assets.json");
+  const dir = import_path29.default.resolve(outputDir);
+  await import_fs27.default.promises.mkdir(dir, { recursive: true });
+  const file = import_path29.default.join(dir, "manifest.assets.json");
   const payload = {
     chunks: artifacts
   };
   const contents = JSON.stringify(payload, null, 2);
   await writeTextFileIfChanged(file, contents);
   return {
-    file: toPosix(import_path28.default.relative(dir, file)),
+    file: toPosix(import_path29.default.relative(dir, file)),
     bytes: Buffer.byteLength(contents, "utf8"),
     hash: getCacheKey(contents)
   };
 }
-var import_fs26, import_path28, import_crypto9, JS_EXTENSIONS2, CSS_EXTENSIONS, isNonEmptyString, toPosix, isBundleProfileEnabled, nsToMs, profileLog, CSS_AT_IMPORT_RE_SRC;
+var import_fs27, import_path29, import_crypto9, JS_EXTENSIONS2, CSS_EXTENSIONS, isNonEmptyString, toPosix, isBundleProfileEnabled, nsToMs, profileLog, CSS_AT_IMPORT_RE_SRC;
 var init_bundler = __esm({
   "src/core/bundler.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs26 = __toESM(require("fs"), 1);
-    import_path28 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
     import_crypto9 = __toESM(require("crypto"), 1);
     init_native();
     init_logger();
@@ -6904,7 +7524,7 @@ var init_bundler = __esm({
     JS_EXTENSIONS2 = /* @__PURE__ */ new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
     CSS_EXTENSIONS = new Set(CSS_LIKE_EXTENSIONS);
     isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
-    toPosix = (p) => p.split(import_path28.default.sep).join("/");
+    toPosix = (p) => p.split(import_path29.default.sep).join("/");
     isBundleProfileEnabled = () => process.env.IONIFY_BUNDLE_PROFILE === "1" || process.env.IONIFY_BUNDLE_PROFILE === "true";
     nsToMs = (value) => Number(value) / 1e6;
     profileLog = (message) => {
@@ -6944,10 +7564,10 @@ var init_define_signature = __esm({
 
 // src/core/deps/dep-stops.ts
 function loadDepStopsFromManifest(depsRoot) {
-  const manifestPath = import_path29.default.join(depsRoot, "manifest.json");
-  if (!import_fs27.default.existsSync(manifestPath)) return [];
+  const manifestPath = import_path30.default.join(depsRoot, "manifest.json");
+  if (!import_fs28.default.existsSync(manifestPath)) return [];
   try {
-    const raw = import_fs27.default.readFileSync(manifestPath, "utf8");
+    const raw = import_fs28.default.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
     const entries = parsed?.entries ?? {};
     const stops = [];
@@ -6961,309 +7581,13 @@ function loadDepStopsFromManifest(depsRoot) {
     return [];
   }
 }
-var import_fs27, import_path29;
+var import_fs28, import_path30;
 var init_dep_stops = __esm({
   "src/core/deps/dep-stops.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs27 = __toESM(require("fs"), 1);
-    import_path29 = __toESM(require("path"), 1);
-  }
-});
-
-// src/core/deps/production-closure.ts
-function sortedUnique(values) {
-  return Array.from(
-    new Set(
-      Array.from(values).map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean)
-    )
-  ).sort();
-}
-function stableHash(lines) {
-  const hash = import_crypto10.default.createHash("sha256");
-  for (const line of lines) {
-    hash.update(line);
-    hash.update("\n");
-  }
-  return hash.digest("hex");
-}
-function isStaticExportName(name) {
-  return name === "default" || /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
-}
-function normalizeFormat(value) {
-  return value === "esm" || value === "cjs" ? value : "unknown";
-}
-function normalizeSideEffects(value) {
-  return value === "none" || value === "present" ? value : "unknown";
-}
-function manifestFacts(entry, fallbackOutFile) {
-  if (!entry) return null;
-  const outFile = entry.outFile ?? entry.out_file ?? fallbackOutFile;
-  const entryPath = entry.entryPath ?? entry.entry_path ?? "";
-  const packageName = entry.packageName ?? entry.package_name ?? "";
-  const packageVersion = entry.packageVersion ?? entry.package_version ?? "";
-  const packageSubpath = entry.packageSubpath ?? entry.package_subpath ?? "";
-  const packageRoot = entry.packageRoot ?? entry.package_root ?? "";
-  const artifactHash = entry.artifactHash ?? entry.artifact_hash ?? "";
-  if (!outFile || !entryPath || !packageName || !packageVersion || !artifactHash) return null;
-  return {
-    outFile,
-    entryPath,
-    packageName,
-    packageVersion,
-    packageSubpath: packageSubpath || ".",
-    packageRoot,
-    format: normalizeFormat(entry.runtimeFormat ?? entry.runtime_format),
-    sideEffects: normalizeSideEffects(entry.sideEffects ?? entry.side_effects),
-    artifactHash
-  };
-}
-function writeJsonAtomicIfChanged(filePath, value) {
-  const next = `${JSON.stringify(value, null, 2)}
-`;
-  try {
-    if (import_fs28.default.existsSync(filePath) && import_fs28.default.readFileSync(filePath, "utf8") === next) return;
-  } catch {
-  }
-  import_fs28.default.mkdirSync(import_path30.default.dirname(filePath), { recursive: true });
-  const tmp = import_path30.default.join(
-    import_path30.default.dirname(filePath),
-    `.${import_path30.default.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
-  );
-  import_fs28.default.writeFileSync(tmp, next, "utf8");
-  import_fs28.default.renameSync(tmp, filePath);
-}
-function applyTransitiveDependencyDemand(directUsage, manifestByOutFile) {
-  const usage = /* @__PURE__ */ new Map();
-  for (const [fileName, item] of directUsage) {
-    usage.set(fileName, {
-      ...item,
-      usedExports: sortedUnique(item.usedExports),
-      importerKeys: sortedUnique(item.importerKeys),
-      entryRootKeys: sortedUnique(item.entryRootKeys)
-    });
-  }
-  const ensureTarget = (outFile, ownerFile, edgeKind) => {
-    const existing = usage.get(outFile);
-    if (existing) return existing;
-    const facts = manifestFacts(manifestByOutFile.get(outFile), outFile);
-    if (!facts) return null;
-    const created = {
-      fileName: outFile,
-      entryPath: facts.entryPath,
-      packageName: facts.packageName,
-      packageVersion: facts.packageVersion,
-      moduleFormat: facts.format,
-      usedExports: [],
-      hasNamespace: false,
-      hasExportStar: false,
-      importerKeys: [`${edgeKind}:${ownerFile}`],
-      entryRootKeys: []
-    };
-    usage.set(outFile, created);
-    return created;
-  };
-  const queue = Array.from(usage.keys()).sort();
-  const visited = /* @__PURE__ */ new Set();
-  while (queue.length > 0) {
-    const ownerFile = queue.shift();
-    if (visited.has(ownerFile)) continue;
-    visited.add(ownerFile);
-    const owner = manifestByOutFile.get(ownerFile);
-    if (!owner) continue;
-    const imports = Array.isArray(owner.dependencyImports) ? owner.dependencyImports.map((item) => ({
-      outFile: item?.outFile ?? item?.out_file ?? "",
-      mode: item?.mode === "default" ? "default" : "namespace",
-      names: sortedUnique(item?.names ?? []),
-      hasDefault: Boolean(item?.hasDefault ?? item?.has_default),
-      hasNamespace: Boolean(item?.hasNamespace ?? item?.has_namespace),
-      hasSideEffect: Boolean(item?.hasSideEffect ?? item?.has_side_effect),
-      hasExportStar: Boolean(item?.hasExportStar ?? item?.has_export_star),
-      uncertain: Boolean(item?.uncertain)
-    })).filter((item) => item.outFile).map((item) => {
-      const hasExactDemand = item.names.length > 0 || item.hasDefault || item.hasNamespace || item.hasSideEffect || item.hasExportStar || item.uncertain;
-      if (hasExactDemand) return item;
-      return item.mode === "default" ? { ...item, hasDefault: true } : { ...item, hasNamespace: true };
-    }).sort(
-      (a, b) => a.outFile.localeCompare(b.outFile) || a.mode.localeCompare(b.mode) || a.names.join(",").localeCompare(b.names.join(","))
-    ) : [];
-    for (const dependency of imports) {
-      if (!visited.has(dependency.outFile) && manifestByOutFile.has(dependency.outFile)) {
-        queue.push(dependency.outFile);
-      }
-      const target = ensureTarget(dependency.outFile, ownerFile, "dpl");
-      if (!target) continue;
-      if (dependency.uncertain || dependency.hasNamespace) {
-        target.hasNamespace = true;
-      }
-      if (dependency.hasExportStar) {
-        target.hasExportStar = true;
-      }
-      const nextExports = [
-        ...target.usedExports,
-        ...dependency.hasDefault ? ["default"] : [],
-        ...dependency.names
-      ];
-      target.usedExports = sortedUnique(nextExports);
-      target.importerKeys = sortedUnique([
-        ...target.importerKeys,
-        `dpl:${ownerFile}`
-      ]);
-    }
-    const externalStar = sortedUnique(owner.exportAbi?.externalStar ?? []);
-    for (const targetFile of externalStar) {
-      if (!visited.has(targetFile) && manifestByOutFile.has(targetFile)) {
-        queue.push(targetFile);
-      }
-      const target = ensureTarget(targetFile, ownerFile, "dpl-star");
-      if (!target) continue;
-      target.hasExportStar = true;
-      target.importerKeys = sortedUnique([
-        ...target.importerKeys,
-        `dpl-star:${ownerFile}`
-      ]);
-    }
-    queue.sort();
-  }
-  return usage;
-}
-function productionDependencyClosurePath(depsRoot) {
-  return import_path30.default.join(depsRoot, "production-closure.v1.json");
-}
-function buildProductionDependencyClosure(options) {
-  const manifestPath = import_path30.default.join(options.depsRoot, "manifest.json");
-  const manifest = JSON.parse(import_fs28.default.readFileSync(manifestPath, "utf8"));
-  const manifestEntries = manifest.entries ?? {};
-  const manifestByOutFile = /* @__PURE__ */ new Map();
-  for (const entry of Object.values(manifestEntries)) {
-    const outFile = entry.outFile ?? entry.out_file;
-    if (typeof outFile === "string" && outFile.length > 0 && !manifestByOutFile.has(outFile)) {
-      manifestByOutFile.set(outFile, entry);
-    }
-  }
-  const effectiveUsage = options.includeTransitiveDemand === true ? applyTransitiveDependencyDemand(options.usage, manifestByOutFile) : options.usage;
-  const entries = {};
-  for (const baseFileName of Array.from(effectiveUsage.keys()).sort()) {
-    const usage = effectiveUsage.get(baseFileName);
-    if (!usage) continue;
-    const manifestEntry = manifestByOutFile.get(baseFileName);
-    const facts = manifestFacts(manifestEntry, baseFileName);
-    const abi = manifestEntry?.exportAbi;
-    const abiNames = new Set(sortedUnique(abi?.names ?? []));
-    const demanded = sortedUnique(usage.usedExports);
-    const externalStar = sortedUnique(abi?.externalStar ?? []);
-    const format = facts?.format ?? "unknown";
-    const sideEffects = facts?.sideEffects ?? "unknown";
-    const entryPath = facts?.entryPath ?? usage.entryPath;
-    const packageName = facts?.packageName ?? usage.packageName;
-    const packageVersion = facts?.packageVersion ?? usage.packageVersion;
-    const packageSubpath = facts?.packageSubpath ?? ".";
-    const packageRoot = facts?.packageRoot ?? "";
-    const artifactHash = facts?.artifactHash ?? "";
-    const dependencyAbiHash = typeof abi?.abiHash === "string" && abi.abiHash.length > 0 ? abi.abiHash : "";
-    let fallbackReason = null;
-    if (!manifestEntry || !facts || abi?.version !== 1 || !dependencyAbiHash) {
-      fallbackReason = "missing-dabi";
-    } else if (abi.uncertain === true) {
-      fallbackReason = "uncertain-dabi";
-    } else if (usage.hasNamespace) {
-      fallbackReason = "namespace-import";
-    } else if (usage.hasExportStar) {
-      fallbackReason = "export-star";
-    } else if (demanded.length === 0) {
-      fallbackReason = "side-effect-or-dynamic-only";
-    } else if (demanded.some((name) => name !== "default" && !abiNames.has(name)) || demanded.includes("default") && abi.hasDefault !== true) {
-      fallbackReason = "demand-outside-dabi";
-    } else if (format !== "esm") {
-      fallbackReason = "non-esm";
-    } else if (sideEffects !== "none") {
-      fallbackReason = "side-effects-unproven";
-    } else if (manifestEntry?.productionEsmSafe !== true) {
-      fallbackReason = "esm-graph-unproven";
-    } else if (demanded.some((name) => !isStaticExportName(name))) {
-      fallbackReason = "non-static-export-name";
-    }
-    const finiteExports = fallbackReason === null ? demanded : null;
-    const productionClosureHash = stableHash([
-      `pdc:v${PRODUCTION_DEPENDENCY_CLOSURE_VERSION}`,
-      `deps:${options.depsHash}`,
-      `file:${baseFileName}`,
-      `package:${packageName}@${packageVersion}`,
-      `subpath:${packageSubpath}`,
-      `artifact:${artifactHash || "missing"}`,
-      `format:${format}`,
-      `sideEffects:${sideEffects}`,
-      `abi:${dependencyAbiHash || "missing"}`,
-      `namespace:${usage.hasNamespace ? 1 : 0}`,
-      `exportStar:${usage.hasExportStar ? 1 : 0}`,
-      `fallback:${fallbackReason ?? "none"}`,
-      ...demanded.map((name) => `use:${name}`),
-      ...externalStar.map((name) => `star:${name}`)
-    ]);
-    entries[baseFileName] = {
-      baseFileName,
-      entryPath,
-      packageName,
-      packageVersion,
-      packageSubpath,
-      packageRoot,
-      format,
-      usedExports: finiteExports,
-      hasNamespace: usage.hasNamespace,
-      hasExportStar: usage.hasExportStar,
-      sideEffects,
-      dependencyAbiHash,
-      externalStar,
-      productionClosureHash,
-      fallbackReason
-    };
-  }
-  const closureHash = stableHash([
-    `pdc-index:v${PRODUCTION_DEPENDENCY_CLOSURE_VERSION}`,
-    `deps:${options.depsHash}`,
-    ...Object.keys(entries).sort().map((key) => `${key}=${entries[key].productionClosureHash}`)
-  ]);
-  return {
-    version: PRODUCTION_DEPENDENCY_CLOSURE_VERSION,
-    depsHash: options.depsHash,
-    appDemandIdentity: options.appDemandIdentity ?? "",
-    entries,
-    closureHash
-  };
-}
-function computeAppDemandIdentity(modules, depsHash) {
-  const rows = Array.from(modules).map((m) => `${m.id}\0${typeof m.hash === "string" ? m.hash : ""}`).sort();
-  return stableHash([
-    `pdc-demand:v${PRODUCTION_DEPENDENCY_CLOSURE_VERSION}`,
-    `deps:${depsHash}`,
-    ...rows
-  ]);
-}
-function persistProductionDependencyClosure(depsRoot, closure) {
-  writeJsonAtomicIfChanged(productionDependencyClosurePath(depsRoot), closure);
-}
-function loadProductionDependencyClosure(depsRoot, depsHash) {
-  try {
-    const parsed = JSON.parse(
-      import_fs28.default.readFileSync(productionDependencyClosurePath(depsRoot), "utf8")
-    );
-    if (parsed?.version !== PRODUCTION_DEPENDENCY_CLOSURE_VERSION || parsed.depsHash !== depsHash || !parsed.entries || typeof parsed.entries !== "object") {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-var import_crypto10, import_fs28, import_path30, PRODUCTION_DEPENDENCY_CLOSURE_VERSION;
-var init_production_closure = __esm({
-  "src/core/deps/production-closure.ts"() {
-    "use strict";
-    init_cjs_shims();
-    import_crypto10 = __toESM(require("crypto"), 1);
     import_fs28 = __toESM(require("fs"), 1);
     import_path30 = __toESM(require("path"), 1);
-    PRODUCTION_DEPENDENCY_CLOSURE_VERSION = 1;
   }
 });
 
@@ -7306,7 +7630,6 @@ function computeProductionPlanHash(plan) {
         dependencyFormat: mod.dependencyFormat ?? null,
         usedExports: mod.usedExports ? [...mod.usedExports].sort() : null,
         dependencyAbiHash: mod.dependencyAbiHash ?? null,
-        productionClosureHash: mod.productionClosureHash ?? null,
         sideEffects: mod.sideEffects ?? null
       }))
     }))
@@ -7362,7 +7685,6 @@ function createProductionReadinessRecord(input) {
     workspaceHash,
     depsHash: input.depsHash,
     productionPlanHash,
-    pdcClosureHash: input.pdcClosureHash ?? null,
     tier4ChunkManifestHash,
     distOutputManifestHash,
     compressionManifestHash,
@@ -7416,7 +7738,6 @@ function createPartialProductionReadinessRecord(input) {
     workspaceHash,
     depsHash: input.depsHash,
     productionPlanHash: computeProductionPlanHash(input.plan),
-    pdcClosureHash: input.pdcClosureHash ?? null,
     tier4ChunkManifestHash: input.tier4ChunkManifestHash ?? null,
     distOutputManifestHash: null,
     compressionManifestHash: null,
@@ -7780,12 +8101,10 @@ var init_production_build_identity = __esm({
 // src/cli/commands/build.ts
 var build_exports = {};
 __export(build_exports, {
-  attachProductionClosureMetadata: () => attachProductionClosureMetadata,
   checkVerifiedDepsSnapshotFreshness: () => checkVerifiedDepsSnapshotFreshness,
   collectNativeExternalModules: () => collectNativeExternalModules,
   precompressBuildOutputs: () => precompressBuildOutputs,
   prepareCanonicalProductionDependencyPlan: () => prepareCanonicalProductionDependencyPlan,
-  prepareProductionDependencyClosure: () => prepareProductionDependencyClosure,
   rerouteDepsArtifacts: () => rerouteDepsArtifacts,
   runBuildCommand: () => runBuildCommand,
   validateDepsManifestEntryTopology: () => validateDepsManifestEntryTopology
@@ -7813,9 +8132,31 @@ function createTransformCasProfile() {
   return {
     nativeJsTransformMs: 0,
     nativeJsTransformJobs: 0,
-    cssWorkerTransformStartupMs: 0,
+    cssCompileWallMs: 0,
+    cssCompileTotalMs: 0,
+    cssPostcssConfigLoadMs: 0,
+    cssPostcssConfigWaitMs: 0,
+    cssPostcssConfigCacheHits: 0,
+    cssTailwindGraphSetupMs: 0,
+    cssPostcssProcessMs: 0,
+    cssPostcssPluginMs: 0,
+    cssTailwindPluginMs: 0,
+    cssAutoprefixerPluginMs: 0,
+    cssRtlcssPluginMs: 0,
+    cssOtherPostcssPluginMs: 0,
+    cssDependencyCollectionMs: 0,
+    cssImportDependencyDiscoveryMs: 0,
+    cssUrlDependencyDiscoveryMs: 0,
+    cssPipelineHashMs: 0,
+    cssDemandProofMs: 0,
     cssWorkerJobs: 0,
+    cssGlobalCacheRestoreMs: 0,
+    cssGlobalCacheRestoreHit: 0,
+    cssGlobalCacheRestoreMiss: 0,
+    cssGlobalCacheWriteMs: 0,
+    cssGlobalCacheWriteFiles: 0,
     workerTransformJobs: 0,
+    workerTransformMs: 0,
     defineReplacementMs: 0,
     defineReplacementCalls: 0,
     artifactHashBookkeepingMs: 0,
@@ -7830,7 +8171,18 @@ function createTransformCasProfile() {
     baseArtifactWriteBytes: 0,
     variantArtifactWriteMs: 0,
     variantArtifactWriteFiles: 0,
-    variantArtifactWriteBytes: 0
+    variantArtifactWriteBytes: 0,
+    cssDemandExtractionMs: 0,
+    cssDemandFilesScanned: 0,
+    cssDemandCacheHit: 0,
+    cssDemandCacheMiss: 0,
+    cssDemandTokens: 0,
+    cssDemandProofWriteMs: 0,
+    cssTailwindGraphContentMs: 0,
+    cssTailwindGraphContentFiles: 0,
+    cssTailwindGraphContentPlugins: 0,
+    cssTailwindGraphContentOptimized: 0,
+    cssTailwindGraphContentFallbacks: 0
   };
 }
 function profileElapsed(profile, key, fn) {
@@ -7902,7 +8254,19 @@ function logTransformCasProfile(profile) {
     `[BuildProfile][transformCas] nativeJsTransform_ms=${profile.nativeJsTransformMs} jobs=${profile.nativeJsTransformJobs}`
   );
   logInfo(
-    `[BuildProfile][transformCas] cssWorkerTransformStartup_ms=${profile.cssWorkerTransformStartupMs} cssJobs=${profile.cssWorkerJobs} workerJobs=${profile.workerTransformJobs}`
+    `[BuildProfile][transformCas] cssCompileWall_ms=${profile.cssCompileWallMs.toFixed(2)} cssJobs=${profile.cssWorkerJobs} workerTransform_ms=${profile.workerTransformMs.toFixed(2)} workerJobs=${profile.workerTransformJobs}`
+  );
+  logInfo(
+    `[BuildProfile][cssCompile] total_ms=${profile.cssCompileTotalMs.toFixed(2)} postcssConfigLoad_ms=${profile.cssPostcssConfigLoadMs.toFixed(2)} postcssConfigWait_ms=${profile.cssPostcssConfigWaitMs.toFixed(2)} postcssConfigCacheHits=${profile.cssPostcssConfigCacheHits} tailwindGraphSetup_ms=${profile.cssTailwindGraphSetupMs.toFixed(2)} postcssProcess_ms=${profile.cssPostcssProcessMs.toFixed(2)} pluginTotal_ms=${profile.cssPostcssPluginMs.toFixed(2)}`
+  );
+  logInfo(
+    `[BuildProfile][cssCompile][plugins] tailwind_ms=${profile.cssTailwindPluginMs.toFixed(2)} autoprefixer_ms=${profile.cssAutoprefixerPluginMs.toFixed(2)} rtlcss_ms=${profile.cssRtlcssPluginMs.toFixed(2)} other_ms=${profile.cssOtherPostcssPluginMs.toFixed(2)}`
+  );
+  logInfo(
+    `[BuildProfile][cssCompile][proof] dependencyCollection_ms=${profile.cssDependencyCollectionMs.toFixed(2)} importDiscovery_ms=${profile.cssImportDependencyDiscoveryMs.toFixed(2)} urlDiscovery_ms=${profile.cssUrlDependencyDiscoveryMs.toFixed(2)} pipelineHash_ms=${profile.cssPipelineHashMs.toFixed(2)} demandProof_ms=${profile.cssDemandProofMs.toFixed(2)}`
+  );
+  logInfo(
+    `[BuildProfile][cssGlobalCache] restore_ms=${profile.cssGlobalCacheRestoreMs.toFixed(2)} hit=${profile.cssGlobalCacheRestoreHit} miss=${profile.cssGlobalCacheRestoreMiss} write_ms=${profile.cssGlobalCacheWriteMs.toFixed(2)} files=${profile.cssGlobalCacheWriteFiles}`
   );
   logInfo(
     `[BuildProfile][transformCas] defineReplacement_ms=${profile.defineReplacementMs} calls=${profile.defineReplacementCalls}`
@@ -7922,6 +8286,40 @@ function logTransformCasProfile(profile) {
   logInfo(
     `[BuildProfile][transformCas] variantArtifactWrite_ms=${profile.variantArtifactWriteMs} files=${profile.variantArtifactWriteFiles} bytes=${profile.variantArtifactWriteBytes}`
   );
+  logInfo(
+    `[BuildProfile][cssDemand] extraction_ms=${profile.cssDemandExtractionMs} filesScanned=${profile.cssDemandFilesScanned} cacheHit=${profile.cssDemandCacheHit} cacheMiss=${profile.cssDemandCacheMiss} tokens=${profile.cssDemandTokens} proofWrite_ms=${profile.cssDemandProofWriteMs}`
+  );
+  logInfo(
+    `[BuildProfile][cssTailwindGraphContent] override_ms=${profile.cssTailwindGraphContentMs} files=${profile.cssTailwindGraphContentFiles} plugins=${profile.cssTailwindGraphContentPlugins} optimized=${profile.cssTailwindGraphContentOptimized} fallbacks=${profile.cssTailwindGraphContentFallbacks}`
+  );
+}
+function addCssCompileProfile(profile, cssProfile) {
+  if (!cssProfile || typeof cssProfile !== "object") return;
+  const p = cssProfile;
+  profile.cssCompileTotalMs += Number(p.totalMs ?? 0);
+  profile.cssPostcssConfigLoadMs += Number(p.postcssConfigLoadMs ?? 0);
+  profile.cssPostcssConfigWaitMs += Number(p.postcssConfigWaitMs ?? 0);
+  if (p.postcssConfigCacheHit === true) profile.cssPostcssConfigCacheHits += 1;
+  profile.cssTailwindGraphSetupMs += Number(p.tailwindGraphContentMs ?? 0);
+  profile.cssPostcssProcessMs += Number(p.postcssProcessMs ?? 0);
+  profile.cssPostcssPluginMs += Number(p.postcssPluginMs ?? 0);
+  profile.cssTailwindPluginMs += Number(p.tailwindPluginMs ?? 0);
+  profile.cssAutoprefixerPluginMs += Number(p.autoprefixerPluginMs ?? 0);
+  profile.cssRtlcssPluginMs += Number(p.rtlcssPluginMs ?? 0);
+  profile.cssOtherPostcssPluginMs += Number(p.otherPostcssPluginMs ?? 0);
+  profile.cssDependencyCollectionMs += Number(p.dependencyCollectionMs ?? 0);
+  profile.cssImportDependencyDiscoveryMs += Number(p.importDependencyDiscoveryMs ?? 0);
+  profile.cssUrlDependencyDiscoveryMs += Number(p.urlDependencyDiscoveryMs ?? 0);
+  profile.cssPipelineHashMs += Number(p.pipelineHashMs ?? 0);
+  profile.cssDemandProofMs += Number(p.cssDemandProofMs ?? 0);
+}
+function cloneWorkerSafeCssOptions(value) {
+  if (value == null) return void 0;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return void 0;
+  }
 }
 function resetTopologyValidationProfile() {
   topologyValidationProfile.proofValidationTimeMs = 0;
@@ -8149,19 +8547,29 @@ ${fsPath}`;
           if (!cssMeta || cssMeta.version !== 1 || cssMeta.baseHash !== cached.hash || typeof cssMeta.pipelineHash !== "string" || cssMeta.pipelineHash.length === 0) {
             return false;
           }
-          const depsAbs = Array.from(
-            new Set(
-              [...cssMeta.deps ?? [], ...cssMeta.urlDeps ?? []].filter(
-                (p) => typeof p === "string" && p.length > 0
+          const publishedHash = typeof mod.hash === "string" ? mod.hash : "";
+          if (cssMeta.artifactHash && cssMeta.depsStampHash && cssDepProofIsCurrent(cssMeta)) {
+            const derivedCssFile = import_path34.default.join(getCasArtifactPath(casRoot, configHash, cssMeta.artifactHash), "transformed.css");
+            if (!import_fs32.default.existsSync(derivedCssFile) || publishedHash !== cssMeta.artifactHash && publishedHash !== cached.hash) {
+              return false;
+            }
+          } else {
+            const depsAbs = Array.from(
+              new Set(
+                [...cssMeta.deps ?? [], ...cssMeta.urlDeps ?? []].filter(
+                  (p) => typeof p === "string" && p.length > 0
+                )
               )
-            )
-          );
-          const depsStampHash = computeDepsContentStampHash(depsAbs, /* @__PURE__ */ new Map(), workspaceRoot);
-          const expectedCssHash = getCacheKey(
-            `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`
-          );
-          if (typeof mod.hash !== "string" || mod.hash !== expectedCssHash) {
-            return false;
+            );
+            const depsStampHash = computeDepsContentStampHash(depsAbs, /* @__PURE__ */ new Map(), workspaceRoot);
+            const expectedCssHash = getCacheKey(
+              `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`
+            );
+            const derivedCssFile = import_path34.default.join(getCasArtifactPath(casRoot, configHash, expectedCssHash), "transformed.css");
+            const legacyBaseHashIsMaterialized = publishedHash === cached.hash && import_fs32.default.existsSync(derivedCssFile);
+            if (publishedHash !== expectedCssHash && !legacyBaseHashIsMaterialized) {
+              return false;
+            }
           }
         }
       } catch {
@@ -8192,7 +8600,7 @@ function recordStructuralGraphFiles(absPaths, workspaceRoot, configHash) {
       }
       const stat = import_fs32.default.statSync(absPath);
       if (!stat.isFile()) continue;
-      const hash = import_crypto11.default.createHash("sha256").update(import_fs32.default.readFileSync(absPath)).digest("hex");
+      const hash = import_crypto10.default.createHash("sha256").update(import_fs32.default.readFileSync(absPath)).digest("hex");
       native.graphRecord(id, hash, [], [], classifyStructuralGraphKind(absPath), configHash);
     } catch {
     }
@@ -8218,6 +8626,70 @@ function computeDepsContentStampHash(depsAbs, moduleMetaById, workspaceRoot) {
   }
   entries.sort();
   return getCacheKey(entries.join("|"));
+}
+function buildCssCasDepProof(depsAbs, moduleMetaById, workspaceRoot) {
+  const proofs = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const depAbs of depsAbs) {
+    const abs = import_path34.default.resolve(depAbs);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId && moduleMetaById.has(depId)) continue;
+    try {
+      const st = import_fs32.default.statSync(abs);
+      if (!st.isFile()) continue;
+      proofs.push({
+        filePath: abs,
+        dev: st.dev,
+        ino: st.ino,
+        mtimeMs: st.mtimeMs,
+        ctimeMs: st.ctimeMs,
+        size: st.size,
+        hash: getCacheKey(import_fs32.default.readFileSync(abs))
+      });
+    } catch {
+      proofs.push({
+        filePath: abs,
+        dev: 0,
+        ino: 0,
+        mtimeMs: 0,
+        ctimeMs: 0,
+        size: -1,
+        hash: "missing"
+      });
+    }
+  }
+  return proofs.sort((a, b) => a.filePath.localeCompare(b.filePath));
+}
+function cssDepProofIsCurrent(cssMeta) {
+  if (!Array.isArray(cssMeta.depsProof)) return false;
+  for (const proof of cssMeta.depsProof) {
+    const depAbs = import_path34.default.resolve(proof.filePath);
+    try {
+      const st = import_fs32.default.statSync(depAbs);
+      if (!st.isFile() || proof.dev !== st.dev || proof.ino !== st.ino || proof.mtimeMs !== st.mtimeMs || proof.ctimeMs !== st.ctimeMs || proof.size !== st.size) {
+        return false;
+      }
+    } catch {
+      return proof.hash === "missing";
+    }
+  }
+  return true;
+}
+function copyFileWithHardlinkFallback(src, dst) {
+  try {
+    import_fs32.default.mkdirSync(import_path34.default.dirname(dst), { recursive: true });
+    if (import_fs32.default.existsSync(dst)) return true;
+    try {
+      import_fs32.default.linkSync(src, dst);
+    } catch {
+      import_fs32.default.copyFileSync(src, dst);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 function canonicalFsPath(value) {
   try {
@@ -8405,6 +8877,10 @@ function depsManifestEntriesSatisfyTopologyContract(entries, depsRoot, outputVer
     (entry) => validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok
   );
 }
+function depsManifestEntryDemandIsIdentityBearing(entry) {
+  const topology = normalizeManifestString(entry?.artifactTopology ?? entry?.artifact_topology);
+  return topology === "esm-native" || topology === "esm-native-slim";
+}
 function manifestHasDifferentOutputVersion(manifestPath, outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION2) {
   try {
     const parsed = JSON.parse(import_fs32.default.readFileSync(manifestPath, "utf8"));
@@ -8570,8 +9046,7 @@ function writeGate4ValueAccountingArtifact(depsRoot) {
     const diagnosticReportFiles = /* @__PURE__ */ new Set([
       "deps-usage.v2.json",
       "gate3-profile.json",
-      "gate4-value-accounting.json",
-      "production-closure.v1.json"
+      "gate4-value-accounting.json"
     ]);
     for (const filePath of sortedDirectoryFiles(depsRoot)) {
       const rel = depsRootRelativePath(depsRoot, filePath);
@@ -8789,6 +9264,7 @@ async function checkVerifiedDepsSnapshotFreshness(options) {
       if (!isOptimizableDepEntryPath(item.entryPath)) continue;
       const manifestEntry = manifestEntriesByPath.get(canonicalFsPath(item.entryPath));
       if (!manifestEntry) continue;
+      if (!depsManifestEntryDemandIsIdentityBearing(manifestEntry)) continue;
       const currentDemand = !item.hasNamespace && !item.hasExportStar && Array.isArray(item.usedExports) ? Array.from(new Set(item.usedExports.map((value) => String(value).trim()).filter(Boolean))).sort() : [];
       const persistedRaw = manifestEntry.exportDemand ?? manifestEntry.export_demand ?? [];
       const persistedDemand = Array.isArray(persistedRaw) ? Array.from(new Set(persistedRaw.map((value) => String(value).trim()).filter(Boolean))).sort() : [];
@@ -8824,7 +9300,7 @@ function collectNativeExternalModules(plan, configuredExternals) {
   return Array.from(externals).sort();
 }
 function rerouteDepsArtifacts(options) {
-  const { plan, depsRoot, casRoot, configHash, workspaceRoot, productionClosure } = options;
+  const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
   const depsArtifactsByEntry = /* @__PURE__ */ new Map();
   const manifestPath = import_path34.default.join(depsRoot, "manifest.json");
   if (!import_fs32.default.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
@@ -8913,13 +9389,6 @@ function rerouteDepsArtifacts(options) {
         mod.fsPath = artifact.artifactPath;
         mod.hash = resolvedHash;
         mod.artifactTopology = artifact.artifactTopology;
-        const closure = productionClosure?.entries?.[artifact.outFile];
-        if (closure) {
-          mod.dependencyFormat = closure.format;
-          mod.dependencyAbiHash = closure.dependencyAbiHash || void 0;
-          mod.productionClosureHash = closure.productionClosureHash;
-          mod.sideEffects = closure.sideEffects;
-        }
         mod.kind = "js";
         const oldId = typeof mod.id === "string" ? mod.id : null;
         let newId = null;
@@ -9132,50 +9601,6 @@ function rerouteDepsArtifacts(options) {
   }
   return { rerouted, pruned, sharedPrewarmed, idRewritten };
 }
-function attachProductionClosureMetadata(options) {
-  const { plan, depsRoot, workspaceRoot, productionClosure } = options;
-  if (!productionClosure) return 0;
-  const manifestPath = import_path34.default.join(depsRoot, "manifest.json");
-  if (!import_fs32.default.existsSync(manifestPath)) return 0;
-  const closureByArtifactPath = /* @__PURE__ */ new Map();
-  const closureByArtifactId = /* @__PURE__ */ new Map();
-  try {
-    const raw = import_fs32.default.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const manifestEntries = parsed?.entries ?? {};
-    for (const entry of Object.values(manifestEntries)) {
-      const outFile = entry?.outFile ?? entry?.out_file ?? null;
-      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
-      const closure = productionClosure.entries[outFile];
-      if (!closure) continue;
-      const artifactPath = import_path34.default.join(depsRoot, outFile);
-      closureByArtifactPath.set(import_path34.default.resolve(artifactPath), closure);
-      try {
-        closureByArtifactId.set(toWsModuleId(artifactPath, workspaceRoot), closure);
-      } catch {
-      }
-    }
-  } catch {
-    return 0;
-  }
-  if (closureByArtifactPath.size === 0 && closureByArtifactId.size === 0) return 0;
-  let attached = 0;
-  for (const chunk of plan.chunks) {
-    for (const mod of chunk.modules) {
-      let closure = typeof mod.id === "string" ? closureByArtifactId.get(mod.id) : void 0;
-      if (!closure && typeof mod.fsPath === "string" && mod.fsPath.length > 0) {
-        closure = closureByArtifactPath.get(import_path34.default.resolve(mod.fsPath));
-      }
-      if (!closure) continue;
-      mod.dependencyFormat = closure.format;
-      mod.dependencyAbiHash = closure.dependencyAbiHash || void 0;
-      mod.productionClosureHash = closure.productionClosureHash;
-      mod.sideEffects = closure.sideEffects;
-      attached += 1;
-    }
-  }
-  return attached;
-}
 async function prepareCanonicalProductionDependencyPlan(options) {
   await repairMissingPlanDependencyArtifacts({
     plan: options.plan,
@@ -9197,37 +9622,11 @@ async function prepareCanonicalProductionDependencyPlan(options) {
     workspaceRoot: options.workspaceRoot
   });
   const rerouteMs = Date.now() - rerouteStart;
-  const pdcStart = Date.now();
-  const appDemandIdentity = computeAppDemandIdentity(
-    options.plan.chunks.flatMap((chunk) => chunk.modules),
-    options.depsHash
-  );
-  const productionClosure = await prepareProductionDependencyClosure({
-    rootDir: options.rootDir,
-    depsRoot: options.depsRoot,
-    depsHash: options.depsHash,
-    resolvedEntries: options.resolvedEntries,
-    allowedRoots: options.allowedRoots,
-    appDemandIdentity
-  });
-  const metadataAttached = attachProductionClosureMetadata({
-    plan: options.plan,
-    depsRoot: options.depsRoot,
-    workspaceRoot: options.workspaceRoot,
-    productionClosure
-  });
-  const closureEntries = productionClosure ? Object.values(productionClosure.entries) : [];
-  const finite = closureEntries.filter((entry) => entry.usedExports !== null).length;
   return {
-    productionClosure,
     rerouted,
     pruned,
     sharedPrewarmed,
     idRewritten,
-    metadataAttached,
-    finite,
-    fallback: closureEntries.length - finite,
-    pdcMs: Date.now() - pdcStart,
     rerouteMs
   };
 }
@@ -9647,50 +10046,6 @@ async function resolveUsageEntries(rootDir, resolvedEntries) {
     if (import_fs32.default.existsSync(candidate)) usageEntries.push(candidate);
   }
   return usageEntries;
-}
-async function prepareProductionDependencyClosure(options) {
-  if (options.appDemandIdentity) {
-    const cached = loadProductionDependencyClosure(options.depsRoot, options.depsHash);
-    if (cached && cached.appDemandIdentity === options.appDemandIdentity) {
-      return cached;
-    }
-  }
-  if (!import_fs32.default.existsSync(import_path34.default.join(options.depsRoot, "manifest.json"))) {
-    return null;
-  }
-  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
-  if (usageEntries.length === 0) {
-    return null;
-  }
-  const manifestIndex = loadDepsManifestIndex3(options.depsRoot);
-  const canonicalFileNames = buildCanonicalDepFileNameIndex(
-    Array.from(manifestIndex, ([fileName, entry]) => ({
-      fileName,
-      entryPath: entry.entryPath
-    }))
-  );
-  try {
-    const usage = canonicalizeDepUsageIndex(
-      await scanDepUsage({
-        rootDir: options.rootDir,
-        entries: usageEntries,
-        allowedRoots: options.allowedRoots
-      }),
-      canonicalFileNames
-    );
-    saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, usage);
-    const closure = buildProductionDependencyClosure({
-      depsRoot: options.depsRoot,
-      depsHash: options.depsHash,
-      usage,
-      appDemandIdentity: options.appDemandIdentity
-    });
-    persistProductionDependencyClosure(options.depsRoot, closure);
-    return closure;
-  } catch (err) {
-    logWarn(`[PDC] Closure computation failed; using complete DPL artifacts (${String(err)})`);
-    return null;
-  }
 }
 function isReadyManualPackState(raw, depsRoot, depsHash, group) {
   if (!raw || typeof raw !== "object") return false;
@@ -10380,7 +10735,6 @@ async function runBuildCommand(options = {}) {
         logBuildProfileDuration("depsAuthorityAndPacks", 0);
         logBuildProfileDuration("generateBuildPlan", 0);
         logBuildProfileDuration("depsReroute", 0);
-        logBuildProfileDuration("pdcClosure", 0);
         logBuildProfileDuration("canonicalDependencyPlan", 0);
         logBuildProfileDuration("moduleIndex", 0);
         logBuildProfileDuration("freshnessScan", 0);
@@ -10427,7 +10781,6 @@ async function runBuildCommand(options = {}) {
             projectRoot: rootDir,
             depsHash,
             plan: earlyPublishedPlan,
-            pdcClosureHash: earlyProductionReadinessRecord.identity.pdcClosureHash,
             artifacts: materializedReadiness.artifacts,
             dist: {
               manifestHash: distProof.manifestHash ?? "",
@@ -10805,17 +11158,10 @@ async function runBuildCommand(options = {}) {
           `[Build] Deps artifact rerouting: ${canonicalDeps.rerouted} entries rerouted (${canonicalDeps.idRewritten} ids \u2192 artifact identity), ${canonicalDeps.pruned} internal modules pruned${canonicalDeps.sharedPrewarmed > 0 ? `, ${canonicalDeps.sharedPrewarmed} shared artifacts pre-warmed` : ""}`
         );
       }
-      if (canonicalDeps.productionClosure) {
-        logInfo(
-          `[PDC] Production closure ready: ${canonicalDeps.finite} finite, ${canonicalDeps.fallback} conservative fallback (${canonicalDeps.pdcMs}ms, metadata=${canonicalDeps.metadataAttached})`
-        );
-      }
       logBuildProfileDuration("depsReroute", canonicalDeps.rerouteMs);
-      logBuildProfileDuration("pdcClosure", canonicalDeps.pdcMs);
-      logBuildProfileDuration("canonicalDependencyPlan", canonicalDeps.rerouteMs + canonicalDeps.pdcMs);
+      logBuildProfileDuration("canonicalDependencyPlan", canonicalDeps.rerouteMs);
     } else {
       logBuildProfileDuration("depsReroute", 0);
-      logBuildProfileDuration("pdcClosure", 0);
       logBuildProfileDuration("canonicalDependencyPlan", 0);
     }
     const outDir = options.outDir || "dist";
@@ -10851,9 +11197,23 @@ async function runBuildCommand(options = {}) {
       }
     }
     logBuildProfile("moduleIndex", moduleIndexStart);
+    const cssDemandGraphRegisterStart = Date.now();
+    const cssDemandGraphFiles = Array.from(moduleMetaById.values()).filter((meta) => {
+      if (meta.kind !== "js") return false;
+      if (meta.fsPath.includes("node_modules") || meta.fsPath.includes("/.ionify/")) return false;
+      const clean = meta.fsPath.split("?")[0].split("#")[0].toLowerCase();
+      return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+    }).map((meta) => meta.fsPath);
+    const cssDemandRegisteredFiles = registerCssDemandGraphSourceFiles(rootDir, cssDemandGraphFiles);
+    if (isBuildProfileEnabled()) {
+      logInfo(
+        `[BuildProfile][cssDemandGraph] register_ms=${Date.now() - cssDemandGraphRegisterStart} files=${cssDemandRegisteredFiles.length} extraction_ms=0 cacheHit=0 cacheMiss=0 tokens=0`
+      );
+    }
     const moduleOutputs = /* @__PURE__ */ new Map();
     const modulesInPlan = moduleMetaById.size;
     const casRoot = import_path34.default.join(ionifyDir, "cas");
+    const transformCasProfile = createTransformCasProfile();
     let casHits = 0;
     {
       const freshnessStart = Date.now();
@@ -10967,7 +11327,6 @@ ${fp}`;
           projectRoot: rootDir,
           depsHash,
           plan: readinessPlanForIdentity,
-          pdcClosureHash: productionReadinessRecord.identity.pdcClosureHash,
           artifacts: verifiedPraOutputReuse.artifacts,
           dist: {
             manifestHash: distProof.manifestHash ?? "",
@@ -11023,7 +11382,23 @@ ${fp}`;
       let artifactHashFromPlan = baseHashFromPlan ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
       if (meta.kind === "css" && baseHashFromPlan) {
         const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
-        const cssMeta = readJsonFile5(import_path34.default.join(baseDir, "meta.json"));
+        let cssMeta = readJsonFile5(import_path34.default.join(baseDir, "meta.json"));
+        if (!cssMeta) {
+          const restoreStart = Date.now();
+          const restored = restoreCssArtifactFromGlobalCache(
+            configHash,
+            baseHashFromPlan,
+            casRoot,
+            cssNeedsJsWrapper
+          );
+          transformCasProfile.cssGlobalCacheRestoreMs += Date.now() - restoreStart;
+          if (restored.restored) {
+            transformCasProfile.cssGlobalCacheRestoreHit += 1;
+            cssMeta = readJsonFile5(import_path34.default.join(baseDir, "meta.json"));
+          } else {
+            transformCasProfile.cssGlobalCacheRestoreMiss += 1;
+          }
+        }
         if (cssMeta && cssMeta.version === 1 && cssMeta.baseHash === baseHashFromPlan && typeof cssMeta.pipelineHash === "string" && cssMeta.pipelineHash.length > 0) {
           const depsAbs = Array.from(
             new Set(
@@ -11157,6 +11532,57 @@ ${fp}`;
     logBuildProfile("casHydration", hydrationStart);
     const transformsNeeded = jobs.length;
     const percentHits = modulesInPlan > 0 ? Math.round(casHits * 100 / modulesInPlan) : 100;
+    const cssJobs = jobs.filter((job) => job.kind === "css");
+    const cssModulesOptionsForWorker = cloneWorkerSafeCssOptions(config?.css?.modules);
+    const cssPreprocessorOptionsForWorker = cloneWorkerSafeCssOptions(config?.css?.preprocessorOptions);
+    const configuredCssWorkers = Number(process.env.IONIFY_CSS_WORKERS || "");
+    const cssWorkerCount = Number.isFinite(configuredCssWorkers) && configuredCssWorkers > 0 ? Math.max(1, Math.min(cssJobs.length || 1, Math.floor(configuredCssWorkers))) : cssJobs.length <= 3 ? 1 : Math.max(1, Math.min(cssJobs.length, Math.max(1, Math.floor(import_os3.default.cpus().length / 2))));
+    const cssResultsPromise = cssJobs.length > 0 ? (async () => {
+      const cssStart = Date.now();
+      const cssPool = new TransformWorkerPool({
+        size: cssWorkerCount
+      });
+      try {
+        const cssResults = await cssPool.runMany(
+          cssJobs.map((job) => ({
+            id: job.id,
+            filePath: job.filePath,
+            ext: job.ext,
+            code: job.code,
+            rootDir,
+            cssModules: job.cssNeedsJsWrapper === true,
+            cssModulesOptions: cssModulesOptionsForWorker,
+            cssPreprocessorOptions: cssPreprocessorOptionsForWorker,
+            cssDemandGraphFiles: cssDemandRegisteredFiles
+          }))
+        );
+        transformCasProfile.cssCompileWallMs += Date.now() - cssStart;
+        transformCasProfile.cssWorkerJobs += cssJobs.length;
+        for (const result of cssResults) {
+          const deps = Array.isArray(result.deps) ? result.deps.filter((p) => typeof p === "string" && p.length > 0) : [];
+          const urlDeps = Array.isArray(result.urlDeps) ? result.urlDeps.filter((p) => typeof p === "string" && p.length > 0) : [];
+          const pipelineHash = typeof result.pipelineHash === "string" && result.pipelineHash.length > 0 ? result.pipelineHash : "0";
+          const demandStart = Date.now();
+          result.cssDemand = buildCssDemandAnalysis({
+            rootDir,
+            cssFile: result.filePath,
+            cssHash: getCacheKey(cssJobs.find((job) => job.id === result.id)?.code ?? ""),
+            pipelineHash,
+            deps: Array.from(/* @__PURE__ */ new Set([...deps, ...urlDeps]))
+          });
+          if (result.cssProfile && typeof result.cssProfile === "object") {
+            result.cssProfile.cssDemandProofMs = Number(result.cssProfile.cssDemandProofMs ?? 0) + (Date.now() - demandStart);
+          }
+          addCssCompileProfile(transformCasProfile, result.cssProfile);
+        }
+        return cssResults;
+      } catch (err) {
+        transformCasProfile.cssCompileWallMs += Date.now() - cssStart;
+        throw err;
+      } finally {
+        await cssPool.close();
+      }
+    })() : null;
     const defineStart = Date.now();
     for (const job of defineJobs) {
       const cacheDir2 = getCasArtifactPath(casRoot, configHash, job.artifactHash);
@@ -11172,7 +11598,6 @@ ${fp}`;
     }
     if (jobs.length > 0) {
       const transformStart = Date.now();
-      const transformCasProfile = createTransformCasProfile();
       const transformResultsById = /* @__PURE__ */ new Map();
       const nativeHandledIds = /* @__PURE__ */ new Set();
       const jobById = new Map(jobs.map((job) => [job.id, job]));
@@ -11217,33 +11642,8 @@ ${fp}`;
           );
         }
       }
-      const cssJobs = jobs.filter((job) => job.kind === "css");
-      if (cssJobs.length > 0) {
-        const cssStart = Date.now();
-        const cssResults = await Promise.all(
-          cssJobs.map(async (job) => {
-            const result = await compileCss({
-              code: job.code,
-              filePath: job.filePath,
-              rootDir,
-              modules: job.cssNeedsJsWrapper === true,
-              modulesOptions: config?.css?.modules,
-              preprocessorOptions: config?.css?.preprocessorOptions
-            });
-            return {
-              id: job.id,
-              filePath: job.filePath,
-              code: result.css,
-              type: "css",
-              tokens: result.tokens ?? null,
-              deps: result.deps.map((dep) => dep.filePath),
-              urlDeps: result.urlDeps.map((dep) => dep.filePath),
-              pipelineHash: result.pipelineHash
-            };
-          })
-        );
-        transformCasProfile.cssWorkerTransformStartupMs += Date.now() - cssStart;
-        transformCasProfile.cssWorkerJobs += cssJobs.length;
+      if (cssResultsPromise) {
+        const cssResults = await cssResultsPromise;
         for (const result of cssResults) {
           transformResultsById.set(result.id, result);
         }
@@ -11261,7 +11661,7 @@ ${fp}`;
               code: job.code
             }))
           );
-          transformCasProfile.cssWorkerTransformStartupMs += Date.now() - workerStart;
+          transformCasProfile.workerTransformMs += Date.now() - workerStart;
           transformCasProfile.workerTransformJobs += workerJobs.length;
           for (const result of results) {
             transformResultsById.set(result.id, result);
@@ -11312,6 +11712,24 @@ ${fp}`;
           const deps = Array.isArray(result.deps) ? result.deps.filter((p) => typeof p === "string" && p.length > 0) : [];
           const urlDeps = Array.isArray(result.urlDeps) ? result.urlDeps.filter((p) => typeof p === "string" && p.length > 0) : [];
           const pipelineHash = typeof result.pipelineHash === "string" && result.pipelineHash.length > 0 ? result.pipelineHash : "0";
+          const cssDemand = result.cssDemand;
+          const cssDemandProfile = cssDemand?.profile;
+          if (cssDemandProfile && typeof cssDemandProfile === "object") {
+            transformCasProfile.cssDemandExtractionMs += Number(cssDemandProfile.extractionMs ?? 0);
+            transformCasProfile.cssDemandFilesScanned += Number(cssDemandProfile.filesScanned ?? 0);
+            transformCasProfile.cssDemandCacheHit += Number(cssDemandProfile.cacheHits ?? 0);
+            transformCasProfile.cssDemandCacheMiss += Number(cssDemandProfile.cacheMisses ?? 0);
+            transformCasProfile.cssDemandTokens += Number(cssDemandProfile.tokens ?? 0);
+            transformCasProfile.cssDemandProofWriteMs += Number(cssDemandProfile.proofWriteMs ?? 0);
+          }
+          const tailwindGraphContent = result.tailwindGraphContent;
+          if (tailwindGraphContent && typeof tailwindGraphContent === "object") {
+            transformCasProfile.cssTailwindGraphContentMs += Number(tailwindGraphContent.ms ?? 0);
+            transformCasProfile.cssTailwindGraphContentFiles += Number(tailwindGraphContent.files ?? 0);
+            transformCasProfile.cssTailwindGraphContentPlugins += Number(tailwindGraphContent.plugins ?? 0);
+            if (tailwindGraphContent.enabled === true) transformCasProfile.cssTailwindGraphContentOptimized += 1;
+            if (tailwindGraphContent.fallbackReason) transformCasProfile.cssTailwindGraphContentFallbacks += 1;
+          }
           const depsAbs = profileElapsed(
             transformCasProfile,
             "artifactHashBookkeepingMs",
@@ -11343,6 +11761,12 @@ ${fp}`;
             )
           );
           transformCasProfile.artifactHashBookkeepingCalls += 1;
+          const artifactBytesHash = profileElapsed(
+            transformCasProfile,
+            "artifactHashBookkeepingMs",
+            () => getCacheKey(result.code)
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
           cssDerivedArtifactHashById.set(job.id, artifactHash);
           const baseDir = profileElapsed(
             transformCasProfile,
@@ -11354,11 +11778,32 @@ ${fp}`;
           const meta = {
             version: 1,
             baseHash: job.baseHash,
+            artifactHash,
+            artifactBytesHash,
             pipelineHash,
+            depsStampHash,
             deps: depsAbs.sort(),
             urlDeps: Array.from(new Set(urlDeps.map((p) => import_path34.default.resolve(p)))).sort(),
+            depsProof: buildCssCasDepProof(depsAbs, moduleMetaById, workspace.workspaceRoot),
             modules: cssNeedsJsWrapper,
-            generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            cssDemand: cssDemand?.proof ? {
+              proofVersion: Number(cssDemand.proof.proofVersion ?? 0),
+              extractorVersion: Number(cssDemand.proof.extractorVersion ?? 0),
+              classDemandHash: String(cssDemand.proof.classDemandHash ?? ""),
+              dependencyHash: String(cssDemand.proof.dependencyHash ?? ""),
+              tokenCount: Number(cssDemand.proof.tokenCount ?? 0),
+              sourceFileCount: Array.isArray(cssDemand.proof.sourceFiles) ? cssDemand.proof.sourceFiles.length : 0,
+              uncertain: Boolean(cssDemand.proof.uncertain),
+              uncertaintyReasons: Array.isArray(cssDemand.proof.uncertaintyReasons) ? cssDemand.proof.uncertaintyReasons.map((reason) => String(reason)).sort() : []
+            } : null,
+            tailwindGraphContent: tailwindGraphContent ? {
+              enabled: tailwindGraphContent.enabled === true,
+              files: Number(tailwindGraphContent.files ?? 0),
+              plugins: Number(tailwindGraphContent.plugins ?? 0),
+              configPath: typeof tailwindGraphContent.configPath === "string" ? tailwindGraphContent.configPath : null,
+              fallbackReason: typeof tailwindGraphContent.fallbackReason === "string" ? tailwindGraphContent.fallbackReason : null
+            } : null
           };
           profileJsonCasWrite(transformCasProfile, import_path34.default.join(baseDir, "meta.json"), meta, "base");
           const artifactDir = profileElapsed(
@@ -11375,6 +11820,16 @@ ${fp}`;
             profileCasWrite(transformCasProfile, import_path34.default.join(artifactDir, "transformed.js"), js, "variant");
             profileJsonCasWrite(transformCasProfile, import_path34.default.join(artifactDir, "tokens.json"), tokens, "variant");
           }
+          const globalWriteStart = Date.now();
+          const globalFiles = writeCssArtifactToGlobalCache(
+            configHash,
+            job.baseHash,
+            artifactHash,
+            casRoot,
+            cssNeedsJsWrapper
+          );
+          transformCasProfile.cssGlobalCacheWriteMs += Date.now() - globalWriteStart;
+          transformCasProfile.cssGlobalCacheWriteFiles += globalFiles;
           const refs = moduleRefsById.get(job.id) ?? [];
           for (const ref of refs) ref.hash = artifactHash;
           job.artifactHash = artifactHash;
@@ -11388,6 +11843,9 @@ ${fp}`;
         moduleOutputs.set(job.id, { code: finalCode, type: result.type });
       }
       logBuildProfile("transformsAndCasWrites", transformStart);
+      logTransformCasProfile(transformCasProfile);
+    }
+    if (jobs.length === 0 && (transformCasProfile.cssGlobalCacheRestoreHit > 0 || transformCasProfile.cssGlobalCacheRestoreMiss > 0 || transformCasProfile.cssGlobalCacheRestoreMs > 0)) {
       logTransformCasProfile(transformCasProfile);
     }
     if (cssDerivedArtifactHashById.size) {
@@ -11607,7 +12065,6 @@ ${fp}`;
         projectRoot: rootDir,
         depsHash,
         plan: readinessPlanForIdentity ?? emittedPlan,
-        pdcClosureHash: canonicalDepsForReadiness?.productionClosure?.closureHash ?? productionReadinessRecord?.identity.pdcClosureHash ?? null,
         artifacts,
         dist: {
           manifestHash: buildManifestInfo?.hash ?? hashFileIfExists(import_path34.default.join(absOutDir, "manifest.json")) ?? "",
@@ -11914,6 +12371,93 @@ function toPosixPath2(value) {
 function getGlobalDepCacheDir(depsHash) {
   return import_path34.default.join(import_os3.default.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION, depsHash);
 }
+function getGlobalCssBaseDir(configHash, baseHash) {
+  return import_path34.default.join(
+    import_os3.default.homedir(),
+    ".ionify",
+    "global",
+    "css-artifacts",
+    GLOBAL_CSS_ARTIFACT_CACHE_VERSION,
+    configHash,
+    "base",
+    baseHash
+  );
+}
+function getGlobalCssArtifactDir(configHash, artifactHash) {
+  return import_path34.default.join(
+    import_os3.default.homedir(),
+    ".ionify",
+    "global",
+    "css-artifacts",
+    GLOBAL_CSS_ARTIFACT_CACHE_VERSION,
+    configHash,
+    "artifact",
+    artifactHash
+  );
+}
+function restoreCssArtifactFromGlobalCache(configHash, baseHash, casRoot, modules) {
+  const globalBaseDir = getGlobalCssBaseDir(configHash, baseHash);
+  const globalMetaFile = import_path34.default.join(globalBaseDir, "meta.json");
+  const cssMeta = readJsonFile5(globalMetaFile);
+  if (!cssMeta || cssMeta.version !== 1 || cssMeta.baseHash !== baseHash || cssMeta.modules !== modules || typeof cssMeta.artifactHash !== "string" || cssMeta.artifactHash.length === 0 || typeof cssMeta.pipelineHash !== "string" || cssMeta.pipelineHash.length === 0 || typeof cssMeta.depsStampHash !== "string" || cssMeta.depsStampHash.length === 0 || !cssDepProofIsCurrent(cssMeta)) {
+    return { restored: false, artifactHash: null };
+  }
+  const artifactHash = cssMeta.artifactHash;
+  const globalArtifactDir = getGlobalCssArtifactDir(configHash, artifactHash);
+  const globalCssFile = import_path34.default.join(globalArtifactDir, "transformed.css");
+  if (!import_fs32.default.existsSync(globalCssFile)) return { restored: false, artifactHash: null };
+  if (cssMeta.artifactBytesHash) {
+    try {
+      if (getCacheKey(import_fs32.default.readFileSync(globalCssFile)) !== cssMeta.artifactBytesHash) {
+        return { restored: false, artifactHash: null };
+      }
+    } catch {
+      return { restored: false, artifactHash: null };
+    }
+  }
+  const localBaseDir = getCasArtifactPath(casRoot, configHash, baseHash);
+  const localArtifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+  if (!copyFileWithHardlinkFallback(globalMetaFile, import_path34.default.join(localBaseDir, "meta.json"))) {
+    return { restored: false, artifactHash: null };
+  }
+  if (!copyFileWithHardlinkFallback(globalCssFile, import_path34.default.join(localArtifactDir, "transformed.css"))) {
+    return { restored: false, artifactHash: null };
+  }
+  if (modules) {
+    const globalTokensFile = import_path34.default.join(globalArtifactDir, "tokens.json");
+    if (!import_fs32.default.existsSync(globalTokensFile)) return { restored: false, artifactHash: null };
+    if (!copyFileWithHardlinkFallback(globalTokensFile, import_path34.default.join(localArtifactDir, "tokens.json"))) {
+      return { restored: false, artifactHash: null };
+    }
+    const globalJsFile = import_path34.default.join(globalArtifactDir, "transformed.js");
+    if (import_fs32.default.existsSync(globalJsFile)) {
+      copyFileWithHardlinkFallback(globalJsFile, import_path34.default.join(localArtifactDir, "transformed.js"));
+    }
+  }
+  return { restored: true, artifactHash };
+}
+function writeCssArtifactToGlobalCache(configHash, baseHash, artifactHash, casRoot, modules) {
+  let files = 0;
+  const localBaseDir = getCasArtifactPath(casRoot, configHash, baseHash);
+  const localArtifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+  const globalBaseDir = getGlobalCssBaseDir(configHash, baseHash);
+  const globalArtifactDir = getGlobalCssArtifactDir(configHash, artifactHash);
+  if (copyFileWithHardlinkFallback(import_path34.default.join(localBaseDir, "meta.json"), import_path34.default.join(globalBaseDir, "meta.json"))) files += 1;
+  if (copyFileWithHardlinkFallback(
+    import_path34.default.join(localArtifactDir, "transformed.css"),
+    import_path34.default.join(globalArtifactDir, "transformed.css")
+  )) files += 1;
+  if (modules) {
+    if (copyFileWithHardlinkFallback(
+      import_path34.default.join(localArtifactDir, "transformed.js"),
+      import_path34.default.join(globalArtifactDir, "transformed.js")
+    )) files += 1;
+    if (copyFileWithHardlinkFallback(import_path34.default.join(localArtifactDir, "tokens.json"), import_path34.default.join(globalArtifactDir, "tokens.json"))) {
+      files += 1;
+    }
+  }
+  return files;
+}
 function manifestEntryHasPdcC1Facts(entry, depsRoot, outputVersion) {
   if (!entry || typeof entry !== "object") return false;
   if (entry.outputVersion !== outputVersion) return false;
@@ -12022,7 +12566,6 @@ function normalizePlanChunkForReuse(chunk) {
       dependencyFormat: mod.dependencyFormat ?? void 0,
       usedExports: mod.usedExports ?? void 0,
       dependencyAbiHash: mod.dependencyAbiHash ?? void 0,
-      productionClosureHash: mod.productionClosureHash ?? void 0,
       sideEffects: mod.sideEffects ?? void 0,
       artifactTopology: mod.artifactTopology ?? void 0,
       artifactHash: mod.hash ?? void 0
@@ -12067,7 +12610,6 @@ function tryReusePreviousBuildOutputs(outDir, plan) {
         dependencyFormat: mod.dependencyFormat ?? void 0,
         usedExports: mod.usedExports ?? void 0,
         dependencyAbiHash: mod.dependencyAbiHash ?? void 0,
-        productionClosureHash: mod.productionClosureHash ?? void 0,
         sideEffects: mod.sideEffects ?? void 0,
         artifactTopology: mod.artifactTopology ?? void 0,
         artifactHash: mod.artifactHash
@@ -12820,7 +13362,7 @@ ${injected}
     hash: getCacheKey(html)
   };
 }
-var import_fs32, import_os3, import_path34, import_crypto11, import_zlib2, DEPS_OPTIMIZER_OUTPUT_VERSION2, TOPOLOGY_PROOF_VERSION, PACKAGE_GRAPH_VERSION, topologyValidationProfile, depsMeasurementProfile, OPTIMIZABLE_DEP_ENTRY_EXTS, GLOBAL_DEP_CACHE_VERSION;
+var import_fs32, import_os3, import_path34, import_crypto10, import_zlib2, DEPS_OPTIMIZER_OUTPUT_VERSION2, TOPOLOGY_PROOF_VERSION, PACKAGE_GRAPH_VERSION, topologyValidationProfile, depsMeasurementProfile, OPTIMIZABLE_DEP_ENTRY_EXTS, GLOBAL_DEP_CACHE_VERSION, GLOBAL_CSS_ARTIFACT_CACHE_VERSION;
 var init_build = __esm({
   "src/cli/commands/build.ts"() {
     "use strict";
@@ -12828,7 +13370,7 @@ var init_build = __esm({
     import_fs32 = __toESM(require("fs"), 1);
     import_os3 = __toESM(require("os"), 1);
     import_path34 = __toESM(require("path"), 1);
-    import_crypto11 = __toESM(require("crypto"), 1);
+    import_crypto10 = __toESM(require("crypto"), 1);
     import_zlib2 = __toESM(require("zlib"), 1);
     init_logger();
     init_config();
@@ -12853,11 +13395,11 @@ var init_build = __esm({
     init_dep_stops();
     init_feature_pack_planner();
     init_usage();
-    init_production_closure();
     init_production_readiness_authority();
     init_registry();
     init_vendor_pack_v2();
     init_css();
+    init_css_demand();
     init_public_path();
     init_deps_hash();
     init_production_artifact_publishing();
@@ -12894,6 +13436,7 @@ var init_build = __esm({
       ".json"
     ]);
     GLOBAL_DEP_CACHE_VERSION = "v1";
+    GLOBAL_CSS_ARTIFACT_CACHE_VERSION = "v1";
   }
 });
 
@@ -13197,8 +13740,8 @@ var import_http = __toESM(require("http"), 1);
 var import_https = __toESM(require("https"), 1);
 var import_url6 = __toESM(require("url"), 1);
 var import_child_process = require("child_process");
-var import_fs24 = __toESM(require("fs"), 1);
-var import_path26 = __toESM(require("path"), 1);
+var import_fs25 = __toESM(require("fs"), 1);
+var import_path27 = __toESM(require("path"), 1);
 var import_url7 = require("url");
 var import_module5 = require("module");
 var import_selfsigned = __toESM(require("selfsigned"), 1);
@@ -13598,14 +14141,14 @@ var RouteHintIndex = class {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => this.flush(), 250);
   }
-  pruneEphemeralContexts(nowMs) {
+  pruneEphemeralContexts(nowMs2) {
     for (const [key, value] of this.requestRouteContext) {
-      if (nowMs - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
+      if (nowMs2 - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
         this.requestRouteContext.delete(key);
       }
     }
     for (const [key, value] of this.clientRouteContext) {
-      if (nowMs - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
+      if (nowMs2 - value.observedAtMs > CLIENT_CONTEXT_TTL_MS) {
         this.clientRouteContext.delete(key);
       }
     }
@@ -14769,6 +15312,7 @@ function injectHMRClient(html) {
 
 // src/cli/commands/dev.ts
 init_css();
+init_css_demand();
 init_css_ext();
 
 // src/core/loaders/asset.ts
@@ -14832,22 +15376,22 @@ function normalizeUrlFromFs(rootDir, fsPath) {
 
 // src/core/refresh/entryDetection.ts
 init_cjs_shims();
-var import_path16 = __toESM(require("path"), 1);
+var import_path17 = __toESM(require("path"), 1);
 var ENTRY_PATTERNS = [
   /\/src\/main\.(tsx?|jsx?)$/,
   /\/src\/index\.(tsx?|jsx?)$/
 ];
 function normalizePath(input) {
-  const normalized = import_path16.default.normalize(input).replace(/\\/g, "/");
+  const normalized = import_path17.default.normalize(input).replace(/\\/g, "/");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function isEntryModule(filePath, config) {
-  const normalized = normalizePath(import_path16.default.resolve(filePath));
+  const normalized = normalizePath(import_path17.default.resolve(filePath));
   if (config?.entry) {
     const root = config.root ?? process.cwd();
     const entries = Array.isArray(config.entry) ? config.entry : [config.entry];
     for (const entry of entries) {
-      const resolvedEntry = import_path16.default.resolve(root, entry);
+      const resolvedEntry = import_path17.default.resolve(root, entry);
       const normalizedEntry = normalizePath(resolvedEntry);
       if (normalized === normalizedEntry) return true;
     }
@@ -14903,34 +15447,34 @@ function shouldUseReactRefresh(options) {
 }
 
 // src/core/loaders/js.ts
-var import_fs17 = __toESM(require("fs"), 1);
-var import_path19 = __toESM(require("path"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
+var import_path20 = __toESM(require("path"), 1);
 var JS_EXTENSIONS = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
 function resolveIonifyDir3(rootDir) {
   const fromEnv = process.env.IONIFY_STATE_DIR;
-  if (fromEnv && import_path19.default.isAbsolute(fromEnv)) return fromEnv;
-  return import_path19.default.join(rootDir, ".ionify");
+  if (fromEnv && import_path20.default.isAbsolute(fromEnv)) return fromEnv;
+  return import_path20.default.join(rootDir, ".ionify");
 }
 function resolveDepsRoot(rootDir, depsHash) {
-  return import_path19.default.join(resolveIonifyDir3(rootDir), "deps", depsHash);
+  return import_path20.default.join(resolveIonifyDir3(rootDir), "deps", depsHash);
 }
 var featurePackIndexCache = null;
 function getFeaturePackChunkGroupId(rootDir, fileName) {
   const depsHash = process.env.IONIFY_DEPS_HASH;
   if (!depsHash) return null;
   const depsRoot = resolveDepsRoot(rootDir, depsHash);
-  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.feature.index.json");
-  if (!import_fs17.default.existsSync(indexPath)) return null;
+  const indexPath = import_path20.default.join(depsRoot, "vendor-pack.feature.index.json");
+  if (!import_fs18.default.existsSync(indexPath)) return null;
   let stat;
   try {
-    stat = import_fs17.default.statSync(indexPath);
+    stat = import_fs18.default.statSync(indexPath);
   } catch {
     return null;
   }
   const mtimeMs = stat.mtimeMs;
   if (!featurePackIndexCache || featurePackIndexCache.depsRoot !== depsRoot || featurePackIndexCache.depsHash !== depsHash || featurePackIndexCache.mtimeMs !== mtimeMs) {
     try {
-      const raw = import_fs17.default.readFileSync(indexPath, "utf8");
+      const raw = import_fs18.default.readFileSync(indexPath, "utf8");
       const parsed = JSON.parse(raw);
       const mapping = /* @__PURE__ */ new Map();
       if (parsed?.version === 1 && parsed?.depsHash === depsHash) {
@@ -14949,8 +15493,8 @@ function getFeaturePackChunkGroupId(rootDir, fileName) {
   }
   const cg = featurePackIndexCache.mapping.get(fileName) ?? null;
   if (!cg) return null;
-  const sharedPath = import_path19.default.join(depsRoot, `shared.${cg}.js`);
-  if (!import_fs17.default.existsSync(sharedPath)) return null;
+  const sharedPath = import_path20.default.join(depsRoot, `shared.${cg}.js`);
+  if (!import_fs18.default.existsSync(sharedPath)) return null;
   return cg;
 }
 var vendorPackV2IndexCache = null;
@@ -14959,18 +15503,18 @@ function vendorPackV2MemberKey2(fileName) {
 }
 var vendorPackV2PackValidationCache = null;
 function validateVendorPackV2Module(depsRoot, depsHash, packFileName, expectedKey, chunkFiles) {
-  const packPath = import_path19.default.join(depsRoot, packFileName);
-  if (!import_fs17.default.existsSync(packPath)) return false;
+  const packPath = import_path20.default.join(depsRoot, packFileName);
+  if (!import_fs18.default.existsSync(packPath)) return false;
   for (const chunkFile of chunkFiles) {
     if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) return false;
-    if (!import_fs17.default.existsSync(import_path19.default.join(depsRoot, chunkFile))) return false;
+    if (!import_fs18.default.existsSync(import_path20.default.join(depsRoot, chunkFile))) return false;
   }
   if (!vendorPackV2PackValidationCache || vendorPackV2PackValidationCache.depsRoot !== depsRoot || vendorPackV2PackValidationCache.depsHash !== depsHash) {
     vendorPackV2PackValidationCache = { depsRoot, depsHash, byPackFile: /* @__PURE__ */ new Map() };
   }
   let stat;
   try {
-    stat = import_fs17.default.statSync(packPath);
+    stat = import_fs18.default.statSync(packPath);
   } catch {
     return false;
   }
@@ -14983,7 +15527,7 @@ function validateVendorPackV2Module(depsRoot, depsHash, packFileName, expectedKe
   let ok = false;
   let actualKey = null;
   try {
-    const head = import_fs17.default.readFileSync(packPath, "utf8").slice(0, 256);
+    const head = import_fs18.default.readFileSync(packPath, "utf8").slice(0, 256);
     const match = head.match(/\/\/\s*ionify:vendor-pack-v2\s+([0-9a-fA-F]{32,})/);
     actualKey = match?.[1] ? String(match[1]).toLowerCase() : null;
     ok = !!actualKey && (!expectedKey || actualKey === expectedKey);
@@ -15003,18 +15547,18 @@ function getVendorPackV2ImportFileName(rootDir, fileName) {
   const depsHash = process.env.IONIFY_DEPS_HASH;
   if (!depsHash) return null;
   const depsRoot = resolveDepsRoot(rootDir, depsHash);
-  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.v2.index.json");
-  if (!import_fs17.default.existsSync(indexPath)) return null;
+  const indexPath = import_path20.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!import_fs18.default.existsSync(indexPath)) return null;
   let stat;
   try {
-    stat = import_fs17.default.statSync(indexPath);
+    stat = import_fs18.default.statSync(indexPath);
   } catch {
     return null;
   }
   const mtimeMs = stat.mtimeMs;
   if (!vendorPackV2IndexCache || vendorPackV2IndexCache.depsRoot !== depsRoot || vendorPackV2IndexCache.depsHash !== depsHash || vendorPackV2IndexCache.mtimeMs !== mtimeMs) {
     try {
-      const raw = import_fs17.default.readFileSync(indexPath, "utf8");
+      const raw = import_fs18.default.readFileSync(indexPath, "utf8");
       const parsed = JSON.parse(raw);
       const fileNameToPackFile = /* @__PURE__ */ new Map();
       const packFileToSharedFile = /* @__PURE__ */ new Map();
@@ -15113,8 +15657,8 @@ function rewriteVendorPackV2Imports(code, rootDir) {
   if (!depsHash) return code;
   if (!code.includes("/@deps/")) return code;
   const depsRoot = resolveDepsRoot(rootDir, depsHash);
-  const indexPath = import_path19.default.join(depsRoot, "vendor-pack.v2.index.json");
-  if (!import_fs17.default.existsSync(indexPath)) return code;
+  const indexPath = import_path20.default.join(depsRoot, "vendor-pack.v2.index.json");
+  if (!import_fs18.default.existsSync(indexPath)) return code;
   let ast;
   try {
     ast = (0, import_core.parseSync)(code, {
@@ -15223,7 +15767,7 @@ function shouldTransform(ext, filePath) {
 }
 function computeSubpathForDep(fsPath, pkg) {
   const computed = computeSubpathFromEntryPath(fsPath);
-  if (!computed && !import_fs17.default.existsSync(fsPath) && pkg && typeof pkg.subpath === "string") {
+  if (!computed && !import_fs18.default.existsSync(fsPath) && pkg && typeof pkg.subpath === "string") {
     const raw = pkg.subpath;
     const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
     if (cleaned && cleaned !== "." && cleaned !== "index") {
@@ -15246,11 +15790,11 @@ function looksLikeEsmSource(source) {
   return sample.includes("import ") || sample.includes("export ") || sample.includes("import{") || sample.includes("export{") || sample.includes("import(");
 }
 function findNearestPackageJson(filePath) {
-  let current = import_path19.default.dirname(filePath);
+  let current = import_path20.default.dirname(filePath);
   for (let i = 0; i < 25; i++) {
-    const candidate = import_path19.default.join(current, "package.json");
-    if (import_fs17.default.existsSync(candidate)) return candidate;
-    const parent = import_path19.default.dirname(current);
+    const candidate = import_path20.default.join(current, "package.json");
+    if (import_fs18.default.existsSync(candidate)) return candidate;
+    const parent = import_path20.default.dirname(current);
     if (parent === current) break;
     current = parent;
   }
@@ -15261,7 +15805,7 @@ function makeDepsProxyForFile(filePath, code, rootDir) {
   const pkgJsonPath = findNearestPackageJson(filePath);
   if (!pkgJsonPath) return null;
   try {
-    const pkg = JSON.parse(import_fs17.default.readFileSync(pkgJsonPath, "utf8"));
+    const pkg = JSON.parse(import_fs18.default.readFileSync(pkgJsonPath, "utf8"));
     const fileName = registerDepEntry({
       entryPath: filePath,
       packageName: pkg?.name ?? "dep",
@@ -15274,11 +15818,11 @@ function makeDepsProxyForFile(filePath, code, rootDir) {
     if (importFileName) {
       const depsHash = process.env.IONIFY_DEPS_HASH;
       const depsRoot = depsHash ? resolveDepsRoot(rootDir, depsHash) : null;
-      const wrapperPath = depsRoot ? import_path19.default.join(depsRoot, fileName) : null;
+      const wrapperPath = depsRoot ? import_path20.default.join(depsRoot, fileName) : null;
       let exportNames = [];
-      if (wrapperPath && import_fs17.default.existsSync(wrapperPath)) {
+      if (wrapperPath && import_fs18.default.existsSync(wrapperPath)) {
         try {
-          const wrapperCode = import_fs17.default.readFileSync(wrapperPath, "utf8");
+          const wrapperCode = import_fs18.default.readFileSync(wrapperPath, "utf8");
           const names = [];
           for (const match of wrapperCode.matchAll(
             /export\s+\{\s*__ionify_export_[A-Za-z0-9_$]+\s+as\s+([A-Za-z0-9_$]+)\s*\}\s*;\s*/g
@@ -15370,10 +15914,10 @@ var jsLoader = {
   transform: async ({ path: filePath, code, ext, config }) => {
     const isNodeModules = filePath.includes("node_modules");
     const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
-    const rootDir = config?.root ? import_path19.default.resolve(config.root) : process.cwd();
-    const stateDir = process.env.IONIFY_STATE_DIR && import_path19.default.isAbsolute(process.env.IONIFY_STATE_DIR) ? process.env.IONIFY_STATE_DIR : null;
+    const rootDir = config?.root ? import_path20.default.resolve(config.root) : process.cwd();
+    const stateDir = process.env.IONIFY_STATE_DIR && import_path20.default.isAbsolute(process.env.IONIFY_STATE_DIR) ? process.env.IONIFY_STATE_DIR : null;
     const versionHash = process.env.IONIFY_CONFIG_HASH || null;
-    const casRoot = stateDir ? import_path19.default.join(stateDir, "cas") : null;
+    const casRoot = stateDir ? import_path20.default.join(stateDir, "cas") : null;
     let output = code;
     if (isNodeModules) {
       const depsProxy = makeDepsProxyForFile(filePath, code, rootDir);
@@ -15409,12 +15953,12 @@ var jsLoader = {
         try {
           const baseHash = getCacheKey(code);
           const baseDir = getCasArtifactPath(casRoot, versionHash, baseHash);
-          const baseFile = import_path19.default.join(baseDir, "transformed.js");
-          if (!import_fs17.default.existsSync(baseFile)) {
-            import_fs17.default.mkdirSync(baseDir, { recursive: true });
+          const baseFile = import_path20.default.join(baseDir, "transformed.js");
+          if (!import_fs18.default.existsSync(baseFile)) {
+            import_fs18.default.mkdirSync(baseDir, { recursive: true });
             const tmp = `${baseFile}.tmp-${process.pid}`;
-            import_fs17.default.writeFileSync(tmp, transpiled, "utf8");
-            import_fs17.default.renameSync(tmp, baseFile);
+            import_fs18.default.writeFileSync(tmp, transpiled, "utf8");
+            import_fs18.default.renameSync(tmp, baseFile);
           }
         } catch {
         }
@@ -15508,7 +16052,7 @@ if (import.meta.hot) {
           }
           if (kind === "PkgEsm" && fsPath) {
             try {
-              const resolvedCode = import_fs17.default.readFileSync(fsPath, "utf8");
+              const resolvedCode = import_fs18.default.readFileSync(fsPath, "utf8");
               if (looksLikeCjsWrapperSource(resolvedCode)) {
                 const pkg2 = resolvedNative?.pkg;
                 const fileName2 = registerDepEntry({
@@ -15716,9 +16260,9 @@ var IONIFY_VENDOR_PACK_MARKER = "// ionify:vendor-pack";
 var DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
 var VENDOR_PACK_V2_REWRITE_POLICY_VERSION = 2;
 var __filename2 = (0, import_url7.fileURLToPath)(importMetaUrl);
-var __dirname = import_path26.default.dirname(__filename2);
-var CLIENT_DIR = import_path26.default.resolve(__dirname, "../client");
-var CLIENT_FALLBACK_DIR = import_path26.default.resolve(process.cwd(), "src/client");
+var __dirname = import_path27.default.dirname(__filename2);
+var CLIENT_DIR = import_path27.default.resolve(__dirname, "../client");
+var CLIENT_FALLBACK_DIR = import_path27.default.resolve(process.cwd(), "src/client");
 var DEPS_PREFIX2 = "/@deps/";
 function syncFederationGraphNodes(graph, nodes) {
   const nextIds = new Set(nodes.map((node) => node.id));
@@ -15732,13 +16276,13 @@ function syncFederationGraphNodes(graph, nodes) {
 function resolvePublicDir(rootDir, value) {
   if (value === false) return null;
   const dir = typeof value === "string" && value.trim().length > 0 ? value.trim() : "public";
-  return import_path26.default.isAbsolute(dir) ? dir : import_path26.default.resolve(rootDir, dir);
+  return import_path27.default.isAbsolute(dir) ? dir : import_path27.default.resolve(rootDir, dir);
 }
 function decodePublicDirPath(publicDirAbs, urlPath) {
   if (!urlPath.startsWith("/")) return null;
-  const normalizedRoot = import_path26.default.resolve(publicDirAbs);
-  const joined = import_path26.default.resolve(normalizedRoot, "." + urlPath);
-  if (!joined.startsWith(normalizedRoot + import_path26.default.sep) && joined !== normalizedRoot) return null;
+  const normalizedRoot = import_path27.default.resolve(publicDirAbs);
+  const joined = import_path27.default.resolve(normalizedRoot, "." + urlPath);
+  if (!joined.startsWith(normalizedRoot + import_path27.default.sep) && joined !== normalizedRoot) return null;
   if (isForbiddenFsPath(joined)) return null;
   return joined;
 }
@@ -15753,9 +16297,9 @@ function resolveSpaFallbackPolicy(rootDir, rawValue) {
   const rawEnabled = objectValue ? objectValue.enabled : rawValue;
   const mode = rawEnabled === void 0 ? "auto" : rawEnabled === true || rawEnabled === false ? rawEnabled : rawEnabled === "auto" ? "auto" : "auto";
   const entryRaw = objectValue && typeof objectValue.entry === "string" && objectValue.entry.trim().length > 0 ? objectValue.entry.trim() : "/index.html";
-  const entryFilePath = entryRaw.startsWith("/") ? import_path26.default.join(rootDir, entryRaw) : import_path26.default.resolve(rootDir, entryRaw);
+  const entryFilePath = entryRaw.startsWith("/") ? import_path27.default.join(rootDir, entryRaw) : import_path27.default.resolve(rootDir, entryRaw);
   const disableDotRule = objectValue?.disableDotRule === true;
-  const entryExists = import_fs24.default.existsSync(entryFilePath) && import_fs24.default.statSync(entryFilePath).isFile();
+  const entryExists = import_fs25.default.existsSync(entryFilePath) && import_fs25.default.statSync(entryFilePath).isFile();
   const enabled = mode === "auto" ? entryExists : mode === true ? entryExists : false;
   return {
     enabled,
@@ -15777,7 +16321,7 @@ function isHtmlNavigationRequest(req, reqPath, query, policy) {
   if ("import" in query || "inline" in query || "raw" in query || "module" in query || "url" in query) {
     return false;
   }
-  const baseName = import_path26.default.posix.basename(reqPath);
+  const baseName = import_path27.default.posix.basename(reqPath);
   if (!policy.disableDotRule && baseName.includes(".")) {
     return false;
   }
@@ -15789,7 +16333,7 @@ function isHtmlNavigationRequest(req, reqPath, query, policy) {
   return accept.includes("text/html");
 }
 function normalizeGraphDepForClient(rootDir, dep) {
-  return dep.startsWith("http://") || dep.startsWith("https://") ? dep : import_path26.default.isAbsolute(dep) ? normalizeUrlFromFs(rootDir, dep) : dep;
+  return dep.startsWith("http://") || dep.startsWith("https://") ? dep : import_path27.default.isAbsolute(dep) ? normalizeUrlFromFs(rootDir, dep) : dep;
 }
 function rewriteCssImportSpecifiers(cssText, filePath, rootDir, moduleResolver) {
   const importRe = /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
@@ -15822,13 +16366,13 @@ function rewriteCssImportSpecifiers(cssText, filePath, rootDir, moduleResolver) 
   return rewritten;
 }
 function readClientAssetFile(fileName) {
-  const primary = import_path26.default.join(CLIENT_DIR, fileName);
-  if (import_fs24.default.existsSync(primary)) {
-    return { filePath: primary, code: import_fs24.default.readFileSync(primary, "utf8") };
+  const primary = import_path27.default.join(CLIENT_DIR, fileName);
+  if (import_fs25.default.existsSync(primary)) {
+    return { filePath: primary, code: import_fs25.default.readFileSync(primary, "utf8") };
   }
-  const fallback = import_path26.default.join(CLIENT_FALLBACK_DIR, fileName);
-  if (import_fs24.default.existsSync(fallback)) {
-    return { filePath: fallback, code: import_fs24.default.readFileSync(fallback, "utf8") };
+  const fallback = import_path27.default.join(CLIENT_FALLBACK_DIR, fileName);
+  if (import_fs25.default.existsSync(fallback)) {
+    return { filePath: fallback, code: import_fs25.default.readFileSync(fallback, "utf8") };
   }
   throw new Error(`Missing Ionify client asset: ${fileName}`);
 }
@@ -15840,9 +16384,9 @@ function resolveHttpsMaterial(rootDir, rawValue) {
   const trimmed = rawValue.trim();
   if (!trimmed) return void 0;
   if (trimmed.includes("BEGIN ")) return trimmed;
-  const candidate = import_path26.default.isAbsolute(trimmed) ? trimmed : import_path26.default.resolve(rootDir, trimmed);
-  if (!import_fs24.default.existsSync(candidate)) return void 0;
-  return import_fs24.default.readFileSync(candidate);
+  const candidate = import_path27.default.isAbsolute(trimmed) ? trimmed : import_path27.default.resolve(rootDir, trimmed);
+  if (!import_fs25.default.existsSync(candidate)) return void 0;
+  return import_fs25.default.readFileSync(candidate);
 }
 function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
   if (!httpsConfig) return null;
@@ -15858,11 +16402,11 @@ function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
       };
     }
   }
-  const certDir = import_path26.default.join(ionifyDir, "certs");
-  const keyPath = import_path26.default.join(certDir, "dev-server.key");
-  const certPath = import_path26.default.join(certDir, "dev-server.crt");
-  if (!import_fs24.default.existsSync(keyPath) || !import_fs24.default.existsSync(certPath)) {
-    import_fs24.default.mkdirSync(certDir, { recursive: true });
+  const certDir = import_path27.default.join(ionifyDir, "certs");
+  const keyPath = import_path27.default.join(certDir, "dev-server.key");
+  const certPath = import_path27.default.join(certDir, "dev-server.crt");
+  if (!import_fs25.default.existsSync(keyPath) || !import_fs25.default.existsSync(certPath)) {
+    import_fs25.default.mkdirSync(certDir, { recursive: true });
     const generated = import_selfsigned.default.generate(
       [
         { name: "commonName", value: "localhost" },
@@ -15884,16 +16428,16 @@ function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
         ]
       }
     );
-    import_fs24.default.writeFileSync(keyPath, generated.private, "utf8");
-    import_fs24.default.writeFileSync(certPath, generated.cert, "utf8");
+    import_fs25.default.writeFileSync(keyPath, generated.private, "utf8");
+    import_fs25.default.writeFileSync(certPath, generated.cert, "utf8");
   }
   return {
-    key: import_fs24.default.readFileSync(keyPath),
-    cert: import_fs24.default.readFileSync(certPath)
+    key: import_fs25.default.readFileSync(keyPath),
+    cert: import_fs25.default.readFileSync(certPath)
   };
 }
 function guessContentType(filePath) {
-  const ext = import_path26.default.extname(filePath);
+  const ext = import_path27.default.extname(filePath);
   if (ext === ".html") return "text/html; charset=utf-8";
   if (isCssLikeExt(ext)) return "text/css; charset=utf-8";
   if (ext === ".json") return "application/json; charset=utf-8";
@@ -15934,16 +16478,16 @@ function selectPrecompressedVariant(req, baseFilePath) {
   const enc = value.toLowerCase();
   if (enc.includes("br")) {
     const brPath = `${baseFilePath}.br`;
-    if (import_fs24.default.existsSync(brPath)) return { filePath: brPath, encoding: "br" };
+    if (import_fs25.default.existsSync(brPath)) return { filePath: brPath, encoding: "br" };
   }
   if (enc.includes("gzip")) {
     const gzPath = `${baseFilePath}.gz`;
-    if (import_fs24.default.existsSync(gzPath)) return { filePath: gzPath, encoding: "gzip" };
+    if (import_fs25.default.existsSync(gzPath)) return { filePath: gzPath, encoding: "gzip" };
   }
   return null;
 }
 function sendPrecompressedFile(req, res, status, contentType, variant, opts) {
-  const stat = import_fs24.default.statSync(variant.filePath);
+  const stat = import_fs25.default.statSync(variant.filePath);
   const etag = weakEtagFromStat(opts.etagPrefix, stat);
   res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", opts.cacheControl);
@@ -15956,7 +16500,7 @@ function sendPrecompressedFile(req, res, status, contentType, variant, opts) {
     return;
   }
   res.statusCode = status;
-  res.end(import_fs24.default.readFileSync(variant.filePath));
+  res.end(import_fs25.default.readFileSync(variant.filePath));
 }
 function looksLikeIonifyCssJsModule(body) {
   const head = body.subarray(0, 96).toString("utf8");
@@ -15966,9 +16510,9 @@ function computeDepsStampHash(depsAbs) {
   if (!depsAbs.length) return "0";
   const entries = [];
   for (const dep of depsAbs) {
-    const abs = import_path26.default.resolve(dep);
+    const abs = import_path27.default.resolve(dep);
     try {
-      const stat = import_fs24.default.statSync(abs);
+      const stat = import_fs25.default.statSync(abs);
       entries.push(`${abs}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
     } catch {
       entries.push(`${abs}:missing`);
@@ -16001,10 +16545,10 @@ function sendBuffer(req, res, status, contentType, body, opts) {
   res.end(body);
 }
 function readProjectPackageJson2(rootDir) {
-  const pkgPath = import_path26.default.join(rootDir, "package.json");
-  if (!import_fs24.default.existsSync(pkgPath)) return null;
+  const pkgPath = import_path27.default.join(rootDir, "package.json");
+  if (!import_fs25.default.existsSync(pkgPath)) return null;
   try {
-    return JSON.parse(import_fs24.default.readFileSync(pkgPath, "utf8"));
+    return JSON.parse(import_fs25.default.readFileSync(pkgPath, "utf8"));
   } catch {
     return null;
   }
@@ -16039,7 +16583,7 @@ function detectVendorSpecifiers(pkgJson) {
 function computeSubpathForDep2(fsPath, pkg) {
   const computed = computeSubpathFromEntryPath(fsPath);
   if (computed) return computed;
-  if (import_fs24.default.existsSync(fsPath)) return null;
+  if (import_fs25.default.existsSync(fsPath)) return null;
   const raw = pkg?.subpath;
   if (typeof raw === "string") {
     const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
@@ -16151,11 +16695,11 @@ function buildRouteHintClientKey(req) {
   return key.length > 2 ? key : null;
 }
 function pruneDepsCache(ionifyDir, depsHash) {
-  const depsRoot = import_path26.default.join(ionifyDir, "deps");
-  if (!import_fs24.default.existsSync(depsRoot)) return;
-  const entries = import_fs24.default.readdirSync(depsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
-    const fullPath = import_path26.default.join(depsRoot, entry.name);
-    const stat = import_fs24.default.statSync(fullPath);
+  const depsRoot = import_path27.default.join(ionifyDir, "deps");
+  if (!import_fs25.default.existsSync(depsRoot)) return;
+  const entries = import_fs25.default.readdirSync(depsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+    const fullPath = import_path27.default.join(depsRoot, entry.name);
+    const stat = import_fs25.default.statSync(fullPath);
     return { name: entry.name, path: fullPath, mtimeMs: stat.mtimeMs };
   }).sort((a, b) => b.mtimeMs - a.mtimeMs);
   const keep = /* @__PURE__ */ new Set();
@@ -16165,15 +16709,15 @@ function pruneDepsCache(ionifyDir, depsHash) {
   }
   for (const entry of entries) {
     if (!keep.has(entry.name)) {
-      import_fs24.default.rmSync(entry.path, { recursive: true, force: true });
+      import_fs25.default.rmSync(entry.path, { recursive: true, force: true });
     }
   }
 }
 function loadDepsManifestIndex(depsRoot) {
-  const manifestPath = import_path26.default.join(depsRoot, "manifest.json");
-  if (!import_fs24.default.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
+  const manifestPath = import_path27.default.join(depsRoot, "manifest.json");
+  if (!import_fs25.default.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
   try {
-    const raw = import_fs24.default.readFileSync(manifestPath, "utf8");
+    const raw = import_fs25.default.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
     const entries = parsed?.entries ?? {};
     const map = /* @__PURE__ */ new Map();
@@ -16208,16 +16752,16 @@ function loadDepsManifestIndex(depsRoot) {
   }
 }
 function readJsonFile4(filePath) {
-  if (!import_fs24.default.existsSync(filePath)) return null;
+  if (!import_fs25.default.existsSync(filePath)) return null;
   try {
-    return JSON.parse(import_fs24.default.readFileSync(filePath, "utf8"));
+    return JSON.parse(import_fs25.default.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
 }
 function writeJsonFile4(filePath, data) {
   try {
-    import_fs24.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+    import_fs25.default.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
   } catch {
   }
 }
@@ -16345,7 +16889,7 @@ function buildVendorPackPlan(options) {
     if (seen.has(candidate.fileName)) continue;
     const sizeBytes = candidate.signals.sizeBytes ?? 0;
     if (totalBytes + sizeBytes > maxBytes) continue;
-    if (!candidate.entryPath || !import_fs24.default.existsSync(candidate.entryPath)) continue;
+    if (!candidate.entryPath || !import_fs25.default.existsSync(candidate.entryPath)) continue;
     seen.add(candidate.fileName);
     totalBytes += sizeBytes;
     selected.push(candidate);
@@ -16379,7 +16923,7 @@ async function startDevServer({
   process.env.MODE = envMode;
   const userConfig = await loadIonifyConfig(process.cwd(), envMode);
   const configuredExternalSpecifiers = collectConfiguredExternalSpecifiers(userConfig);
-  const projectRootOverride = userConfig?.root ? import_path26.default.resolve(userConfig.root) : null;
+  const projectRootOverride = userConfig?.root ? import_path27.default.resolve(userConfig.root) : null;
   const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
     projectRootOverride
   });
@@ -16387,7 +16931,7 @@ async function startDevServer({
   const ionifyDir = workspace.ionifyDir;
   const allowedRoots = workspace.allowedRoots;
   const publicDirAbs = resolvePublicDir(rootDir, userConfig?.publicDir);
-  import_fs24.default.mkdirSync(ionifyDir, { recursive: true });
+  import_fs25.default.mkdirSync(ionifyDir, { recursive: true });
   process.env.IONIFY_PROJECT_ROOT = rootDir;
   process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
   process.env.IONIFY_STATE_DIR = ionifyDir;
@@ -16417,7 +16961,7 @@ async function startDevServer({
     combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
   });
   const resolvedEntries = userConfig?.entry ? (Array.isArray(userConfig.entry) ? userConfig.entry : [userConfig.entry]).map(
-    (entry) => entry.startsWith("/") ? import_path26.default.join(rootDir, entry) : import_path26.default.resolve(rootDir, entry)
+    (entry) => entry.startsWith("/") ? import_path27.default.join(rootDir, entry) : import_path27.default.resolve(rootDir, entry)
   ) : void 0;
   const pluginNames = Array.isArray(userConfig?.plugins) ? userConfig.plugins.map((p) => typeof p === "string" ? p : p?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
   const rawVersionInputs = {
@@ -16444,7 +16988,7 @@ async function startDevServer({
   const configHash = computeGraphVersion(rawVersionInputs);
   logInfo(`[Dev] Version hash: ${configHash}`);
   process.env.IONIFY_CONFIG_HASH = configHash;
-  const casRoot = import_path26.default.join(ionifyDir, "cas");
+  const casRoot = import_path27.default.join(ionifyDir, "cas");
   const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
   if (lockfile) {
     const countLabel = lockfile.packageCount === null ? "unknown" : lockfile.packageCount;
@@ -16465,22 +17009,22 @@ async function startDevServer({
   });
   logInfo(`[deps] depsHash: ${depsHash} from ${lockfile?.name ?? "config"}`);
   process.env.IONIFY_DEPS_HASH = depsHash;
-  const depsRoot = import_path26.default.join(ionifyDir, "deps", depsHash);
-  import_fs24.default.mkdirSync(depsRoot, { recursive: true });
+  const depsRoot = import_path27.default.join(ionifyDir, "deps", depsHash);
+  import_fs25.default.mkdirSync(depsRoot, { recursive: true });
   pruneDepsCache(ionifyDir, depsHash);
   const DEV_STABLE_DEBOUNCE_MS = 5e3;
   let devStableTimer = null;
   let devStableServedCount = 0;
   const writeDevStableSentinel = () => {
     try {
-      const sentinelPath = import_path26.default.join(depsRoot, ".dev-stable");
+      const sentinelPath = import_path27.default.join(depsRoot, ".dev-stable");
       const payload = {
         ts: (/* @__PURE__ */ new Date()).toISOString(),
         depsHash,
         nodeEnv: depsNodeEnv,
         servedDepCount: devStableServedCount
       };
-      import_fs24.default.writeFileSync(sentinelPath, JSON.stringify(payload));
+      import_fs25.default.writeFileSync(sentinelPath, JSON.stringify(payload));
     } catch {
     }
   };
@@ -16507,7 +17051,7 @@ async function startDevServer({
   };
   const realpathOrSelf3 = (filePath) => {
     try {
-      return import_fs24.default.realpathSync(filePath);
+      return import_fs25.default.realpathSync(filePath);
     } catch {
       return filePath;
     }
@@ -16524,7 +17068,7 @@ async function startDevServer({
     const seen = /* @__PURE__ */ new Set();
     for (const depAbs of depAbsPaths) {
       if (typeof depAbs !== "string" || depAbs.length === 0) continue;
-      if (!depAbs.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) continue;
+      if (!depAbs.includes(`${import_path27.default.sep}node_modules${import_path27.default.sep}`)) continue;
       const canonical = realpathOrSelf3(depAbs);
       if (seen.has(canonical)) continue;
       seen.add(canonical);
@@ -16536,7 +17080,7 @@ async function startDevServer({
       let hash = entry?.artifactHash ?? null;
       if (!hash) {
         try {
-          hash = import_crypto8.default.createHash("sha256").update(import_fs24.default.readFileSync(canonical)).digest("hex");
+          hash = import_crypto8.default.createHash("sha256").update(import_fs25.default.readFileSync(canonical)).digest("hex");
         } catch {
           continue;
         }
@@ -16551,20 +17095,20 @@ async function startDevServer({
     let processed = 0;
     while (queue.length && processed < 2e3) {
       const absPath = queue.shift();
-      if (!import_path26.default.isAbsolute(absPath)) continue;
+      if (!import_path27.default.isAbsolute(absPath)) continue;
       const canonical = realpathOrSelf3(absPath);
       if (seen.has(canonical)) continue;
       seen.add(canonical);
-      if (canonical.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) {
+      if (canonical.includes(`${import_path27.default.sep}node_modules${import_path27.default.sep}`)) {
         recordDepLeafGraphNodes([canonical]);
         continue;
       }
       if (graph.getNode(canonical)) continue;
-      if (!import_fs24.default.existsSync(canonical)) continue;
-      const extName = import_path26.default.extname(canonical).toLowerCase();
+      if (!import_fs25.default.existsSync(canonical)) continue;
+      const extName = import_path27.default.extname(canonical).toLowerCase();
       if (isAssetExt(extName)) {
         try {
-          const assetHash = import_crypto8.default.createHash("sha256").update(import_fs24.default.readFileSync(canonical)).digest("hex");
+          const assetHash = import_crypto8.default.createHash("sha256").update(import_fs25.default.readFileSync(canonical)).digest("hex");
           graph.recordFile(canonical, assetHash, [], [], "asset");
         } catch {
         }
@@ -16573,7 +17117,7 @@ async function startDevServer({
       if (!graphCompletionExts.has(extName)) continue;
       let code;
       try {
-        code = import_fs24.default.readFileSync(canonical, "utf8");
+        code = import_fs25.default.readFileSync(canonical, "utf8");
       } catch {
         continue;
       }
@@ -16610,7 +17154,7 @@ async function startDevServer({
   const pendingGraphCompletionSeeds = /* @__PURE__ */ new Set();
   const enqueueLocalGraphCompletion = (seedAbsPaths) => {
     for (const depAbs of seedAbsPaths) {
-      if (typeof depAbs !== "string" || depAbs.length === 0 || !import_path26.default.isAbsolute(depAbs)) continue;
+      if (typeof depAbs !== "string" || depAbs.length === 0 || !import_path27.default.isAbsolute(depAbs)) continue;
       pendingGraphCompletionSeeds.add(depAbs);
     }
   };
@@ -16635,8 +17179,8 @@ async function startDevServer({
     groupMap.set(entry.fileName, entry);
     return !existed;
   };
-  const depUsageStatePath = import_path26.default.join(depsRoot, "deps-usage.v2.json");
-  const legacyDepUsageStatePath = import_path26.default.join(depsRoot, "deps-usage.v1.json");
+  const depUsageStatePath = import_path27.default.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsageStatePath = import_path27.default.join(depsRoot, "deps-usage.v1.json");
   const directDepUsageFileNames = /* @__PURE__ */ new Set();
   const setDirectDepUsageFileNames = (index) => {
     directDepUsageFileNames.clear();
@@ -16769,8 +17313,8 @@ async function startDevServer({
   const vendorPacksMode = vendorPacksForce ? "force" : "auto";
   const vendorPackMaxBytes = typeof userConfig?.optimizeDeps?.vendorPackMaxBytes === "number" && userConfig.optimizeDeps.vendorPackMaxBytes > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxBytes) : 600 * 1024;
   const vendorPackMaxMembers = typeof userConfig?.optimizeDeps?.vendorPackMaxMembers === "number" && userConfig.optimizeDeps.vendorPackMaxMembers > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxMembers) : 25;
-  const vendorPackPlanPath = import_path26.default.join(depsRoot, "vendor-pack.app.json");
-  const vendorPackRequestsPath = import_path26.default.join(depsRoot, "deps-requests.json");
+  const vendorPackPlanPath = import_path27.default.join(depsRoot, "vendor-pack.app.json");
+  const vendorPackRequestsPath = import_path27.default.join(depsRoot, "deps-requests.json");
   const vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath) : /* @__PURE__ */ new Map();
   const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile4(vendorPackPlanPath) : null;
   const vendorPackPlanFromDiskValid = vendorPacksForce && vendorPackPlanFromDisk && typeof vendorPackPlanFromDisk?.depsHash === "string" && vendorPackPlanFromDisk.depsHash === depsHash && Array.isArray(vendorPackPlanFromDisk?.members) ? vendorPackPlanFromDisk : null;
@@ -16797,7 +17341,7 @@ async function startDevServer({
   }
   for (const member of vendorPackMembers) {
     if (!member?.fileName || !member?.entryPath) continue;
-    if (!import_fs24.default.existsSync(member.entryPath)) continue;
+    if (!import_fs25.default.existsSync(member.entryPath)) continue;
     if (vendorPackFileNameSet.has(member.fileName)) continue;
     vendorPackFileNameSet.add(member.fileName);
     vendorPackEntries.push({
@@ -16852,10 +17396,10 @@ async function startDevServer({
     const vendorKey = getCacheKey(
       `vendor:v1:${vendorDeps.map((d) => `${d.specifier}:${d.fileName}`).sort().join("|")}`
     );
-    const filePath = import_path26.default.join(depsRoot, vendorPackFileName);
-    if (import_fs24.default.existsSync(filePath)) {
+    const filePath = import_path27.default.join(depsRoot, vendorPackFileName);
+    if (import_fs25.default.existsSync(filePath)) {
       try {
-        const head = import_fs24.default.readFileSync(filePath, "utf8").slice(0, 256);
+        const head = import_fs25.default.readFileSync(filePath, "utf8").slice(0, 256);
         if (head.includes(`${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}`)) return;
       } catch {
       }
@@ -16867,11 +17411,11 @@ async function startDevServer({
 ${imports}
 `;
     try {
-      import_fs24.default.writeFileSync(filePath, body, "utf8");
+      import_fs25.default.writeFileSync(filePath, body, "utf8");
     } catch {
     }
   };
-  const vendorPackV2IndexPath = import_path26.default.join(depsRoot, "vendor-pack.v2.index.json");
+  const vendorPackV2IndexPath = import_path27.default.join(depsRoot, "vendor-pack.v2.index.json");
   const vendorPackV2AllowedPrefix = vendorPacksManual ? "vendor-pack.manual." : vendorPacksProgressive ? "vendor-pack.feature." : null;
   const vendorPackV2 = new VendorPackV2IndexManager({
     depsRoot,
@@ -16881,7 +17425,7 @@ ${imports}
     log: { info: logInfo, warn: logWarn }
   });
   vendorPackV2.loadFromDisk();
-  const routeHintStatePath = import_path26.default.join(ionifyDir, "route-hints.v1.json");
+  const routeHintStatePath = import_path27.default.join(ionifyDir, "route-hints.v1.json");
   const routeHints = new RouteHintIndex(routeHintStatePath);
   const startupPolicyRaw = userConfig?.startupPolicy;
   const startupPolicyObject = startupPolicyRaw && typeof startupPolicyRaw === "object" && !Array.isArray(startupPolicyRaw) ? startupPolicyRaw : {};
@@ -16900,8 +17444,8 @@ ${imports}
     maxEagerSourceBytes: typeof startupPolicyObject.maxEagerSourceBytes === "number" ? startupPolicyObject.maxEagerSourceBytes : 128 * 1024,
     maxEagerTotalBytes: typeof startupPolicyObject.maxEagerTotalBytes === "number" ? startupPolicyObject.maxEagerTotalBytes : 384 * 1024
   };
-  const startupObservationStatePath = import_path26.default.join(ionifyDir, "startup-observations.v1.json");
-  const startupPolicyStatePath = import_path26.default.join(ionifyDir, "startup-policy.v1.json");
+  const startupObservationStatePath = import_path27.default.join(ionifyDir, "startup-observations.v1.json");
+  const startupPolicyStatePath = import_path27.default.join(ionifyDir, "startup-policy.v1.json");
   const startupObservations = new StartupObservationIndex(startupObservationStatePath);
   let startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
   const startupInstrumentJavaScriptBuffer = (buffer) => instrumentJavaScriptBuffer(buffer, startupPolicyObserveEvaluations);
@@ -16910,10 +17454,10 @@ ${imports}
   const resolveBootstrapEntryFile = (rawEntryPath) => {
     const raw = String(rawEntryPath || "").trim();
     if (!raw) return null;
-    const candidates = import_path26.default.isAbsolute(raw) ? [raw, import_path26.default.join(rootDir, raw.replace(/^\/+/, ""))] : [import_path26.default.resolve(rootDir, raw)];
+    const candidates = import_path27.default.isAbsolute(raw) ? [raw, import_path27.default.join(rootDir, raw.replace(/^\/+/, ""))] : [import_path27.default.resolve(rootDir, raw)];
     for (const candidate of candidates) {
       if (!candidate) continue;
-      if (import_fs24.default.existsSync(candidate)) return candidate;
+      if (import_fs25.default.existsSync(candidate)) return candidate;
     }
     return null;
   };
@@ -16923,12 +17467,12 @@ ${imports}
     }
     const entries = [];
     for (const candidate of [
-      import_path26.default.join(rootDir, "src", "main.tsx"),
-      import_path26.default.join(rootDir, "src", "main.ts"),
-      import_path26.default.join(rootDir, "src", "index.tsx"),
-      import_path26.default.join(rootDir, "src", "index.ts")
+      import_path27.default.join(rootDir, "src", "main.tsx"),
+      import_path27.default.join(rootDir, "src", "main.ts"),
+      import_path27.default.join(rootDir, "src", "index.tsx"),
+      import_path27.default.join(rootDir, "src", "index.ts")
     ]) {
-      if (import_fs24.default.existsSync(candidate)) entries.push(candidate);
+      if (import_fs25.default.existsSync(candidate)) entries.push(candidate);
     }
     return entries;
   })();
@@ -16937,7 +17481,7 @@ ${imports}
     const fileName = hintUrl.slice(DEPS_PREFIX2.length);
     const fileNames = resolveAuthoritativeDepPreloadFiles({
       fileName,
-      fileExists: (candidateFileName) => import_fs24.default.existsSync(import_path26.default.join(depsRoot, candidateFileName)),
+      fileExists: (candidateFileName) => import_fs25.default.existsSync(import_path27.default.join(depsRoot, candidateFileName)),
       fileNameToPackFile: vendorPackV2.fileNameToPackFile,
       packFileToChunkFiles: vendorPackV2.packFileToChunkFiles,
       packFileToSharedFile: vendorPackV2.packFileToSharedFile,
@@ -16960,10 +17504,10 @@ ${imports}
       allowedRoots,
       workspaceRoot: workspace.workspaceRoot
     });
-    if (!resolved || !import_fs24.default.existsSync(resolved)) return false;
-    const stat = import_fs24.default.statSync(resolved);
+    if (!resolved || !import_fs25.default.existsSync(resolved)) return false;
+    const stat = import_fs25.default.statSync(resolved);
     if (stat.isDirectory()) return false;
-    const ext = import_path26.default.extname(resolved).toLowerCase();
+    const ext = import_path27.default.extname(resolved).toLowerCase();
     return ext !== ".html" && !isAssetExt(ext);
   };
   const expandRouteHintPreloadUrls = (hintUrl, kind) => {
@@ -16975,10 +17519,10 @@ ${imports}
     const parsed = import_url6.default.parse(assetUrl);
     const pathname = parsed.pathname || "";
     if (!pathname) return null;
-    const candidatePath = kind === "dep" && pathname.startsWith(DEPS_PREFIX2) ? import_path26.default.join(depsRoot, pathname.slice(DEPS_PREFIX2.length)) : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
-    if (!candidatePath || !import_fs24.default.existsSync(candidatePath)) return null;
+    const candidatePath = kind === "dep" && pathname.startsWith(DEPS_PREFIX2) ? import_path27.default.join(depsRoot, pathname.slice(DEPS_PREFIX2.length)) : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
+    if (!candidatePath || !import_fs25.default.existsSync(candidatePath)) return null;
     try {
-      const stat = import_fs24.default.statSync(candidatePath);
+      const stat = import_fs25.default.statSync(candidatePath);
       return stat.isFile() ? stat.size : null;
     } catch {
       return null;
@@ -17037,33 +17581,33 @@ ${imports}
     const maxSourceFiles = 32;
     while (queue.length > 0 && visited.size < maxSourceFiles) {
       const nextPath = queue.shift();
-      if (!nextPath || !import_fs24.default.existsSync(nextPath)) continue;
-      const canonicalPath = (() => {
+      if (!nextPath || !import_fs25.default.existsSync(nextPath)) continue;
+      const canonicalPath2 = (() => {
         try {
-          return import_fs24.default.realpathSync(nextPath);
+          return import_fs25.default.realpathSync(nextPath);
         } catch {
           return nextPath;
         }
       })();
-      if (visited.has(canonicalPath)) continue;
-      visited.add(canonicalPath);
-      if (!bootstrapSourceExts.has(import_path26.default.extname(canonicalPath).toLowerCase())) continue;
+      if (visited.has(canonicalPath2)) continue;
+      visited.add(canonicalPath2);
+      if (!bootstrapSourceExts.has(import_path27.default.extname(canonicalPath2).toLowerCase())) continue;
       let code = "";
       try {
-        code = import_fs24.default.readFileSync(canonicalPath, "utf8");
+        code = import_fs25.default.readFileSync(canonicalPath2, "utf8");
       } catch {
         continue;
       }
       let specs = [];
       if (native?.parseModuleIr) {
         try {
-          const ir = native.parseModuleIr(canonicalPath, code);
+          const ir = native.parseModuleIr(canonicalPath2, code);
           specs = Array.isArray(ir?.dependencies) ? ir.dependencies.map((dep) => dep.specifier).filter((value) => typeof value === "string" && value.length > 0) : [];
         } catch {
-          specs = extractImports(code, canonicalPath);
+          specs = extractImports(code, canonicalPath2);
         }
       } else {
-        specs = extractImports(code, canonicalPath);
+        specs = extractImports(code, canonicalPath2);
       }
       for (const spec of specs) {
         const packageRoot = extractBarePackageRoot(spec);
@@ -17071,14 +17615,14 @@ ${imports}
       }
       const { localDeps, externalDeps } = classifyImportSpecifiersForGraph(
         specs,
-        canonicalPath,
+        canonicalPath2,
         configuredExternalSpecifiers
       );
       for (const localDep of localDeps) {
-        if (!import_path26.default.isAbsolute(localDep)) continue;
-        if (!import_fs24.default.existsSync(localDep)) continue;
-        if (localDep.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) continue;
-        if (!bootstrapSourceExts.has(import_path26.default.extname(localDep).toLowerCase())) continue;
+        if (!import_path27.default.isAbsolute(localDep)) continue;
+        if (!import_fs25.default.existsSync(localDep)) continue;
+        if (localDep.includes(`${import_path27.default.sep}node_modules${import_path27.default.sep}`)) continue;
+        if (!bootstrapSourceExts.has(import_path27.default.extname(localDep).toLowerCase())) continue;
         queue.push(localDep);
       }
       for (const externalDep of externalDeps) {
@@ -17133,14 +17677,14 @@ ${imports}
       `[deps] vendorPacks:auto enabled but feature packs are unavailable (${reasons.join(", ")}). Falling back to per-entry deps.`
     );
   }
-  const featurePackIndexPath = import_path26.default.join(depsRoot, "vendor-pack.feature.index.json");
-  const featurePackStatePathFor = (group) => import_path26.default.join(depsRoot, `vendor-pack.feature.${group}.json`);
-  const featurePackSlimStatePathFor = (group) => import_path26.default.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
+  const featurePackIndexPath = import_path27.default.join(depsRoot, "vendor-pack.feature.index.json");
+  const featurePackStatePathFor = (group) => import_path27.default.join(depsRoot, `vendor-pack.feature.${group}.json`);
+  const featurePackSlimStatePathFor = (group) => import_path27.default.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
   const discoverFeaturePackGroupsFromDisk = () => {
     if (!featurePacksEnabled) return [];
     let names = [];
     try {
-      names = import_fs24.default.readdirSync(depsRoot);
+      names = import_fs25.default.readdirSync(depsRoot);
     } catch {
       return [];
     }
@@ -17172,9 +17716,9 @@ ${imports}
       if (typeof fileName !== "string" || typeof chunkGroupId !== "string") continue;
       if (!fileName.endsWith(".js")) continue;
       rawCount += 1;
-      const shared = import_path26.default.join(depsRoot, `shared.${chunkGroupId}.js`);
-      const wrapper = import_path26.default.join(depsRoot, fileName);
-      if (!import_fs24.default.existsSync(shared) || !import_fs24.default.existsSync(wrapper)) continue;
+      const shared = import_path27.default.join(depsRoot, `shared.${chunkGroupId}.js`);
+      const wrapper = import_path27.default.join(depsRoot, fileName);
+      if (!import_fs25.default.existsSync(shared) || !import_fs25.default.existsSync(wrapper)) continue;
       featurePackFileNameToChunkGroup.set(fileName, chunkGroupId);
     }
     if (rawCount > 0 && featurePackFileNameToChunkGroup.size !== rawCount) {
@@ -17222,8 +17766,8 @@ ${imports}
     manualObserved.set(def.group, /* @__PURE__ */ new Map());
   }
   const manualHasCore = manualObserved.has("core");
-  const manualPackStatePathFor = (group) => import_path26.default.join(depsRoot, `vendor-pack.manual.${group}.json`);
-  const manualPackSlimStatePathFor = (group) => import_path26.default.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
+  const manualPackStatePathFor = (group) => import_path27.default.join(depsRoot, `vendor-pack.manual.${group}.json`);
+  const manualPackSlimStatePathFor = (group) => import_path27.default.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
   const updateManualState = (group, next) => {
     const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
     manualState.set(group, stamped);
@@ -17248,7 +17792,7 @@ ${imports}
     for (const entry of entries) {
       if (selected.length >= vendorPackMaxMembers) break;
       if (seen.has(entry.fileName)) continue;
-      if (!entry.entryPath || !import_fs24.default.existsSync(entry.entryPath)) continue;
+      if (!entry.entryPath || !import_fs25.default.existsSync(entry.entryPath)) continue;
       if (isCoreSingletonDepFileName(entry.fileName)) continue;
       if (manualHasCore && group !== "core" && vendorDepFileNames.has(entry.fileName)) continue;
       const sizeBytes = depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0;
@@ -17463,14 +18007,14 @@ ${imports}
               if (!hasAnyUsage) continue;
               const existingSlim = manualSlimState.get(next);
               if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
-                const sharedPath = import_path26.default.join(depsRoot, existingSlim.sharedFileName);
+                const sharedPath = import_path27.default.join(depsRoot, existingSlim.sharedFileName);
                 const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
                 const baseSet = new Set(baseEntries.map((e) => e.fileName));
-                const inputsMatch = import_fs24.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                const inputsMatch = import_fs25.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
                   const entry = byBase.get(base.fileName);
                   if (!entry) return false;
                   if (entry.entryPath !== base.entryPath) return false;
-                  if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, entry.wrapperFileName))) return false;
+                  if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, entry.wrapperFileName))) return false;
                   const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
                   const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
                   if (expected.length !== actual.length) return false;
@@ -17526,8 +18070,8 @@ ${imports}
                 broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
                 const elapsed = Date.now() - start;
                 const sharedFileName = `shared.${groupId}.js`;
-                const sharedOut = import_path26.default.join(depsRoot, sharedFileName);
-                if (!import_fs24.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const sharedOut = import_path27.default.join(depsRoot, sharedFileName);
+                if (!import_fs25.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
                 const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
                 const outByEntryPath = /* @__PURE__ */ new Map();
                 for (const item of resultsArr) {
@@ -17536,25 +18080,25 @@ ${imports}
                   if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
                   const canonicalEntryPath = (() => {
                     try {
-                      return import_fs24.default.realpathSync(entryPath);
+                      return import_fs25.default.realpathSync(entryPath);
                     } catch {
                       return entryPath;
                     }
                   })();
-                  outByEntryPath.set(canonicalEntryPath, import_path26.default.basename(outPath));
+                  outByEntryPath.set(canonicalEntryPath, import_path27.default.basename(outPath));
                 }
                 const slimMembers = [];
                 const slimEntries = [];
                 for (const base of baseEntries) {
                   const canonicalBaseEntryPath = (() => {
                     try {
-                      return import_fs24.default.realpathSync(base.entryPath);
+                      return import_fs25.default.realpathSync(base.entryPath);
                     } catch {
                       return base.entryPath;
                     }
                   })();
                   const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
-                  if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, wrapperFileName))) {
+                  if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, wrapperFileName))) {
                     throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
                   }
                   slimMembers.push({
@@ -17588,9 +18132,9 @@ ${imports}
                   sharedFileName,
                   entries: slimEntries
                 });
-                const fullSharedPath = import_path26.default.join(depsRoot, baseState.sharedFileName);
-                const fullBytes = import_fs24.default.existsSync(fullSharedPath) ? import_fs24.default.statSync(fullSharedPath).size : 0;
-                const slimBytes = import_fs24.default.existsSync(sharedOut) ? import_fs24.default.statSync(sharedOut).size : 0;
+                const fullSharedPath = import_path27.default.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = import_fs25.default.existsSync(fullSharedPath) ? import_fs25.default.statSync(fullSharedPath).size : 0;
+                const slimBytes = import_fs25.default.existsSync(sharedOut) ? import_fs25.default.statSync(sharedOut).size : 0;
                 const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
                 const savedLabel = saved > 0 ? ` (-${formatByteDelta2(saved)})` : "";
                 if (process.env.DEBUG_DEPS) {
@@ -17644,8 +18188,8 @@ ${imports}
           if (entries.length === 0) continue;
           const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
           const sharedFileName = `shared.${chunkGroupId}.js`;
-          const sharedPath = import_path26.default.join(depsRoot, sharedFileName);
-          const alreadyReady = import_fs24.default.existsSync(sharedPath) && entries.every((e) => import_fs24.default.existsSync(import_path26.default.join(depsRoot, e.fileName)));
+          const sharedPath = import_path27.default.join(depsRoot, sharedFileName);
+          const alreadyReady = import_fs25.default.existsSync(sharedPath) && entries.every((e) => import_fs25.default.existsSync(import_path27.default.join(depsRoot, e.fileName)));
           if (alreadyReady) {
             updateManualState(next, {
               version: 1,
@@ -17692,8 +18236,8 @@ ${imports}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const elapsed = Date.now() - start;
-            const sharedOut = import_path26.default.join(depsRoot, `shared.${groupId}.js`);
-            const ok = import_fs24.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs24.default.existsSync(import_path26.default.join(depsRoot, entry.fileName)));
+            const sharedOut = import_path27.default.join(depsRoot, `shared.${groupId}.js`);
+            const ok = import_fs25.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs25.default.existsSync(import_path27.default.join(depsRoot, entry.fileName)));
             if (!ok) {
               throw new Error("Manual pack optimizer did not produce expected outputs");
             }
@@ -17754,7 +18298,7 @@ ${imports}
   const recordManualCandidate = (entry) => {
     if (!manualPacksEnabled) return;
     if (!entry.fileName || !entry.entryPath) return;
-    if (!import_fs24.default.existsSync(entry.entryPath)) return;
+    if (!import_fs25.default.existsSync(entry.entryPath)) return;
     if (isCoreSingletonDepFileName(entry.fileName)) return;
     const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
     const group = classifyManualPackGroup2(entry.packageName, entry.subpath);
@@ -17827,7 +18371,7 @@ ${imports}
     pruneFeaturePackRoutes(group);
     for (const filePath of featureStateFilesFor(group)) {
       try {
-        import_fs24.default.unlinkSync(filePath);
+        import_fs25.default.unlinkSync(filePath);
       } catch {
       }
     }
@@ -17963,7 +18507,7 @@ ${imports}
   const featureEntriesSignature = (entries) => entries.map((entry) => entry.fileName).filter(Boolean).slice().sort().join("|");
   const featurePackSourceExts = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
   const plannedFeatureGroups = /* @__PURE__ */ new Map();
-  const featurePlanReportPath = import_path26.default.join(depsRoot, "vendor-pack.feature.plan-report.json");
+  const featurePlanReportPath = import_path27.default.join(depsRoot, "vendor-pack.feature.plan-report.json");
   const computeFeatureCandidates = () => {
     const entries = reconcilePackEntries(Array.from(featureObserved.values()), canonicalFileNameForEntry);
     const candidates = [];
@@ -17971,8 +18515,8 @@ ${imports}
       routeHints.summarizeAssets("dep").filter((summary) => summary.url.startsWith(DEPS_PREFIX2) && summary.url.endsWith(".js")).map((summary) => [summary.url.slice(DEPS_PREFIX2.length), summary])
     );
     for (const entry of entries) {
-      if (!entry.entryPath || !import_fs24.default.existsSync(entry.entryPath)) continue;
-      if (!featurePackSourceExts.has(import_path26.default.extname(entry.entryPath).toLowerCase())) continue;
+      if (!entry.entryPath || !import_fs25.default.existsSync(entry.entryPath)) continue;
+      if (!featurePackSourceExts.has(import_path27.default.extname(entry.entryPath).toLowerCase())) continue;
       if (vendorDepFileNames.has(entry.fileName) || isCoreSingletonDepFileName(entry.fileName)) continue;
       const manifestEntry = depsManifestIndex.get(entry.fileName);
       const requestCount = getKnownDepRequestCount(entry.fileName);
@@ -18101,8 +18645,8 @@ ${imports}
           const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
           const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
           if (!activeState?.sharedFileName) return null;
-          const sharedPath = import_path26.default.join(depsRoot, activeState.sharedFileName);
-          const sharedBytes = import_fs24.default.existsSync(sharedPath) ? import_fs24.default.statSync(sharedPath).size : null;
+          const sharedPath = import_path27.default.join(depsRoot, activeState.sharedFileName);
+          const sharedBytes = import_fs25.default.existsSync(sharedPath) ? import_fs25.default.statSync(sharedPath).size : null;
           return {
             mode: activeState === slimState ? "slim" : "base",
             sharedFileName: activeState.sharedFileName,
@@ -18115,7 +18659,7 @@ ${imports}
           const baseState = featureLastReadyState.get(group);
           const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
           const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
-          const activeSharedBytes = activeState?.sharedFileName && import_fs24.default.existsSync(import_path26.default.join(depsRoot, activeState.sharedFileName)) ? import_fs24.default.statSync(import_path26.default.join(depsRoot, activeState.sharedFileName)).size : null;
+          const activeSharedBytes = activeState?.sharedFileName && import_fs25.default.existsSync(import_path27.default.join(depsRoot, activeState.sharedFileName)) ? import_fs25.default.statSync(import_path27.default.join(depsRoot, activeState.sharedFileName)).size : null;
           return analyzeFeaturePackSharedClosurePressure({
             entries,
             candidatesByFileName: pressureCandidatesByFileName,
@@ -18263,7 +18807,7 @@ ${imports}
           }
           if (shuttingDown) return;
           const cliEntry = process.argv[1];
-          if (!cliEntry || !import_fs24.default.existsSync(cliEntry)) {
+          if (!cliEntry || !import_fs25.default.existsSync(cliEntry)) {
             logWarn("[publish] Production publication skipped: CLI entry is not available for child handoff.");
             return;
           }
@@ -18376,14 +18920,14 @@ ${imports}
               if (usedByBase.size === 0) continue;
               const existingSlim = featureSlimState.get(next);
               if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
-                const sharedPath = import_path26.default.join(depsRoot, existingSlim.sharedFileName);
+                const sharedPath = import_path27.default.join(depsRoot, existingSlim.sharedFileName);
                 const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
                 const baseSet = new Set(baseEntries.map((e) => e.fileName));
-                const inputsMatch = import_fs24.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                const inputsMatch = import_fs25.default.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
                   const entry = byBase.get(base.fileName);
                   if (!entry) return false;
                   if (entry.entryPath !== base.entryPath) return false;
-                  if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, entry.wrapperFileName))) return false;
+                  if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, entry.wrapperFileName))) return false;
                   const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
                   const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
                   if (expected.length !== actual.length) return false;
@@ -18428,8 +18972,8 @@ ${imports}
                 broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
                 const elapsed = Date.now() - start;
                 const sharedFileName = `shared.${groupId}.js`;
-                const sharedOut = import_path26.default.join(depsRoot, sharedFileName);
-                if (!import_fs24.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const sharedOut = import_path27.default.join(depsRoot, sharedFileName);
+                if (!import_fs25.default.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
                 const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
                 const outByEntryPath = /* @__PURE__ */ new Map();
                 for (const item of resultsArr) {
@@ -18438,24 +18982,24 @@ ${imports}
                   if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
                   const canonicalEntryPath = (() => {
                     try {
-                      return import_fs24.default.realpathSync(entryPath);
+                      return import_fs25.default.realpathSync(entryPath);
                     } catch {
                       return entryPath;
                     }
                   })();
-                  outByEntryPath.set(canonicalEntryPath, import_path26.default.basename(outPath));
+                  outByEntryPath.set(canonicalEntryPath, import_path27.default.basename(outPath));
                 }
                 const slimEntries = [];
                 for (const base of baseEntries) {
                   const canonicalBaseEntryPath = (() => {
                     try {
-                      return import_fs24.default.realpathSync(base.entryPath);
+                      return import_fs25.default.realpathSync(base.entryPath);
                     } catch {
                       return base.entryPath;
                     }
                   })();
                   const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
-                  if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, wrapperFileName))) {
+                  if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, wrapperFileName))) {
                     throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
                   }
                   slimEntries.push({
@@ -18477,9 +19021,9 @@ ${imports}
                   sharedFileName,
                   entries: slimEntries
                 });
-                const fullSharedPath = import_path26.default.join(depsRoot, baseState.sharedFileName);
-                const fullBytes = import_fs24.default.existsSync(fullSharedPath) ? import_fs24.default.statSync(fullSharedPath).size : 0;
-                const slimBytes = import_fs24.default.existsSync(sharedOut) ? import_fs24.default.statSync(sharedOut).size : 0;
+                const fullSharedPath = import_path27.default.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = import_fs25.default.existsSync(fullSharedPath) ? import_fs25.default.statSync(fullSharedPath).size : 0;
+                const slimBytes = import_fs25.default.existsSync(sharedOut) ? import_fs25.default.statSync(sharedOut).size : 0;
                 const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
                 const savedLabel = saved > 0 ? ` (-${formatByteDelta2(saved)})` : "";
                 logInfo(`Slim pack ready: ${next}${savedLabel}`);
@@ -18525,8 +19069,8 @@ ${imports}
           if (!hasPositivePackRequestSavings(entries.length)) continue;
           const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
           const sharedFileName = `shared.${chunkGroupId}.js`;
-          const sharedPath = import_path26.default.join(depsRoot, sharedFileName);
-          const alreadyReady = import_fs24.default.existsSync(sharedPath) && entries.every((e) => import_fs24.default.existsSync(import_path26.default.join(depsRoot, e.fileName)));
+          const sharedPath = import_path27.default.join(depsRoot, sharedFileName);
+          const alreadyReady = import_fs25.default.existsSync(sharedPath) && entries.every((e) => import_fs25.default.existsSync(import_path27.default.join(depsRoot, e.fileName)));
           if (alreadyReady) {
             updateFeatureState(next, {
               version: 1,
@@ -18566,8 +19110,8 @@ ${imports}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const elapsed = Date.now() - start;
-            const sharedOut = import_path26.default.join(depsRoot, `shared.${groupId}.js`);
-            const ok = import_fs24.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs24.default.existsSync(import_path26.default.join(depsRoot, entry.fileName)));
+            const sharedOut = import_path27.default.join(depsRoot, `shared.${groupId}.js`);
+            const ok = import_fs25.default.existsSync(sharedOut) && resolvedEntries2.every((entry) => import_fs25.default.existsSync(import_path27.default.join(depsRoot, entry.fileName)));
             if (!ok) {
               throw new Error("Feature pack optimizer did not produce expected outputs");
             }
@@ -18626,7 +19170,7 @@ ${imports}
   const recordFeatureCandidate = (entry) => {
     if (!featurePacksEnabled) return;
     if (!entry.fileName || !entry.entryPath) return;
-    if (!import_fs24.default.existsSync(entry.entryPath)) return;
+    if (!import_fs25.default.existsSync(entry.entryPath)) return;
     const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
     if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) return;
     const wasNew = upsertObservedPackEntry(featureObserved, {
@@ -18643,7 +19187,7 @@ ${imports}
     let changed = false;
     for (const usage of index.values()) {
       if (!usage?.fileName || !usage?.entryPath || !usage?.packageName) continue;
-      if (!import_fs24.default.existsSync(usage.entryPath)) continue;
+      if (!import_fs25.default.existsSync(usage.entryPath)) continue;
       const fileName = canonicalFileNameForEntry(usage.fileName, usage.entryPath);
       if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) continue;
       const subpath = typeof getDepEntry(fileName)?.subpath === "string" ? getDepEntry(fileName)?.subpath ?? null : computeSubpathFromEntryPath(usage.entryPath);
@@ -18689,7 +19233,7 @@ ${imports}
         entryPath = recovered.entryPath;
       }
     }
-    if (!entryPath || !import_fs24.default.existsSync(entryPath)) return;
+    if (!entryPath || !import_fs25.default.existsSync(entryPath)) return;
     const packageLabel = entryFromRegistry?.packageName ? formatDepLabel(entryFromRegistry.packageName, entryFromRegistry.subpath) : entryFromManifest?.packageLabel ?? fileName;
     const packageName = entryFromRegistry?.packageName ?? pkgNameFromLabel(entryFromManifest?.packageLabel) ?? null;
     const subpath = typeof entryFromRegistry?.subpath === "string" ? entryFromRegistry.subpath : null;
@@ -18720,7 +19264,7 @@ ${imports}
         const coreState = manualState.get("core");
         const coreChunkGroupId = coreState?.status === "ready" ? coreState.chunkGroupId : null;
         const corePackFileName = coreChunkGroupId ? `vendor-pack.manual.core.${coreChunkGroupId}.js` : null;
-        if (corePackFileName && import_fs24.default.existsSync(import_path26.default.join(depsRoot, corePackFileName))) {
+        if (corePackFileName && import_fs25.default.existsSync(import_path27.default.join(depsRoot, corePackFileName))) {
           const r = native.resolveModule("react-refresh/runtime", rootDir);
           const fsPath = r?.fsPath ?? r?.fs_path ?? null;
           if (fsPath && typeof fsPath === "string") {
@@ -18773,7 +19317,7 @@ ${imports}
         const ionifyRequire = (0, import_module5.createRequire)(importMetaUrl);
         const reactRefreshPath = ionifyRequire.resolve("react-refresh/runtime");
         const reactRefreshPkgPath = ionifyRequire.resolve("react-refresh/package.json");
-        const reactRefreshPkg = JSON.parse(import_fs24.default.readFileSync(reactRefreshPkgPath, "utf8"));
+        const reactRefreshPkg = JSON.parse(import_fs25.default.readFileSync(reactRefreshPkgPath, "utf8"));
         const fileName = registerDepEntry({
           entryPath: reactRefreshPath,
           packageName: "react-refresh",
@@ -18809,13 +19353,13 @@ ${refreshCode}
   };
   const getFeaturePackRoutingHash = () => {
     if (!featurePacksEnabled) return null;
-    if (!import_fs24.default.existsSync(featurePackIndexPath)) return null;
+    if (!import_fs25.default.existsSync(featurePackIndexPath)) return null;
     try {
-      const stat = import_fs24.default.statSync(featurePackIndexPath);
+      const stat = import_fs25.default.statSync(featurePackIndexPath);
       if (featurePackRoutingHashCache && featurePackRoutingHashCache.mtimeMs === stat.mtimeMs && featurePackRoutingHashCache.size === stat.size) {
         return featurePackRoutingHashCache.hash;
       }
-      const raw = JSON.parse(import_fs24.default.readFileSync(featurePackIndexPath, "utf8"));
+      const raw = JSON.parse(import_fs25.default.readFileSync(featurePackIndexPath, "utf8"));
       const hash = hashFeaturePackRoutingIndex(
         raw,
         depsHash,
@@ -18829,13 +19373,13 @@ ${refreshCode}
     }
   };
   const getVendorPackV2RoutingHash = () => {
-    if (!import_fs24.default.existsSync(vendorPackV2IndexPath)) return null;
+    if (!import_fs25.default.existsSync(vendorPackV2IndexPath)) return null;
     try {
-      const stat = import_fs24.default.statSync(vendorPackV2IndexPath);
+      const stat = import_fs25.default.statSync(vendorPackV2IndexPath);
       if (vendorPackV2RoutingHashCache && vendorPackV2RoutingHashCache.mtimeMs === stat.mtimeMs && vendorPackV2RoutingHashCache.size === stat.size) {
         return vendorPackV2RoutingHashCache.hash;
       }
-      const raw = JSON.parse(import_fs24.default.readFileSync(vendorPackV2IndexPath, "utf8"));
+      const raw = JSON.parse(import_fs25.default.readFileSync(vendorPackV2IndexPath, "utf8"));
       const hash = hashVendorPackV2RoutingIndex(
         raw,
         depsHash,
@@ -18885,7 +19429,7 @@ ${refreshCode}
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
-        if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, packFileName))) continue;
+        if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
         lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${DEPS_PREFIX2}${packFileName}";`;
         mutated = true;
@@ -18900,7 +19444,7 @@ ${refreshCode}
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
-        if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, packFileName))) continue;
+        if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
         lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${DEPS_PREFIX2}${packFileName}";`;
         mutated = true;
@@ -18932,11 +19476,11 @@ ${refreshCode}
   const ensureBaseCasTransform = async (opts) => {
     const ext = opts.ext.toLowerCase();
     if (!baseCasExts.has(ext)) return;
-    if (opts.filePath.includes(`${import_path26.default.sep}node_modules${import_path26.default.sep}`)) return;
+    if (opts.filePath.includes(`${import_path27.default.sep}node_modules${import_path27.default.sep}`)) return;
     if (!opts.baseHash) return;
     const dir = getCasArtifactPath(casRoot, configHash, opts.baseHash);
-    const outFile = import_path26.default.join(dir, "transformed.js");
-    if (import_fs24.default.existsSync(outFile)) return;
+    const outFile = import_path27.default.join(dir, "transformed.js");
+    if (import_fs25.default.existsSync(outFile)) return;
     const existing = pendingBaseCas.get(opts.baseHash);
     if (existing) {
       await existing;
@@ -18956,15 +19500,15 @@ ${refreshCode}
           return;
         }
         try {
-          import_fs24.default.mkdirSync(dir, { recursive: true });
+          import_fs25.default.mkdirSync(dir, { recursive: true });
           const tmp = `${outFile}.tmp-${process.pid}-${Date.now()}`;
-          import_fs24.default.writeFileSync(tmp, result.code, "utf8");
-          import_fs24.default.renameSync(tmp, outFile);
+          import_fs25.default.writeFileSync(tmp, result.code, "utf8");
+          import_fs25.default.renameSync(tmp, outFile);
           if (result.map) {
             const mapFile = `${outFile}.map`;
             const tmpMap = `${mapFile}.tmp-${process.pid}-${Date.now()}`;
-            import_fs24.default.writeFileSync(tmpMap, result.map, "utf8");
-            import_fs24.default.renameSync(tmpMap, mapFile);
+            import_fs25.default.writeFileSync(tmpMap, result.map, "utf8");
+            import_fs25.default.renameSync(tmpMap, mapFile);
           }
         } catch {
         }
@@ -19010,6 +19554,16 @@ ${refreshCode}
     });
   };
   const graph = new Graph(rawVersionInputs, { ionifyDir });
+  const registerDevCssGraphSources = () => {
+    registerCssDemandGraphSourceFiles(
+      rootDir,
+      graph.listFilesByKind("js").filter((filePath) => {
+        if (filePath.includes("node_modules") || filePath.includes(`${import_path27.default.sep}.ionify${import_path27.default.sep}`)) return false;
+        const clean = filePath.split("?")[0].split("#")[0].toLowerCase();
+        return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+      })
+    );
+  };
   const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
   if (userConfig?.federation) {
     syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
@@ -19109,7 +19663,7 @@ ${refreshCode}
   const buildUpdatePayload = async (modules) => {
     const updates = [];
     for (const mod of modules) {
-      const exists = import_fs24.default.existsSync(mod.absPath);
+      const exists = import_fs25.default.existsSync(mod.absPath);
       if (mod.reason === "deleted" || !exists) {
         graph.removeFile(mod.absPath);
         watcher.unwatchFile(mod.absPath);
@@ -19123,12 +19677,12 @@ ${refreshCode}
         continue;
       }
       watcher.watchFile(mod.absPath);
-      const ext = import_path26.default.extname(mod.absPath).toLowerCase();
+      const ext = import_path27.default.extname(mod.absPath).toLowerCase();
       if (isCssLikeExt(ext)) {
         let hash2 = mod.hash;
         if (!hash2) {
           try {
-            hash2 = getCacheKey(import_fs24.default.readFileSync(mod.absPath, "utf8"));
+            hash2 = getCacheKey(import_fs25.default.readFileSync(mod.absPath, "utf8"));
           } catch {
             hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
           }
@@ -19149,7 +19703,7 @@ ${refreshCode}
         let hash2 = mod.hash;
         if (!hash2) {
           try {
-            const buf = import_fs24.default.readFileSync(mod.absPath);
+            const buf = import_fs25.default.readFileSync(mod.absPath);
             hash2 = import_crypto8.default.createHash("sha256").update(buf).digest("hex");
           } catch {
             hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
@@ -19168,7 +19722,7 @@ ${refreshCode}
       }
       let code;
       try {
-        code = import_fs24.default.readFileSync(mod.absPath, "utf8");
+        code = import_fs25.default.readFileSync(mod.absPath, "utf8");
       } catch (err) {
         logError("Failed to read module during HMR apply", err);
         throw err;
@@ -19210,7 +19764,7 @@ ${refreshCode}
         });
         continue;
       }
-      const extName = import_path26.default.extname(mod.absPath);
+      const extName = import_path27.default.extname(mod.absPath);
       const result = await transformer.run({
         path: mod.absPath,
         code,
@@ -19403,9 +19957,9 @@ ${refreshCode}
           ensureVendorPackFile();
         }
         if (fileName.endsWith(".js.map")) {
-          const mapPath = import_path26.default.join(depsRoot, fileName);
-          if (import_fs24.default.existsSync(mapPath)) {
-            const stat = import_fs24.default.statSync(mapPath);
+          const mapPath = import_path27.default.join(depsRoot, fileName);
+          if (import_fs25.default.existsSync(mapPath)) {
+            const stat = import_fs25.default.statSync(mapPath);
             const etag = weakEtagFromStat(`deps-map-${depsHash}`, stat);
             if (isNotModified(req, etag)) {
               res.setHeader("ETag", etag);
@@ -19419,7 +19973,7 @@ ${refreshCode}
               res,
               200,
               "application/json; charset=utf-8",
-              import_fs24.default.readFileSync(mapPath),
+              import_fs25.default.readFileSync(mapPath),
               { etag, cacheControl: "public, max-age=31536000, immutable" }
             );
             return;
@@ -19433,7 +19987,7 @@ ${refreshCode}
           vendorPackRequestCountsDirty = true;
           flushVendorPackRequestCounts(false);
         }
-        const depsFilePath = import_path26.default.join(depsRoot, fileName);
+        const depsFilePath = import_path27.default.join(depsRoot, fileName);
         const entryFromManifest = depsManifestIndex.get(fileName);
         let entryFromRegistry = getDepEntry(fileName);
         let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
@@ -19462,11 +20016,11 @@ ${refreshCode}
         // (it may have been written directly, e.g. by tests or external tooling).
         // Only trigger a stale-rebuild when an entry exists WITH a mismatched outputVersion.
         !entryFromManifest || entryFromManifest.outputVersion === DEPS_OPTIMIZER_OUTPUT_VERSION;
-        if (import_fs24.default.existsSync(depsFilePath) && manifestVersionCurrent) {
+        if (import_fs25.default.existsSync(depsFilePath) && manifestVersionCurrent) {
           observeRouteHintDepRequest();
           const vendorV2Hash = getVendorPackV2RoutingHash();
           if (vendorV2Hash && fileName.startsWith("shared.") && fileName.endsWith(".js")) {
-            const stat2 = import_fs24.default.statSync(depsFilePath);
+            const stat2 = import_fs25.default.statSync(depsFilePath);
             const etag2 = weakEtagFromStat(`deps-${depsHash}-vp2-${vendorV2Hash}`, stat2);
             if (isNotModified(req, etag2)) {
               res.setHeader("ETag", etag2);
@@ -19476,7 +20030,7 @@ ${refreshCode}
               logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304) (vp2)`);
               return;
             }
-            const raw = import_fs24.default.readFileSync(depsFilePath, "utf8");
+            const raw = import_fs25.default.readFileSync(depsFilePath, "utf8");
             const rewritten = rewriteIonifySharedChunkImportsForVendorPackV2(raw) ?? raw;
             sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(Buffer.from(rewritten, "utf8")), {
               etag: etag2,
@@ -19495,7 +20049,7 @@ ${refreshCode}
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache${status} (${variant.encoding})`);
             return;
           }
-          const stat = import_fs24.default.statSync(depsFilePath);
+          const stat = import_fs25.default.statSync(depsFilePath);
           const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
           if (isNotModified(req, etag)) {
             res.setHeader("ETag", etag);
@@ -19505,18 +20059,18 @@ ${refreshCode}
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304)`);
             return;
           }
-          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs24.default.readFileSync(depsFilePath)), {
+          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs25.default.readFileSync(depsFilePath)), {
             etag,
             cacheControl: "public, max-age=31536000, immutable"
           });
           logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache`);
           return;
         }
-        if (import_fs24.default.existsSync(depsFilePath) && !manifestVersionCurrent) {
+        if (import_fs25.default.existsSync(depsFilePath) && !manifestVersionCurrent) {
           try {
-            import_fs24.default.rmSync(depsFilePath, { force: true });
-            import_fs24.default.rmSync(`${depsFilePath}.gz`, { force: true });
-            import_fs24.default.rmSync(`${depsFilePath}.map`, { force: true });
+            import_fs25.default.rmSync(depsFilePath, { force: true });
+            import_fs25.default.rmSync(`${depsFilePath}.gz`, { force: true });
+            import_fs25.default.rmSync(`${depsFilePath}.map`, { force: true });
           } catch {
           }
           logInfo(
@@ -19526,7 +20080,7 @@ ${refreshCode}
         if (canChunkVendorPacks && vendorPackEntries.length > 1 && (vendorPackDepFileNames.has(fileName) || vendorPackSharedFileName && fileName === vendorPackSharedFileName)) {
           try {
             const start = Date.now();
-            const rawSize = entryPath && import_fs24.default.existsSync(entryPath) ? import_fs24.default.statSync(entryPath).size : 0;
+            const rawSize = entryPath && import_fs25.default.existsSync(entryPath) ? import_fs25.default.statSync(entryPath).size : 0;
             const chunked = native?.optimizeDependenciesChunked;
             if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
             const result2 = chunked(
@@ -19536,10 +20090,10 @@ ${refreshCode}
             broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
             const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
             const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
-            if (!import_fs24.default.existsSync(depsFilePath)) {
+            if (!import_fs25.default.existsSync(depsFilePath)) {
               throw new Error("Vendor pack optimizer did not produce requested file");
             }
-            const stat = import_fs24.default.statSync(depsFilePath);
+            const stat = import_fs25.default.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
             observeRouteHintDepRequest();
@@ -19550,7 +20104,7 @@ ${refreshCode}
                 cacheControl: "public, max-age=31536000, immutable"
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs24.default.readFileSync(depsFilePath)), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs25.default.readFileSync(depsFilePath)), {
                 etag,
                 cacheControl: "public, max-age=31536000, immutable"
               });
@@ -19574,7 +20128,7 @@ ${refreshCode}
         if (canChunkVendorCore && (vendorDepFileNames.has(fileName) || vendorCoreSharedFileName && fileName === vendorCoreSharedFileName)) {
           try {
             const start = Date.now();
-            const rawSize = entryPath && import_fs24.default.existsSync(entryPath) ? import_fs24.default.statSync(entryPath).size : 0;
+            const rawSize = entryPath && import_fs25.default.existsSync(entryPath) ? import_fs25.default.statSync(entryPath).size : 0;
             const chunked = native?.optimizeDependenciesChunked;
             if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
             const result2 = chunked(
@@ -19584,10 +20138,10 @@ ${refreshCode}
             broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
             const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
             const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
-            if (!import_fs24.default.existsSync(depsFilePath)) {
+            if (!import_fs25.default.existsSync(depsFilePath)) {
               throw new Error("Chunked optimizer did not produce requested file");
             }
-            const stat = import_fs24.default.statSync(depsFilePath);
+            const stat = import_fs25.default.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
             observeRouteHintDepRequest();
@@ -19598,7 +20152,7 @@ ${refreshCode}
                 cacheControl: "public, max-age=31536000, immutable"
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs24.default.readFileSync(depsFilePath)), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(import_fs25.default.readFileSync(depsFilePath)), {
                 etag,
                 cacheControl: "public, max-age=31536000, immutable"
               });
@@ -19626,7 +20180,7 @@ ${refreshCode}
         }
         try {
           const start = Date.now();
-          const rawSize = import_fs24.default.existsSync(entryPath) ? import_fs24.default.statSync(entryPath).size : 0;
+          const rawSize = import_fs25.default.existsSync(entryPath) ? import_fs25.default.statSync(entryPath).size : 0;
           const result2 = native.optimizeDependency(
             entryPath,
             depsHash,
@@ -19637,11 +20191,11 @@ ${refreshCode}
           broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
           const outPath = result2?.out_path ?? result2?.outPath ?? depsFilePath;
           const mapPath = result2?.map_path ?? result2?.mapPath ?? null;
-          const resolvedOutPath = import_path26.default.isAbsolute(outPath) ? outPath : import_path26.default.join(depsRoot, outPath);
-          if (!import_fs24.default.existsSync(resolvedOutPath)) {
+          const resolvedOutPath = import_path27.default.isAbsolute(outPath) ? outPath : import_path27.default.join(depsRoot, outPath);
+          if (!import_fs25.default.existsSync(resolvedOutPath)) {
             throw new Error("Optimizer did not produce output");
           }
-          const stat = import_fs24.default.statSync(resolvedOutPath);
+          const stat = import_fs25.default.statSync(resolvedOutPath);
           const optimizedSize = stat.size;
           const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
           observeRouteHintDepRequest();
@@ -19652,7 +20206,7 @@ ${refreshCode}
               cacheControl: "public, max-age=31536000, immutable"
             });
           } else {
-            const outBuffer = import_fs24.default.readFileSync(resolvedOutPath);
+            const outBuffer = import_fs25.default.readFileSync(resolvedOutPath);
             sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(outBuffer), {
               etag,
               cacheControl: "public, max-age=31536000, immutable"
@@ -19661,7 +20215,7 @@ ${refreshCode}
           const elapsed = Date.now() - start;
           const rawKb = (rawSize / 1024).toFixed(1);
           const optKb = (optimizedSize / 1024).toFixed(1);
-          const mapSuffix = mapPath ? ` map=${import_path26.default.basename(mapPath)}` : "";
+          const mapSuffix = mapPath ? ` map=${import_path27.default.basename(mapPath)}` : "";
           logInfo(`[deps] OPTIMIZE ${packageLabel}: MISS \u2192 BUILD (${elapsed}ms, ${rawKb}KB \u2192 ${optKb}KB)${mapSuffix}`);
           refreshDepsManifestIndex();
           observeDepForPackPlanning(fileName);
@@ -19679,7 +20233,7 @@ ${refreshCode}
       let isPublicFile = false;
       if (publicDirAbs && shouldTryPublicDir(reqPath)) {
         const candidate = decodePublicDirPath(publicDirAbs, reqPath);
-        if (candidate && import_fs24.default.existsSync(candidate)) {
+        if (candidate && import_fs25.default.existsSync(candidate)) {
           fsPath = candidate;
           isPublicFile = true;
         }
@@ -19694,12 +20248,12 @@ ${refreshCode}
       }
       let effectiveFsPath = fsPath;
       let effectiveUrlPath = reqPath;
-      if (import_fs24.default.existsSync(effectiveFsPath) && import_fs24.default.statSync(effectiveFsPath).isDirectory()) {
+      if (import_fs25.default.existsSync(effectiveFsPath) && import_fs25.default.statSync(effectiveFsPath).isDirectory()) {
         const indexExtensions = [".html", ".js", ".ts", ".tsx", ".jsx"];
         let found = false;
         for (const ext2 of indexExtensions) {
-          const indexFile = import_path26.default.join(effectiveFsPath, `index${ext2}`);
-          if (import_fs24.default.existsSync(indexFile)) {
+          const indexFile = import_path27.default.join(effectiveFsPath, `index${ext2}`);
+          if (import_fs25.default.existsSync(indexFile)) {
             effectiveFsPath = indexFile;
             effectiveUrlPath = effectiveUrlPath.endsWith("/") ? `${effectiveUrlPath}index${ext2}` : `${effectiveUrlPath}/index${ext2}`;
             found = true;
@@ -19707,13 +20261,13 @@ ${refreshCode}
           }
         }
         if (!found) {
-          const packageJson = import_path26.default.join(effectiveFsPath, "package.json");
-          if (import_fs24.default.existsSync(packageJson)) {
+          const packageJson = import_path27.default.join(effectiveFsPath, "package.json");
+          if (import_fs25.default.existsSync(packageJson)) {
             try {
-              const pkg = JSON.parse(import_fs24.default.readFileSync(packageJson, "utf8"));
+              const pkg = JSON.parse(import_fs25.default.readFileSync(packageJson, "utf8"));
               if (pkg.main) {
-                const mainFile = import_path26.default.join(effectiveFsPath, pkg.main);
-                if (import_fs24.default.existsSync(mainFile)) {
+                const mainFile = import_path27.default.join(effectiveFsPath, pkg.main);
+                if (import_fs25.default.existsSync(mainFile)) {
                   effectiveFsPath = mainFile;
                   found = true;
                 }
@@ -19724,8 +20278,8 @@ ${refreshCode}
         }
         if (!found) {
           for (const ext2 of indexExtensions) {
-            const moduleFile = import_path26.default.join(effectiveFsPath, `module${ext2}`);
-            if (import_fs24.default.existsSync(moduleFile)) {
+            const moduleFile = import_path27.default.join(effectiveFsPath, `module${ext2}`);
+            if (import_fs25.default.existsSync(moduleFile)) {
               effectiveFsPath = moduleFile;
               found = true;
               break;
@@ -19743,7 +20297,7 @@ ${refreshCode}
           }
         }
       }
-      if (!import_fs24.default.existsSync(effectiveFsPath)) {
+      if (!import_fs25.default.existsSync(effectiveFsPath)) {
         if (isHtmlNavigationRequest(req, reqPath, q, spaFallback) && spaFallback.entryFilePath) {
           effectiveFsPath = spaFallback.entryFilePath;
           isPublicFile = false;
@@ -19753,24 +20307,24 @@ ${refreshCode}
           return;
         }
       }
-      if (!import_fs24.default.existsSync(effectiveFsPath)) {
+      if (!import_fs25.default.existsSync(effectiveFsPath)) {
         res.statusCode = 404;
         res.end("Not found");
         return;
       }
-      const ext = import_path26.default.extname(effectiveFsPath);
+      const ext = import_path27.default.extname(effectiveFsPath);
       if (isPublicFile && !isAssetExt(ext)) {
         try {
           watcher.watchFile(effectiveFsPath);
         } catch {
         }
         res.writeHead(200, { "Content-Type": guessContentType(effectiveFsPath) });
-        import_fs24.default.createReadStream(effectiveFsPath).pipe(res);
+        import_fs25.default.createReadStream(effectiveFsPath).pipe(res);
         return;
       }
       if (isAssetExt(ext)) {
         try {
-          const data = import_fs24.default.readFileSync(effectiveFsPath);
+          const data = import_fs25.default.readFileSync(effectiveFsPath);
           const assetHash = import_crypto8.default.createHash("sha256").update(data).digest("hex");
           const kind = "asset";
           const changed2 = graph.recordFile(effectiveFsPath, assetHash, [], [], kind);
@@ -19788,18 +20342,18 @@ ${refreshCode}
           return;
         } else {
           res.writeHead(200, { "Content-Type": contentTypeForAsset(ext) });
-          import_fs24.default.createReadStream(effectiveFsPath).pipe(res);
+          import_fs25.default.createReadStream(effectiveFsPath).pipe(res);
           return;
         }
       }
       if (isCssLikeExt(ext)) {
         try {
-          const cssSource = import_fs24.default.readFileSync(effectiveFsPath, "utf8");
+          const cssSource = import_fs25.default.readFileSync(effectiveFsPath, "utf8");
           const isModule = "module" in q || isCssModuleLikePath(effectiveFsPath);
           const mode2 = "raw" in q ? "css:raw-string" : "url" in q ? "css:url" : isModule ? "css:module" : "inline" in q ? "css:inline" : "css:raw";
           const contentHash = getCacheKey(cssSource);
           const baseCssDir = getCasArtifactPath(casRoot, configHash, contentHash);
-          const baseCssFile = import_path26.default.join(baseCssDir, "transformed.css");
+          const baseCssFile = import_path27.default.join(baseCssDir, "transformed.css");
           watcher.watchFile(effectiveFsPath);
           const kind = "css";
           const prevDeps = graph.getNode(effectiveFsPath)?.deps ?? [];
@@ -19811,11 +20365,11 @@ ${refreshCode}
           );
           let casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
           const jsMode = mode2 !== "css:raw";
-          let casFile = import_path26.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+          let casFile = import_path27.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
           let finalBuffer = null;
-          if (import_fs24.default.existsSync(casFile)) {
+          if (import_fs25.default.existsSync(casFile)) {
             try {
-              finalBuffer = import_fs24.default.readFileSync(casFile);
+              finalBuffer = import_fs25.default.readFileSync(casFile);
               const ok = jsMode ? looksLikeIonifyCssJsModule(finalBuffer) : !looksLikeIonifyCssJsModule(finalBuffer);
               if (ok) {
                 res.setHeader("X-Ionify-Cache", "HIT");
@@ -19827,8 +20381,9 @@ ${refreshCode}
               finalBuffer = null;
             }
           }
-          if (finalBuffer && !import_fs24.default.existsSync(baseCssFile)) {
+          if (finalBuffer && !import_fs25.default.existsSync(baseCssFile)) {
             try {
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
@@ -19843,12 +20398,12 @@ ${refreshCode}
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
               }
               scheduleDependencyWatches(depsAbs);
-              import_fs24.default.mkdirSync(baseCssDir, { recursive: true });
+              import_fs25.default.mkdirSync(baseCssDir, { recursive: true });
               const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-              import_fs24.default.writeFileSync(tmp, compiledCss, "utf8");
-              import_fs24.default.renameSync(tmp, baseCssFile);
-              const metaPath = import_path26.default.join(baseCssDir, "meta.json");
-              if (!import_fs24.default.existsSync(metaPath)) {
+              import_fs25.default.writeFileSync(tmp, compiledCss, "utf8");
+              import_fs25.default.renameSync(tmp, baseCssFile);
+              const metaPath = import_path27.default.join(baseCssDir, "meta.json");
+              if (!import_fs25.default.existsSync(metaPath)) {
                 writeJsonFile4(metaPath, {
                   version: 1,
                   baseHash: contentHash,
@@ -19860,8 +20415,8 @@ ${refreshCode}
                 });
               }
               if (isModule && tokens) {
-                const tokPath = import_path26.default.join(baseCssDir, "tokens.json");
-                if (!import_fs24.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+                const tokPath = import_path27.default.join(baseCssDir, "tokens.json");
+                if (!import_fs25.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
               }
             } catch {
             }
@@ -19871,8 +20426,9 @@ ${refreshCode}
             if (mode2 === "css:url") {
               const rawUrl = `${effectiveUrlPath}?v=${contentHash}-${depsStampHash.slice(0, 8)}`;
               body = renderCssUrlModule(rawUrl);
-              if (!import_fs24.default.existsSync(baseCssFile)) {
+              if (!import_fs25.default.existsSync(baseCssFile)) {
                 try {
+                  registerDevCssGraphSources();
                   const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                     code: cssSource,
                     filePath: effectiveFsPath,
@@ -19887,12 +20443,12 @@ ${refreshCode}
                     logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
                   }
                   scheduleDependencyWatches(depsAbs);
-                  import_fs24.default.mkdirSync(baseCssDir, { recursive: true });
+                  import_fs25.default.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-                  import_fs24.default.writeFileSync(tmp, compiledCss, "utf8");
-                  import_fs24.default.renameSync(tmp, baseCssFile);
-                  const metaPath = import_path26.default.join(baseCssDir, "meta.json");
-                  if (!import_fs24.default.existsSync(metaPath)) {
+                  import_fs25.default.writeFileSync(tmp, compiledCss, "utf8");
+                  import_fs25.default.renameSync(tmp, baseCssFile);
+                  const metaPath = import_path27.default.join(baseCssDir, "meta.json");
+                  if (!import_fs25.default.existsSync(metaPath)) {
                     writeJsonFile4(metaPath, {
                       version: 1,
                       baseHash: contentHash,
@@ -19904,13 +20460,14 @@ ${refreshCode}
                     });
                   }
                   if (isModule && tokens) {
-                    const tokPath = import_path26.default.join(baseCssDir, "tokens.json");
-                    if (!import_fs24.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+                    const tokPath = import_path27.default.join(baseCssDir, "tokens.json");
+                    if (!import_fs25.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
                   }
                 } catch {
                 }
               }
             } else {
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
@@ -19931,7 +20488,7 @@ ${refreshCode}
                 // dev-served public path so `@/`-alias + bare-package url()s resolve (relative ones
                 // already would). Mirrors the build emit-time rebasing via the shared resolver, so
                 // the phase-neutral CAS `transformed.css` stays untouched.
-                (abs) => isForbiddenFsPath(abs) || !import_fs24.default.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs)
+                (abs) => isForbiddenFsPath(abs) || !import_fs25.default.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs)
               );
               const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
               const nextDepsStampHash = computeDepsStampHash(depsAbs);
@@ -19939,7 +20496,7 @@ ${refreshCode}
                 `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${nextDepsStampHash}`
               );
               casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
-              casFile = import_path26.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+              casFile = import_path27.default.join(casDir, jsMode ? "transformed.js" : "transformed.css");
               graph.recordStructuralFiles(depsAbs);
               const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
               if (changed2) {
@@ -19947,15 +20504,15 @@ ${refreshCode}
               }
               scheduleDependencyWatches(depsAbs);
               try {
-                const alreadyExists = import_fs24.default.existsSync(baseCssFile);
+                const alreadyExists = import_fs25.default.existsSync(baseCssFile);
                 if (!alreadyExists) {
-                  import_fs24.default.mkdirSync(baseCssDir, { recursive: true });
+                  import_fs25.default.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-                  import_fs24.default.writeFileSync(tmp, compiledCss, "utf8");
-                  import_fs24.default.renameSync(tmp, baseCssFile);
+                  import_fs25.default.writeFileSync(tmp, compiledCss, "utf8");
+                  import_fs25.default.renameSync(tmp, baseCssFile);
                 }
-                const metaPath = import_path26.default.join(baseCssDir, "meta.json");
-                if (!import_fs24.default.existsSync(metaPath)) {
+                const metaPath = import_path27.default.join(baseCssDir, "meta.json");
+                if (!import_fs25.default.existsSync(metaPath)) {
                   writeJsonFile4(metaPath, {
                     version: 1,
                     baseHash: contentHash,
@@ -19967,8 +20524,8 @@ ${refreshCode}
                   });
                 }
                 if (isModule && tokens) {
-                  const tokPath = import_path26.default.join(baseCssDir, "tokens.json");
-                  if (!import_fs24.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
+                  const tokPath = import_path27.default.join(baseCssDir, "tokens.json");
+                  if (!import_fs25.default.existsSync(tokPath)) writeJsonFile4(tokPath, tokens);
                 }
               } catch {
               }
@@ -19987,8 +20544,8 @@ ${refreshCode}
             finalBuffer = Buffer.from(body, "utf8");
             res.setHeader("X-Ionify-Cache", "MISS");
             try {
-              import_fs24.default.mkdirSync(casDir, { recursive: true });
-              import_fs24.default.writeFileSync(casFile, finalBuffer);
+              import_fs25.default.mkdirSync(casDir, { recursive: true });
+              import_fs25.default.writeFileSync(casFile, finalBuffer);
             } catch {
             }
           }
@@ -20016,7 +20573,7 @@ ${refreshCode}
           return;
         }
       }
-      const code = import_fs24.default.readFileSync(effectiveFsPath, "utf8");
+      const code = import_fs25.default.readFileSync(effectiveFsPath, "utf8");
       let hash;
       let specs;
       if (native?.parseModuleIr) {
@@ -20071,7 +20628,7 @@ ${refreshCode}
       res.setHeader("X-Ionify-Cache", changed ? "MISS" : "HIT");
       const withDefine = applyDefineReplacements(transformedCode, defineConfig);
       const envApplied = applyEnvPlaceholders(withDefine, ext);
-      if (import_path26.default.extname(effectiveFsPath) === ".html") {
+      if (import_path27.default.extname(effectiveFsPath) === ".html") {
         activateFeaturePacksOnNextDocument();
         const documentRouteKey = normalizeDocumentRouteKey(reqPath);
         routeHints.beginDocument({
@@ -20116,7 +20673,7 @@ ${refreshCode}
             if (!hintUrl.startsWith(DEPS_PREFIX2)) return;
             const fileName = hintUrl.slice(DEPS_PREFIX2.length);
             if (!fileName.endsWith(".js")) return;
-            if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, fileName))) return;
+            if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, fileName))) return;
             preloadUrl(hintUrl);
           };
           const packPreloads = new Set(collectBootstrapRoutedPackPreloadUrls());
@@ -20125,7 +20682,7 @@ ${refreshCode}
             for (const dep of vendorDeps) {
               const packFileName = vendorPackV2.fileNameToPackFile.get(dep.fileName) ?? null;
               if (!packFileName) continue;
-              if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, packFileName))) continue;
+              if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, packFileName))) continue;
               packFilesForVendorDeps.add(packFileName);
               const chunkFiles = vendorPackV2.packFileToChunkFiles.get(packFileName) ?? (() => {
                 const shared = vendorPackV2.packFileToSharedFile.get(packFileName) ?? null;
@@ -20134,7 +20691,7 @@ ${refreshCode}
               if (chunkFiles.length === 0) continue;
               for (const chunkFile of chunkFiles) {
                 if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
-                if (!import_fs24.default.existsSync(import_path26.default.join(depsRoot, chunkFile))) continue;
+                if (!import_fs25.default.existsSync(import_path27.default.join(depsRoot, chunkFile))) continue;
                 packPreloads.add(`${DEPS_PREFIX2}${chunkFile}`);
               }
             }
@@ -20199,7 +20756,7 @@ ${refreshCode}
     papDirty = true;
     cancelProductionArtifactsPublication(`watch:${status}`);
     scheduleProductionArtifactPublication(`watch:${status}`, "contracts");
-    const ext = import_path26.default.extname(file).toLowerCase();
+    const ext = import_path27.default.extname(file).toLowerCase();
     const isReactFastRefreshBoundary = status !== "deleted" && (ext === ".tsx" || ext === ".jsx");
     const isCssBoundary = status !== "deleted" && isCssLikeExt(ext);
     const collected = graph.collectAffected([file]);
@@ -20219,7 +20776,7 @@ ${refreshCode}
       if (reason !== "deleted") {
         if (absPath === file) {
           try {
-            const code = import_fs24.default.readFileSync(absPath, "utf8");
+            const code = import_fs25.default.readFileSync(absPath, "utf8");
             hash = getCacheKey(code);
           } catch {
             hash = graph.getNode(absPath)?.hash ?? null;
@@ -20230,7 +20787,7 @@ ${refreshCode}
       }
       modules.push({
         absPath,
-        url: isCssLikePath(absPath) ? `${normalizeUrlFromFs(rootDir, absPath)}?inline` : isAssetExt(import_path26.default.extname(absPath).toLowerCase()) ? `${normalizeUrlFromFs(rootDir, absPath)}?import` : normalizeUrlFromFs(rootDir, absPath),
+        url: isCssLikePath(absPath) ? `${normalizeUrlFromFs(rootDir, absPath)}?inline` : isAssetExt(import_path27.default.extname(absPath).toLowerCase()) ? `${normalizeUrlFromFs(rootDir, absPath)}?import` : normalizeUrlFromFs(rootDir, absPath),
         hash,
         reason
       });
@@ -20385,8 +20942,8 @@ ${refreshCode}
     const labels = prewarmEntries.map((d) => d.packageLabel).join(", ");
     logInfo(`[deps] ${prewarmLabel} detected (${prewarmEntries.length}): ${labels}`);
     ensureVendorPackFile();
-    const missing = prewarmEntries.filter((d) => !import_fs24.default.existsSync(import_path26.default.join(depsRoot, d.fileName)));
-    const sharedMissing = vendorPacksForce ? vendorPackSharedFileName ? !import_fs24.default.existsSync(import_path26.default.join(depsRoot, vendorPackSharedFileName)) : false : vendorCoreSharedFileName ? !import_fs24.default.existsSync(import_path26.default.join(depsRoot, vendorCoreSharedFileName)) : false;
+    const missing = prewarmEntries.filter((d) => !import_fs25.default.existsSync(import_path27.default.join(depsRoot, d.fileName)));
+    const sharedMissing = vendorPacksForce ? vendorPackSharedFileName ? !import_fs25.default.existsSync(import_path27.default.join(depsRoot, vendorPackSharedFileName)) : false : vendorCoreSharedFileName ? !import_fs25.default.existsSync(import_path27.default.join(depsRoot, vendorCoreSharedFileName)) : false;
     if (missing.length > 0 || sharedMissing) {
       const entryCount = missing.length;
       logInfo(`[deps] Pre-warming ${prewarmLabel} (${entryCount}) in parallel...`);
@@ -20426,7 +20983,7 @@ ${refreshCode}
             } else if (r?.out_path || r?.outPath) {
               const outPath = r.out_path ?? r.outPath;
               logInfo(
-                `[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path26.default.basename(outPath)}`
+                `[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path27.default.basename(outPath)}`
               );
             }
           });
@@ -20445,7 +21002,7 @@ ${refreshCode}
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const outPath = result?.out_path ?? result?.outPath ?? null;
             if (outPath) {
-              logInfo(`[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path26.default.basename(outPath)}`);
+              logInfo(`[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${import_path27.default.basename(outPath)}`);
             }
           } catch (err) {
             logWarn(`[deps] Prewarm failed ${dep.packageLabel}: ${String(err)}`);
@@ -20482,7 +21039,7 @@ ${refreshCode}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             if (result?.out_path) {
-              const fileName = import_path26.default.basename(result.out_path);
+              const fileName = import_path27.default.basename(result.out_path);
               logInfo(`[deps] \u2713 Pre-warmed ${pkgName} \u2192 ${fileName}`);
             }
           } catch (err) {
@@ -20500,12 +21057,12 @@ ${refreshCode}
       usageEntries.push(...resolvedEntries);
     } else {
       for (const candidate of [
-        import_path26.default.join(rootDir, "src", "main.tsx"),
-        import_path26.default.join(rootDir, "src", "main.ts"),
-        import_path26.default.join(rootDir, "src", "index.tsx"),
-        import_path26.default.join(rootDir, "src", "index.ts")
+        import_path27.default.join(rootDir, "src", "main.tsx"),
+        import_path27.default.join(rootDir, "src", "main.ts"),
+        import_path27.default.join(rootDir, "src", "index.tsx"),
+        import_path27.default.join(rootDir, "src", "index.ts")
       ]) {
-        if (import_fs24.default.existsSync(candidate)) usageEntries.push(candidate);
+        if (import_fs25.default.existsSync(candidate)) usageEntries.push(candidate);
       }
     }
     if (!native?.resolveModule) {
@@ -20576,8 +21133,8 @@ ${refreshCode}
 
 // src/cli/commands/analyze.ts
 init_cjs_shims();
-var import_fs25 = __toESM(require("fs"), 1);
-var import_path27 = __toESM(require("path"), 1);
+var import_fs26 = __toESM(require("fs"), 1);
+var import_path28 = __toESM(require("path"), 1);
 var import_chalk2 = __toESM(require("chalk"), 1);
 init_logger();
 init_config();
@@ -20676,16 +21233,16 @@ function resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, specifier) {
   const withoutQuery = withoutHash.split("?", 1)[0] ?? withoutHash;
   if (!withoutQuery) return null;
   if (withoutQuery.startsWith("/")) {
-    return import_path27.default.join(rootDir, withoutQuery);
+    return import_path28.default.join(rootDir, withoutQuery);
   }
-  return import_path27.default.resolve(import_path27.default.dirname(htmlInput), withoutQuery);
+  return import_path28.default.resolve(import_path28.default.dirname(htmlInput), withoutQuery);
 }
 function inferAnalyzeEntriesFromHtml(rootDir) {
-  const htmlInput = import_path27.default.join(rootDir, "index.html");
-  if (!import_fs25.default.existsSync(htmlInput)) return [];
+  const htmlInput = import_path28.default.join(rootDir, "index.html");
+  if (!import_fs26.default.existsSync(htmlInput)) return [];
   let html = "";
   try {
-    html = import_fs25.default.readFileSync(htmlInput, "utf8");
+    html = import_fs26.default.readFileSync(htmlInput, "utf8");
   } catch {
     return [];
   }
@@ -20695,23 +21252,23 @@ function inferAnalyzeEntriesFromHtml(rootDir) {
   for (const match of html.matchAll(moduleScriptRe)) {
     const src = typeof match[1] === "string" ? match[1] : "";
     const resolved = resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, src);
-    if (!resolved || !import_fs25.default.existsSync(resolved) || seen.has(resolved)) continue;
+    if (!resolved || !import_fs26.default.existsSync(resolved) || seen.has(resolved)) continue;
     seen.add(resolved);
     entries.push(resolved);
   }
   return entries;
 }
-function readJson(filePath) {
-  if (!import_fs25.default.existsSync(filePath)) return null;
+function readJson2(filePath) {
+  if (!import_fs26.default.existsSync(filePath)) return null;
   try {
-    return JSON.parse(import_fs25.default.readFileSync(filePath, "utf8"));
+    return JSON.parse(import_fs26.default.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
 }
 function statSize(filePath) {
   try {
-    return import_fs25.default.statSync(filePath).size;
+    return import_fs26.default.statSync(filePath).size;
   } catch {
     return null;
   }
@@ -20737,7 +21294,7 @@ function resolveRouteSourceAssetPath(projectRoot, url2) {
   if (!normalized.startsWith("/")) return null;
   const relative = normalized.slice(1);
   if (!relative) return null;
-  return import_path27.default.join(projectRoot, relative);
+  return import_path28.default.join(projectRoot, relative);
 }
 function formatBytes(bytes) {
   if (bytes === null) return "n/a";
@@ -20751,7 +21308,7 @@ function formatBytes(bytes) {
   return `${gb.toFixed(2)}GB`;
 }
 function loadVendorPackRoutingIndex(depsRoot, depsHash) {
-  const index = readJson(import_path27.default.join(depsRoot, "vendor-pack.v2.index.json"));
+  const index = readJson2(import_path28.default.join(depsRoot, "vendor-pack.v2.index.json"));
   if (!index || index.version !== 1 || index.depsHash !== depsHash) return null;
   return index;
 }
@@ -20783,23 +21340,23 @@ function getSelectedSurfaces(options) {
   return selected.length > 0 ? selected : ["graph", "build", "packs", "routes", "findings"];
 }
 function listDepsRootCandidates(ionifyDir) {
-  const depsDir = import_path27.default.join(ionifyDir, "deps");
-  if (!import_fs25.default.existsSync(depsDir)) return [];
-  return import_fs25.default.readdirSync(depsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+  const depsDir = import_path28.default.join(ionifyDir, "deps");
+  if (!import_fs26.default.existsSync(depsDir)) return [];
+  return import_fs26.default.readdirSync(depsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
     const depsHash = entry.name;
-    const depsRoot = import_path27.default.join(depsDir, depsHash);
-    const indexPath = import_path27.default.join(depsRoot, "vendor-pack.v2.index.json");
-    const manifestPath = import_path27.default.join(depsRoot, "manifest.json");
-    const usagePath = import_path27.default.join(depsRoot, "deps-usage.v2.json");
-    const legacyUsagePath = import_path27.default.join(depsRoot, "deps-usage.v1.json");
-    const statPath = import_fs25.default.existsSync(indexPath) ? indexPath : depsRoot;
+    const depsRoot = import_path28.default.join(depsDir, depsHash);
+    const indexPath = import_path28.default.join(depsRoot, "vendor-pack.v2.index.json");
+    const manifestPath = import_path28.default.join(depsRoot, "manifest.json");
+    const usagePath = import_path28.default.join(depsRoot, "deps-usage.v2.json");
+    const legacyUsagePath = import_path28.default.join(depsRoot, "deps-usage.v1.json");
+    const statPath = import_fs26.default.existsSync(indexPath) ? indexPath : depsRoot;
     let mtimeMs = 0;
     try {
-      mtimeMs = import_fs25.default.statSync(statPath).mtimeMs;
+      mtimeMs = import_fs26.default.statSync(statPath).mtimeMs;
     } catch {
       mtimeMs = 0;
     }
-    const completeness = Number(import_fs25.default.existsSync(indexPath)) + Number(import_fs25.default.existsSync(manifestPath)) + Number(import_fs25.default.existsSync(usagePath) || import_fs25.default.existsSync(legacyUsagePath));
+    const completeness = Number(import_fs26.default.existsSync(indexPath)) + Number(import_fs26.default.existsSync(manifestPath)) + Number(import_fs26.default.existsSync(usagePath) || import_fs26.default.existsSync(legacyUsagePath));
     return { depsHash, depsRoot, mtimeMs, completeness };
   }).sort((a, b) => b.completeness - a.completeness || b.mtimeMs - a.mtimeMs || a.depsHash.localeCompare(b.depsHash));
 }
@@ -20891,10 +21448,10 @@ function computeGraphSummary(nodes, limit = 10, includeTree = false) {
   };
 }
 function readGraphFromDisk(ionifyDir) {
-  const file = import_path27.default.join(ionifyDir, "graph.json");
-  if (!import_fs25.default.existsSync(file)) return null;
+  const file = import_path28.default.join(ionifyDir, "graph.json");
+  if (!import_fs26.default.existsSync(file)) return null;
   try {
-    const snapshot = JSON.parse(import_fs25.default.readFileSync(file, "utf8"));
+    const snapshot = JSON.parse(import_fs26.default.readFileSync(file, "utf8"));
     if (snapshot?.version !== 1 || !snapshot?.nodes) return null;
     return Object.entries(snapshot.nodes).map(([id, node]) => ({
       id,
@@ -20925,7 +21482,7 @@ async function loadGraphSnapshot(ionifyDir) {
 async function resolveAnalyzeWorkspace() {
   const envMode = process.env.IONIFY_MODE ?? process.env.MODE ?? process.env.NODE_ENV ?? "development";
   const config = await loadIonifyConfig(process.cwd(), envMode);
-  const projectRootOverride = config?.root ? import_path27.default.resolve(config.root) : null;
+  const projectRootOverride = config?.root ? import_path28.default.resolve(config.root) : null;
   const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
     projectRootOverride
   });
@@ -20944,7 +21501,7 @@ async function resolveAnalyzeWorkspace() {
     constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
     combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
   });
-  const configuredEntries = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? import_path27.default.join(rootDir, entry) : import_path27.default.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
+  const configuredEntries = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? import_path28.default.join(rootDir, entry) : import_path28.default.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
   const entries = configuredEntries.length > 0 ? configuredEntries : inferAnalyzeEntriesFromHtml(rootDir);
   const pluginNames = Array.isArray(config?.plugins) ? config.plugins.map((plugin) => typeof plugin === "string" ? plugin : plugin?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
   const configHash = computeGraphVersion({
@@ -20961,15 +21518,15 @@ async function resolveAnalyzeWorkspace() {
     }
   });
   process.env.IONIFY_CONFIG_HASH = configHash;
-  ensureNativeGraph(import_path27.default.join(workspace.ionifyDir, "graph.db"), configHash);
+  ensureNativeGraph(import_path28.default.join(workspace.ionifyDir, "graph.db"), configHash);
   return workspace;
 }
 function summarizeBuildOutputs(outDir, limit) {
-  const absOutDir = import_path27.default.resolve(outDir);
-  const manifestPath = import_path27.default.join(absOutDir, "manifest.json");
-  const statsPath = import_path27.default.join(absOutDir, "build.stats.json");
-  const manifest = readJson(manifestPath);
-  const stats = readJson(statsPath);
+  const absOutDir = import_path28.default.resolve(outDir);
+  const manifestPath = import_path28.default.join(absOutDir, "manifest.json");
+  const statsPath = import_path28.default.join(absOutDir, "build.stats.json");
+  const manifest = readJson2(manifestPath);
+  const stats = readJson2(statsPath);
   if (!manifest && !stats) return null;
   const chunkEntries = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
   const topFiles = [];
@@ -21061,11 +21618,11 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
     const requestsPacked = 1 + uniqueChunks.length;
     const requestsUnpacked = members.length;
     const requestsSaved = Math.max(0, requestsUnpacked - requestsPacked);
-    const packBytes = statSize(import_path27.default.join(depsRoot, packFileName));
+    const packBytes = statSize(import_path28.default.join(depsRoot, packFileName));
     let chunksBytes = 0;
     let chunksKnown = true;
     for (const chunk of uniqueChunks) {
-      const b = statSize(import_path27.default.join(depsRoot, chunk));
+      const b = statSize(import_path28.default.join(depsRoot, chunk));
       if (b === null) chunksKnown = false;
       chunksBytes += b ?? 0;
     }
@@ -21073,7 +21630,7 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
     let wrappersBytes = 0;
     let wrappersKnown = true;
     for (const fileName of members) {
-      const b = statSize(import_path27.default.join(depsRoot, fileName));
+      const b = statSize(import_path28.default.join(depsRoot, fileName));
       if (b === null) wrappersKnown = false;
       wrappersBytes += b ?? 0;
     }
@@ -21091,20 +21648,20 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
   }
   packs.sort((a, b) => b.requestsSaved - a.requestsSaved || b.members - a.members || a.packFileName.localeCompare(b.packFileName));
   const slimGroups = [];
-  const files = import_fs25.default.existsSync(depsRoot) ? import_fs25.default.readdirSync(depsRoot) : [];
+  const files = import_fs26.default.existsSync(depsRoot) ? import_fs26.default.readdirSync(depsRoot) : [];
   const stateFiles = files.filter((f) => f.startsWith("vendor-pack.") && f.endsWith(".json"));
   for (const file of stateFiles) {
     if (file.endsWith(".slim.json")) continue;
-    const base = readJson(import_path27.default.join(depsRoot, file));
+    const base = readJson2(import_path28.default.join(depsRoot, file));
     if (!base || base.version !== 1 || base.depsHash !== depsHash) continue;
     const slimFile = file.replace(/\.json$/, ".slim.json");
-    const slim = readJson(import_path27.default.join(depsRoot, slimFile));
+    const slim = readJson2(import_path28.default.join(depsRoot, slimFile));
     if (!slim || slim.version !== 1 || slim.depsHash !== depsHash) continue;
     if (base.status !== "ready" || slim.status !== "ready") continue;
     const baseShared = typeof base.sharedFileName === "string" ? base.sharedFileName : null;
     const slimShared = typeof slim.sharedFileName === "string" ? slim.sharedFileName : null;
-    const baseBytes = baseShared ? statSize(import_path27.default.join(depsRoot, baseShared)) : null;
-    const slimBytes = slimShared ? statSize(import_path27.default.join(depsRoot, slimShared)) : null;
+    const baseBytes = baseShared ? statSize(import_path28.default.join(depsRoot, baseShared)) : null;
+    const slimBytes = slimShared ? statSize(import_path28.default.join(depsRoot, slimShared)) : null;
     const savedBytes = baseBytes !== null && slimBytes !== null && baseBytes > 0 && slimBytes > 0 ? baseBytes - slimBytes : null;
     const label = file.replace(/^vendor-pack\./, "").replace(/\.json$/, "");
     slimGroups.push({ label, baseSharedBytes: baseBytes, slimSharedBytes: slimBytes, savedBytes });
@@ -21131,7 +21688,7 @@ function buildRouteFirstRouteBytes(projectRoot, routeAssets, depsSelection) {
     if (asset.kind === "dep") {
       const fileName = getDepFileNameFromUrl(asset.url);
       if (fileName && depsSelection) {
-        bytes = statSize(import_path27.default.join(depsSelection.depsRoot, fileName));
+        bytes = statSize(import_path28.default.join(depsSelection.depsRoot, fileName));
       }
     } else {
       const filePath = resolveRouteSourceAssetPath(projectRoot, asset.url);
@@ -21219,7 +21776,7 @@ function buildRoutePackCoverage(options) {
     uncoveredDepAssets += 1;
     const manifestEntry = depsManifestIndex.get(asset.fileName);
     const usageEntry = depUsageIndex?.get(asset.fileName);
-    const bytes = manifestEntry?.sizeBytes ?? statSize(import_path27.default.join(depsSelection.depsRoot, asset.fileName));
+    const bytes = manifestEntry?.sizeBytes ?? statSize(import_path28.default.join(depsSelection.depsRoot, asset.fileName));
     const packageLabel = manifestEntry?.packageLabel ?? (usageEntry ? `${usageEntry.packageName}@${usageEntry.packageVersion}` : null);
     uncoveredHotDeps.push({
       url: asset.url,
@@ -21316,8 +21873,8 @@ function buildRoutePolicyVisibility(options) {
   };
 }
 function summarizeRoutes(routeHintStatePath, limit, options) {
-  if (!import_fs25.default.existsSync(routeHintStatePath)) return null;
-  const raw = readJson(routeHintStatePath);
+  if (!import_fs26.default.existsSync(routeHintStatePath)) return null;
+  const raw = readJson2(routeHintStatePath);
   if (!raw || raw.version !== 1 || !raw.routes || typeof raw.routes !== "object") return null;
   const index = new RouteHintIndex(routeHintStatePath);
   const primaryRouteKey = index.getPrimaryRouteKey();
@@ -21377,7 +21934,7 @@ function summarizeRoutes(routeHintStatePath, limit, options) {
     depsSelection: options?.depsSelection,
     limit
   });
-  const startupPolicyStatePath = import_path27.default.join(import_path27.default.dirname(routeHintStatePath), "startup-policy.v1.json");
+  const startupPolicyStatePath = import_path28.default.join(import_path28.default.dirname(routeHintStatePath), "startup-policy.v1.json");
   const startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
   const startupPolicyRoute = normalizedPrimaryRouteKey ? startupPolicySnapshot?.routes?.[normalizedPrimaryRouteKey] ?? null : null;
   const startupPolicy = startupPolicyRoute && normalizedPrimaryRouteKey ? {
@@ -21429,18 +21986,18 @@ function parsePackageLabel(label) {
 }
 var packageVersionCache = /* @__PURE__ */ new Map();
 function readPackageVersion(packageRoot) {
-  const normalizedRoot = import_path27.default.resolve(packageRoot);
+  const normalizedRoot = import_path28.default.resolve(packageRoot);
   if (packageVersionCache.has(normalizedRoot)) {
     return packageVersionCache.get(normalizedRoot) ?? null;
   }
-  const manifest = readJson(import_path27.default.join(normalizedRoot, "package.json"));
+  const manifest = readJson2(import_path28.default.join(normalizedRoot, "package.json"));
   const version = typeof manifest?.version === "string" && manifest.version.length > 0 ? manifest.version : null;
   packageVersionCache.set(normalizedRoot, version);
   return version;
 }
 function extractPackageIdentityFromModuleId(moduleId) {
   const fsPath = moduleId.startsWith("ws://") ? moduleId.slice("ws://".length) : moduleId;
-  const marker = `${import_path27.default.sep}node_modules${import_path27.default.sep}`;
+  const marker = `${import_path28.default.sep}node_modules${import_path28.default.sep}`;
   const idx = fsPath.lastIndexOf(marker);
   if (idx < 0) return null;
   const packageRootBase = fsPath.slice(0, idx + marker.length);
@@ -21449,7 +22006,7 @@ function extractPackageIdentityFromModuleId(moduleId) {
   if (parts.length === 0) return null;
   const packageName = parts[0].startsWith("@") && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
   if (!packageName) return null;
-  const pnpmMarker = `${import_path27.default.sep}.pnpm${import_path27.default.sep}`;
+  const pnpmMarker = `${import_path28.default.sep}.pnpm${import_path28.default.sep}`;
   const pnpmIdx = fsPath.indexOf(pnpmMarker);
   if (pnpmIdx >= 0) {
     const segment = fsPath.slice(pnpmIdx + pnpmMarker.length).split(/[\\/]/, 1)[0] ?? "";
@@ -21459,14 +22016,14 @@ function extractPackageIdentityFromModuleId(moduleId) {
       if (version2) return { packageName, packageVersion: version2 };
     }
   }
-  const packageRoot = parts[0].startsWith("@") && parts.length >= 2 ? import_path27.default.join(packageRootBase, parts[0], parts[1]) : import_path27.default.join(packageRootBase, parts[0]);
+  const packageRoot = parts[0].startsWith("@") && parts.length >= 2 ? import_path28.default.join(packageRootBase, parts[0], parts[1]) : import_path28.default.join(packageRootBase, parts[0]);
   const version = readPackageVersion(packageRoot);
   return version ? { packageName, packageVersion: version } : null;
 }
 function loadDepUsageIndex(depsRoot, depsHash) {
-  const depUsagePath = import_path27.default.join(depsRoot, "deps-usage.v2.json");
-  const legacyPath = import_path27.default.join(depsRoot, "deps-usage.v1.json");
-  const raw = readJson(depUsagePath) ?? readJson(legacyPath);
+  const depUsagePath = import_path28.default.join(depsRoot, "deps-usage.v2.json");
+  const legacyPath = import_path28.default.join(depsRoot, "deps-usage.v1.json");
+  const raw = readJson2(depUsagePath) ?? readJson2(legacyPath);
   if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
   const entries = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
   const out = /* @__PURE__ */ new Map();
@@ -21489,8 +22046,8 @@ function loadDepUsageIndex(depsRoot, depsHash) {
   return out;
 }
 function loadDepsManifestIndex2(depsRoot) {
-  const manifestPath = import_path27.default.join(depsRoot, "manifest.json");
-  const raw = readJson(manifestPath);
+  const manifestPath = import_path28.default.join(depsRoot, "manifest.json");
+  const raw = readJson2(manifestPath);
   const entries = raw?.entries && typeof raw.entries === "object" ? raw.entries : {};
   const out = /* @__PURE__ */ new Map();
   for (const [entryPath, value] of Object.entries(entries)) {
@@ -21519,7 +22076,7 @@ function loadDepsManifestIndex2(depsRoot) {
   return out;
 }
 function loadVendorPackRouting(depsRoot, depsHash) {
-  const raw = readJson(import_path27.default.join(depsRoot, "vendor-pack.v2.index.json"));
+  const raw = readJson2(import_path28.default.join(depsRoot, "vendor-pack.v2.index.json"));
   if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return /* @__PURE__ */ new Map();
   const routing = raw.fileNameToPackFile && typeof raw.fileNameToPackFile === "object" ? raw.fileNameToPackFile : {};
   return new Map(
@@ -21601,8 +22158,8 @@ function summarizeDuplicateFindings(graphNodes, depUsageIndex, depsManifestIndex
   ).slice(0, Math.max(1, limit));
 }
 function summarizeChunkBloatFindings(outDir, limit) {
-  const manifest = readJson(import_path27.default.join(import_path27.default.resolve(outDir), "manifest.json"));
-  const stats = readJson(import_path27.default.join(import_path27.default.resolve(outDir), "build.stats.json"));
+  const manifest = readJson2(import_path28.default.join(import_path28.default.resolve(outDir), "manifest.json"));
+  const stats = readJson2(import_path28.default.join(import_path28.default.resolve(outDir), "build.stats.json"));
   const chunks = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
   if (!chunks.length || !stats) return [];
   return chunks.map((chunk) => {
@@ -21855,7 +22412,7 @@ function buildTopFindings(findings, limit) {
   ).slice(0, Math.max(1, limit));
 }
 function compactWorkspaceLabel(projectRoot) {
-  const base = import_path27.default.basename(projectRoot);
+  const base = import_path28.default.basename(projectRoot);
   return base || projectRoot;
 }
 function uniquePreservingOrder(values) {
@@ -22293,7 +22850,7 @@ async function runAnalyzeCommand(options = {}) {
   const limit = Math.max(1, options.limit ?? 10);
   const selected = getSelectedSurfaces(options);
   const ws = await withSuppressedConsole(!!options.json, () => resolveAnalyzeWorkspace());
-  const outDir = options.outDir ? import_path27.default.resolve(options.outDir) : import_path27.default.join(ws.projectRoot, "dist");
+  const outDir = options.outDir ? import_path28.default.resolve(options.outDir) : import_path28.default.join(ws.projectRoot, "dist");
   const needsGraphState = selected.includes("graph") || selected.includes("findings");
   const needsDepsState = selected.includes("packs") || selected.includes("findings") || selected.includes("routes");
   const nodes = needsGraphState ? await withSuppressedConsole(!!options.json, () => loadGraphSnapshot(ws.ionifyDir)) : null;
@@ -22333,7 +22890,7 @@ async function runAnalyzeCommand(options = {}) {
     summary.packs = depsInfo ? analyzeVendorPacks(depsInfo.depsRoot, depsInfo.depsHash, depsInfo.selectionMode, limit) : null;
   }
   if (selected.includes("routes")) {
-    const routeHintStatePath = import_path27.default.join(ws.ionifyDir, "route-hints.v1.json");
+    const routeHintStatePath = import_path28.default.join(ws.ionifyDir, "route-hints.v1.json");
     summary.routes = summarizeRoutes(routeHintStatePath, limit, {
       projectRoot: ws.projectRoot,
       depsSelection: depsInfo
@@ -22551,9 +23108,12 @@ async function publishProductionTransformCas(options) {
       writeJsonFile6(import_path35.default.join(baseDir, "meta.json"), {
         version: 1,
         baseHash: job.baseHash,
+        artifactHash,
         pipelineHash,
+        depsStampHash,
         deps: depsAbs.sort(),
         urlDeps: Array.from(new Set(urlDeps.map((p) => import_path35.default.resolve(p)))).sort(),
+        depsProof: buildCssCasDepProof2(depsAbs, moduleMetaById, options.workspaceRoot),
         modules: job.cssNeedsJsWrapper === true,
         generatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
@@ -22677,6 +23237,41 @@ function computeDepsContentStampHash2(depsAbs, moduleMetaById, workspaceRoot) {
   }
   entries.sort();
   return getCacheKey(entries.join("|"));
+}
+function buildCssCasDepProof2(depsAbs, moduleMetaById, workspaceRoot) {
+  const proofs = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const depAbs of depsAbs) {
+    const abs = import_path35.default.resolve(depAbs);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId && moduleMetaById.has(depId)) continue;
+    try {
+      const st = import_fs33.default.statSync(abs);
+      if (!st.isFile()) continue;
+      proofs.push({
+        filePath: abs,
+        dev: st.dev,
+        ino: st.ino,
+        mtimeMs: st.mtimeMs,
+        ctimeMs: st.ctimeMs,
+        size: st.size,
+        hash: getCacheKey(import_fs33.default.readFileSync(abs))
+      });
+    } catch {
+      proofs.push({
+        filePath: abs,
+        dev: 0,
+        ino: 0,
+        mtimeMs: 0,
+        ctimeMs: 0,
+        size: -1,
+        hash: "missing"
+      });
+    }
+  }
+  return proofs.sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 function readJsonFile6(filePath) {
   if (!import_fs33.default.existsSync(filePath)) return null;
@@ -22878,7 +23473,7 @@ async function runPublishCommand(options = {}) {
       ms: state.tiers.graph.ms
     };
     state.timingsMs.plan = state.tiers.plan.ms ?? 0;
-    state.timingsMs.pdc = canonicalDeps.pdcMs;
+    state.timingsMs.pdc = 0;
     state.tiers.transforms = { state: "publishing" };
     writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const transformResult = await publishProductionTransformCas({
@@ -22941,7 +23536,6 @@ async function runPublishCommand(options = {}) {
           projectRoot: rootDir,
           depsHash,
           plan,
-          pdcClosureHash: canonicalDeps.productionClosure?.closureHash ?? null,
           tier4ChunkManifestHash,
           depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION3
         })
@@ -23302,7 +23896,7 @@ init_cloud_auth();
 // src/cli/utils/cloud-binding.ts
 init_cjs_shims();
 var import_child_process2 = __toESM(require("child_process"), 1);
-var import_crypto12 = __toESM(require("crypto"), 1);
+var import_crypto11 = __toESM(require("crypto"), 1);
 var import_fs37 = __toESM(require("fs"), 1);
 var import_os5 = __toESM(require("os"), 1);
 var import_path39 = __toESM(require("path"), 1);
@@ -23341,7 +23935,7 @@ remote=${parts.normalizedRemote}
 workspace=${parts.workspaceRelPath}
 slug=${normalizeProjectSlug(parts.projectSlug)}
 `;
-  return import_crypto12.default.createHash("sha256").update(canonical).digest("hex");
+  return import_crypto11.default.createHash("sha256").update(canonical).digest("hex");
 }
 function resolveBindingContext(workspace, opts = {}) {
   const git = readGitRepositoryInfo(workspace.projectRoot);
@@ -23499,7 +24093,7 @@ function normalizeWorkspaceRelPath(input) {
   return normalized && normalized !== "." ? normalized : "root";
 }
 function computeLocalPathHash(projectRoot) {
-  return import_crypto12.default.createHash("sha256").update(`ionify:local-binding:v1:${import_path39.default.resolve(projectRoot)}`).digest("hex");
+  return import_crypto11.default.createHash("sha256").update(`ionify:local-binding:v1:${import_path39.default.resolve(projectRoot)}`).digest("hex");
 }
 function stacklessError(message) {
   const error = new Error(message);
@@ -23512,7 +24106,7 @@ init_cjs_shims();
 var import_https2 = __toESM(require("https"), 1);
 var import_http2 = __toESM(require("http"), 1);
 var import_url8 = require("url");
-var import_crypto13 = __toESM(require("crypto"), 1);
+var import_crypto12 = __toESM(require("crypto"), 1);
 var CloudApiError = class extends Error {
   constructor(statusCode, body, message, parsedBody = parseCloudApiErrorBody(body)) {
     super(message);
@@ -23813,7 +24407,7 @@ var CloudClient = class {
   }
 };
 function computeContentHash(bytes) {
-  return import_crypto13.default.createHash("sha256").update(bytes).digest("hex");
+  return import_crypto12.default.createHash("sha256").update(bytes).digest("hex");
 }
 function shouldRetryCloudRateLimit(statusCode, body, attempt, maxAttempts) {
   return statusCode === 429 && body.retryable === true && typeof body.retry_after_secs === "number" && body.retry_after_secs > 0 && body.retry_after_secs <= 30 && attempt < maxAttempts;
@@ -25835,7 +26429,7 @@ async function runMigrateCommand(options = {}) {
   const report = [];
   const viteConfigPath = VITE_CONFIG_NAMES.map((name) => import_path45.default.join(cwd, name)).find((p) => import_fs41.default.existsSync(p)) ?? null;
   const pkgPath = import_path45.default.join(cwd, "package.json");
-  const pkg = readJson2(pkgPath);
+  const pkg = readJson3(pkgPath);
   const hasViteDep = !!(pkg && (pkg.dependencies && pkg.dependencies.vite || pkg.devDependencies && pkg.devDependencies.vite));
   if (!viteConfigPath && !hasViteDep) {
     logError(
@@ -26067,7 +26661,7 @@ function backupFile(filePath) {
   } catch {
   }
 }
-function readJson2(filePath) {
+function readJson3(filePath) {
   try {
     return JSON.parse(import_fs41.default.readFileSync(filePath, "utf8"));
   } catch {

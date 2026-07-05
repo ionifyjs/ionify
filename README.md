@@ -1,104 +1,20 @@
 # ⚡ Ionify
 
-**A web infrastructure intelligence engine**
+**The build engine that doesn't start over.**
 
-Ionify unifies development and production workflows into one persistent pipeline: dependency graph + content-addressable cache + hybrid transforms + analysis-ready architecture.
-
----
-
-## What is Ionify?
-
-Ionify is a web infrastructure intelligence engine.
-
-Instead of treating development and production as separate tools, Ionify runs the entire lifecycle through a single persistent engine — from file watching and resolution to transformation, caching, and bundling.
-
-At its core, Ionify maintains a **long-lived dependency graph** and a **content-addressable cache** that survive across runs. This allows the engine to understand how projects evolve over time, not just how they build once.
-
-Ionify combines a high-performance native core with a hybrid transformation strategy:
-- **OXC** as the primary engine for parsing and transformation
-- **SWC** as a fallback to ensure compatibility and resilience
-
-This unified and persistent design enables something traditional tooling cannot:  
-**infrastructure-level insight into the build process itself** — opening the door to analysis, optimization, and future AI-assisted recommendations.
+One Graph. One CAS. One Authority.
 
 ---
 
-## Why This Matters
+Every layer of computing learned to stop redoing work it had already done — CPUs got caches, databases got indexes, compilers got incremental compilation. The build never learned it. Every run rediscovers your dependencies, re-transforms your modules, and rebuilds the same artifacts from zero.
 
-### What Ionify Unifies
-
-Ionify unifies what is traditionally fragmented across multiple tools:
-
-- Development server and production bundling
-- Resolution logic and dependency semantics
-- Transformation and caching strategies
-- Performance characteristics across environments
-
-By running everything through the same engine, Ionify eliminates an entire class of inconsistencies that appear when dev and build pipelines diverge.
-
-### For Developers
-
-- **Fewer "works in dev, breaks in build" surprises** — same pipeline in both modes
-- **Faster iteration** — persistent graph and cache reuse across runs
-- **Deterministic behavior** — consistent across environments
-- **Foundation for intelligent tooling** — infrastructure that can reason about builds, not just execute them
-
-Ionify is designed to be the layer *below* frameworks and plugins — the infrastructure they can rely on.
-
----
-
-## Architecture
-
-### Pipeline Overview
-
-```
-Source Files
-    ↓
-  Resolver
-    ↓
-Persistent Dependency Graph (native)
-    ↓
-Transform Engine (OXC/SWC hybrid)
-    ↓
-Content-Addressable Store (.ionify/cas/versionHash/moduleHash/...)
-    ↓
-Dev Server / Bundler
-```
-
-### Hybrid Transformation Engine
-
-Ionify uses a hybrid transformation strategy by design.
-
-**OXC** is used as the primary engine for parsing and transformation, optimized for performance and modern JavaScript syntax. **SWC** acts as a fallback layer to ensure robustness and compatibility across edge cases and evolving ecosystems.
-
-This approach allows Ionify to remain framework-agnostic while balancing speed, correctness, and long-term maintainability.
-
-### Storage
-
-- **Graph persistence** — native Rust implementation
-- **Transformed outputs** — stored in version-isolated CAS
-- **Automatic invalidation** — via configuration hash
-
-### Why This Enables Intelligence
-
-Because Ionify persists the dependency graph and transformed outputs, the engine can observe patterns over time:
-- Which modules change frequently
-- Which transformations are expensive
-- How dependency structure affects rebuild cost
-
-This data is the basis for future analyzer tooling and AI-assisted optimization.
-
----
+Ionify is a build engine that **remembers**: a persistent dependency graph, a content-addressable store, and a single published authority over every dependency — shared by dev, build, and CI so they can never disagree.
 
 ## Quick Start
-
-### Installation
 
 ```bash
 pnpm add -D ionify
 ```
-
-### Minimal Configuration
 
 Create `ionify.config.ts`:
 
@@ -110,27 +26,52 @@ export default {
 };
 ```
 
-### Development Server
-
 ```bash
-pnpm ionify dev
+pnpm ionify dev     # development server
+pnpm ionify build   # production build
 ```
 
-### Production Build
+## What Ionify Is
 
-```bash
-pnpm ionify build
+Ionify is not a faster bundler — it's a different category. It runs the entire lifecycle through one persistent engine: file watching, resolution, transformation, caching, and bundling. Because the engine *owns* the pipeline, it can persist what it learns:
+
+- **One Graph** — a long-lived dependency graph that survives restarts. The engine understands how your project evolves over time, not just how it builds once.
+- **One CAS** — a content-addressable store (`.ionify/cas/versionHash/moduleHash/…`). If content hasn't changed, its work is never done again. Deterministic, version-isolated, automatically invalidated by configuration hash.
+- **One Authority** — each dependency's export surface is published once as a content-hashed contract. The dev server, the production bundler, and federation all consume the *same* contract. There is a single, enforced answer to "what does this dependency expose" — so dev and production cannot quietly drift.
+
+That last part kills a whole class of bugs by construction, not by detection: *"works in dev, breaks in build"*, duplicate singletons, phantom exports — they're all the same disease (no single source of truth about a dependency), and they become structurally impossible when the truth has one owner.
+
+## Architecture
+
+```
+Source Files
+    ↓
+  Resolver
+    ↓
+Persistent Dependency Graph (native)
+    ↓
+Transform Engine (OXC)
+    ↓
+Content-Addressable Store (.ionify/cas/versionHash/moduleHash/...)
+    ↓
+Dev Server / Bundler
 ```
 
----
+### Hybrid Transformation Engine
 
-## What's New
+Ionify uses a hybrid transformation strategy by design: **OXC** as the primary engine for parsing and transformation (performance, modern syntax), with **SWC** as a fallback layer for robustness across edge cases and evolving ecosystems. This keeps the engine framework-agnostic while balancing speed, correctness, and long-term maintainability.
 
-- Fix bug #5: stale dev dependency URLs could survive dependency routing changes and produce `/@deps/*` startup failures. Issue: https://github.com/ionifyjs/ionify/issues/5.
+### Storage
 
-## Recent Implemented
+- **Graph persistence** — native Rust implementation
+- **Transformed outputs** — stored in version-isolated CAS
+- **Automatic invalidation** — via configuration hash
 
-### Environment Modes
+### Unified Dev + Production
+
+Development and production share the same resolver, the same dependency semantics, the same transforms, and the same caching strategy. Unifying the pipeline eliminates the entire class of inconsistencies that appears when dev and build pipelines diverge.
+
+## Environment Modes
 
 Ionify loads `.env`, `.env.local`, `.env.<mode>`, and `.env.<mode>.local`.
 Use `--mode` to select the app mode while keeping production build semantics:
@@ -153,84 +94,31 @@ export default defineConfig(({ mode, env }) => ({
 }));
 ```
 
----
-
 ## Project Status
 
-**Core engine:** Stable and production-ready  
-**Unified dev + build pipeline:** Implemented  
-**Persistent graph and CAS:** In place  
-**Dependency pipeline:** Stabilization in progress  
-**Plugin system:** Temporarily paused  
-**Analyzer and AI layers:** Planned on top of the unified engine
+| Capability                   | Status         |
+| ---------------------------- | -------------- |
+| Persistent Graph             | ✅ Stable       |
+| Content Addressable Storage  | ✅ Stable       |
+| Native Dependency Resolver   | ✅ Stable       |
+| Dependency Publication Layer | ✅ Stable       |
+| One Dependency Authority     | ✅ Stable       |
+| Unified Dev + Build Pipeline | ✅ Stable       |
+| Federation Foundation        | ✅ Stable       |
+| Workspace Engine             | ✅ Stable       |
+| Ionify Analyze               | ✅ Stable       |
+| Cloud CAS                    | 🚧 In Progress |
 
----
+## What's New
 
-## Key Features
-
-### Current
-
-- **Persistent Graph Engine** — dependency graph saved to disk and reused across runs
-- **Unified Pipeline** — dev and production share the same core logic
-- **Content Addressable Cache (CAS)** — version-isolated, deterministic caching
-- **Rust-Powered Performance** — native core for parsing, transformation, and bundling
-- **Hybrid Transform Strategy** — OXC primary, SWC fallback
-- **Graph-based HMR** — intelligent hot module replacement based on dependency structure
-
-### Planned
-
-- **Analysis Dashboard** — visualize builds, cache hits, and dependency hot paths
-- **AI-Assisted Optimization** — auto-tune splits, targets, and bundle strategies
-- **Monorepo Support** — native workspace handling
-- **Remote Build Cache** — team-level caching infrastructure
-
----
-
-## Language Stack
-
-| Component               | Technology          |
-| ----------------------- | ------------------- |
-| Core Engine             | Rust                |
-| CLI / SDK / Plugin API  | TypeScript          |
-| Graph Persistence       | Native (sled/SQLite)|
-| Primary Parser          | OXC                 |
-| Fallback Parser         | SWC                 |
-| Future Analyzer UI      | React + TypeScript  |
-
----
-
-## Roadmap
-
-1. ✅ **Core Engine** — parser, graph, CAS, dev server
-2. ✅ **Unified Pipeline** — same engine for dev and production
-3. ✅ **Persistent Graph + Cache** — version-isolated storage
-4. 🔄 **Dependency Pipeline Stabilization** — robust node_modules handling
-5. ⏸️ **Plugin System** — paused for pipeline stabilization
-6. 📋 **Analyzer UI + Insights** — build visualization and metrics
-7. 📋 **AI Optimization Engine** — intelligent build recommendations
-8. 📋 **Monorepo / Remote Cache** — team collaboration features
-
----
-
-## Philosophy
-
-Ionify is designed to be the infrastructure layer that frameworks and plugins rely on — not another framework itself.
-
-By unifying the build pipeline and persisting the dependency graph, Ionify creates a foundation for:
-- Smarter tooling that understands your project over time
-- Analysis and optimization based on real build patterns
-- Future AI-assisted recommendations grounded in actual data
-
----
+- Fix bug #5: stale dev dependency URLs could survive dependency routing changes and produce `/@deps/*` startup failures. Issue: https://github.com/ionifyjs/ionify/issues/5.
 
 ## Links
 
-- **Website:** [ionify.cloud](https://ionify.cloud)
-- **GitHub:** [github.com/khaledM-salem/Ionify](https://github.com/khaledM-salem/Ionify)
-- **Issues:** [github.com/khaledM-salem/Ionify/issues](https://github.com/khaledM-salem/Ionify/issues)
-- **Contact:** contact@ionify.cloud
-
----
+Website: https://ionify.cloud
+GitHub: https://github.com/ionifyjs/ionify
+Issues: https://github.com/ionifyjs/ionify/issues
+Contact: [khaledsalem@ionify.cloud](mailto:khaledsalem@ionify.cloud)
 
 ## License
 

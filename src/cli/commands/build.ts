@@ -55,13 +55,6 @@ import {
   type DepUsageIndex,
 } from "@core/deps/usage";
 import {
-  buildProductionDependencyClosure,
-  computeAppDemandIdentity,
-  loadProductionDependencyClosure,
-  persistProductionDependencyClosure,
-  type ProductionDependencyClosure,
-} from "@core/deps/production-closure";
-import {
   createProductionReadinessRecord,
   hashFileIfExists,
   isVerifiedProductionReadinessForPlan,
@@ -76,7 +69,11 @@ import {
   computeSubpathFromEntryPath,
 } from "@core/deps/registry";
 import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
-import { compileCss, renderCssTokensModule } from "@core/loaders/css";
+import { renderCssTokensModule } from "@core/loaders/css";
+import {
+  buildCssDemandAnalysis,
+  registerCssDemandGraphSourceFiles,
+} from "@core/loaders/css-demand";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { computeDepsHash } from "@cli/utils/deps-hash";
 import {
@@ -168,9 +165,31 @@ function logBuildProfileText(label: string, value: string): void {
 type TransformCasProfile = {
   nativeJsTransformMs: number;
   nativeJsTransformJobs: number;
-  cssWorkerTransformStartupMs: number;
+  cssCompileWallMs: number;
+  cssCompileTotalMs: number;
+  cssPostcssConfigLoadMs: number;
+  cssPostcssConfigWaitMs: number;
+  cssPostcssConfigCacheHits: number;
+  cssTailwindGraphSetupMs: number;
+  cssPostcssProcessMs: number;
+  cssPostcssPluginMs: number;
+  cssTailwindPluginMs: number;
+  cssAutoprefixerPluginMs: number;
+  cssRtlcssPluginMs: number;
+  cssOtherPostcssPluginMs: number;
+  cssDependencyCollectionMs: number;
+  cssImportDependencyDiscoveryMs: number;
+  cssUrlDependencyDiscoveryMs: number;
+  cssPipelineHashMs: number;
+  cssDemandProofMs: number;
   cssWorkerJobs: number;
+  cssGlobalCacheRestoreMs: number;
+  cssGlobalCacheRestoreHit: number;
+  cssGlobalCacheRestoreMiss: number;
+  cssGlobalCacheWriteMs: number;
+  cssGlobalCacheWriteFiles: number;
   workerTransformJobs: number;
+  workerTransformMs: number;
   defineReplacementMs: number;
   defineReplacementCalls: number;
   artifactHashBookkeepingMs: number;
@@ -186,15 +205,48 @@ type TransformCasProfile = {
   variantArtifactWriteMs: number;
   variantArtifactWriteFiles: number;
   variantArtifactWriteBytes: number;
+  cssDemandExtractionMs: number;
+  cssDemandFilesScanned: number;
+  cssDemandCacheHit: number;
+  cssDemandCacheMiss: number;
+  cssDemandTokens: number;
+  cssDemandProofWriteMs: number;
+  cssTailwindGraphContentMs: number;
+  cssTailwindGraphContentFiles: number;
+  cssTailwindGraphContentPlugins: number;
+  cssTailwindGraphContentOptimized: number;
+  cssTailwindGraphContentFallbacks: number;
 };
 
 function createTransformCasProfile(): TransformCasProfile {
   return {
     nativeJsTransformMs: 0,
     nativeJsTransformJobs: 0,
-    cssWorkerTransformStartupMs: 0,
+    cssCompileWallMs: 0,
+    cssCompileTotalMs: 0,
+    cssPostcssConfigLoadMs: 0,
+    cssPostcssConfigWaitMs: 0,
+    cssPostcssConfigCacheHits: 0,
+    cssTailwindGraphSetupMs: 0,
+    cssPostcssProcessMs: 0,
+    cssPostcssPluginMs: 0,
+    cssTailwindPluginMs: 0,
+    cssAutoprefixerPluginMs: 0,
+    cssRtlcssPluginMs: 0,
+    cssOtherPostcssPluginMs: 0,
+    cssDependencyCollectionMs: 0,
+    cssImportDependencyDiscoveryMs: 0,
+    cssUrlDependencyDiscoveryMs: 0,
+    cssPipelineHashMs: 0,
+    cssDemandProofMs: 0,
     cssWorkerJobs: 0,
+    cssGlobalCacheRestoreMs: 0,
+    cssGlobalCacheRestoreHit: 0,
+    cssGlobalCacheRestoreMiss: 0,
+    cssGlobalCacheWriteMs: 0,
+    cssGlobalCacheWriteFiles: 0,
     workerTransformJobs: 0,
+    workerTransformMs: 0,
     defineReplacementMs: 0,
     defineReplacementCalls: 0,
     artifactHashBookkeepingMs: 0,
@@ -210,6 +262,17 @@ function createTransformCasProfile(): TransformCasProfile {
     variantArtifactWriteMs: 0,
     variantArtifactWriteFiles: 0,
     variantArtifactWriteBytes: 0,
+    cssDemandExtractionMs: 0,
+    cssDemandFilesScanned: 0,
+    cssDemandCacheHit: 0,
+    cssDemandCacheMiss: 0,
+    cssDemandTokens: 0,
+    cssDemandProofWriteMs: 0,
+    cssTailwindGraphContentMs: 0,
+    cssTailwindGraphContentFiles: 0,
+    cssTailwindGraphContentPlugins: 0,
+    cssTailwindGraphContentOptimized: 0,
+    cssTailwindGraphContentFallbacks: 0,
   };
 }
 
@@ -297,7 +360,19 @@ function logTransformCasProfile(profile: TransformCasProfile): void {
     `[BuildProfile][transformCas] nativeJsTransform_ms=${profile.nativeJsTransformMs} jobs=${profile.nativeJsTransformJobs}`,
   );
   logInfo(
-    `[BuildProfile][transformCas] cssWorkerTransformStartup_ms=${profile.cssWorkerTransformStartupMs} cssJobs=${profile.cssWorkerJobs} workerJobs=${profile.workerTransformJobs}`,
+    `[BuildProfile][transformCas] cssCompileWall_ms=${profile.cssCompileWallMs.toFixed(2)} cssJobs=${profile.cssWorkerJobs} workerTransform_ms=${profile.workerTransformMs.toFixed(2)} workerJobs=${profile.workerTransformJobs}`,
+  );
+  logInfo(
+    `[BuildProfile][cssCompile] total_ms=${profile.cssCompileTotalMs.toFixed(2)} postcssConfigLoad_ms=${profile.cssPostcssConfigLoadMs.toFixed(2)} postcssConfigWait_ms=${profile.cssPostcssConfigWaitMs.toFixed(2)} postcssConfigCacheHits=${profile.cssPostcssConfigCacheHits} tailwindGraphSetup_ms=${profile.cssTailwindGraphSetupMs.toFixed(2)} postcssProcess_ms=${profile.cssPostcssProcessMs.toFixed(2)} pluginTotal_ms=${profile.cssPostcssPluginMs.toFixed(2)}`,
+  );
+  logInfo(
+    `[BuildProfile][cssCompile][plugins] tailwind_ms=${profile.cssTailwindPluginMs.toFixed(2)} autoprefixer_ms=${profile.cssAutoprefixerPluginMs.toFixed(2)} rtlcss_ms=${profile.cssRtlcssPluginMs.toFixed(2)} other_ms=${profile.cssOtherPostcssPluginMs.toFixed(2)}`,
+  );
+  logInfo(
+    `[BuildProfile][cssCompile][proof] dependencyCollection_ms=${profile.cssDependencyCollectionMs.toFixed(2)} importDiscovery_ms=${profile.cssImportDependencyDiscoveryMs.toFixed(2)} urlDiscovery_ms=${profile.cssUrlDependencyDiscoveryMs.toFixed(2)} pipelineHash_ms=${profile.cssPipelineHashMs.toFixed(2)} demandProof_ms=${profile.cssDemandProofMs.toFixed(2)}`,
+  );
+  logInfo(
+    `[BuildProfile][cssGlobalCache] restore_ms=${profile.cssGlobalCacheRestoreMs.toFixed(2)} hit=${profile.cssGlobalCacheRestoreHit} miss=${profile.cssGlobalCacheRestoreMiss} write_ms=${profile.cssGlobalCacheWriteMs.toFixed(2)} files=${profile.cssGlobalCacheWriteFiles}`,
   );
   logInfo(
     `[BuildProfile][transformCas] defineReplacement_ms=${profile.defineReplacementMs} calls=${profile.defineReplacementCalls}`,
@@ -317,6 +392,42 @@ function logTransformCasProfile(profile: TransformCasProfile): void {
   logInfo(
     `[BuildProfile][transformCas] variantArtifactWrite_ms=${profile.variantArtifactWriteMs} files=${profile.variantArtifactWriteFiles} bytes=${profile.variantArtifactWriteBytes}`,
   );
+  logInfo(
+    `[BuildProfile][cssDemand] extraction_ms=${profile.cssDemandExtractionMs} filesScanned=${profile.cssDemandFilesScanned} cacheHit=${profile.cssDemandCacheHit} cacheMiss=${profile.cssDemandCacheMiss} tokens=${profile.cssDemandTokens} proofWrite_ms=${profile.cssDemandProofWriteMs}`,
+  );
+  logInfo(
+    `[BuildProfile][cssTailwindGraphContent] override_ms=${profile.cssTailwindGraphContentMs} files=${profile.cssTailwindGraphContentFiles} plugins=${profile.cssTailwindGraphContentPlugins} optimized=${profile.cssTailwindGraphContentOptimized} fallbacks=${profile.cssTailwindGraphContentFallbacks}`,
+  );
+}
+
+function addCssCompileProfile(profile: TransformCasProfile, cssProfile: unknown): void {
+  if (!cssProfile || typeof cssProfile !== "object") return;
+  const p = cssProfile as Record<string, unknown>;
+  profile.cssCompileTotalMs += Number(p.totalMs ?? 0);
+  profile.cssPostcssConfigLoadMs += Number(p.postcssConfigLoadMs ?? 0);
+  profile.cssPostcssConfigWaitMs += Number(p.postcssConfigWaitMs ?? 0);
+  if (p.postcssConfigCacheHit === true) profile.cssPostcssConfigCacheHits += 1;
+  profile.cssTailwindGraphSetupMs += Number(p.tailwindGraphContentMs ?? 0);
+  profile.cssPostcssProcessMs += Number(p.postcssProcessMs ?? 0);
+  profile.cssPostcssPluginMs += Number(p.postcssPluginMs ?? 0);
+  profile.cssTailwindPluginMs += Number(p.tailwindPluginMs ?? 0);
+  profile.cssAutoprefixerPluginMs += Number(p.autoprefixerPluginMs ?? 0);
+  profile.cssRtlcssPluginMs += Number(p.rtlcssPluginMs ?? 0);
+  profile.cssOtherPostcssPluginMs += Number(p.otherPostcssPluginMs ?? 0);
+  profile.cssDependencyCollectionMs += Number(p.dependencyCollectionMs ?? 0);
+  profile.cssImportDependencyDiscoveryMs += Number(p.importDependencyDiscoveryMs ?? 0);
+  profile.cssUrlDependencyDiscoveryMs += Number(p.urlDependencyDiscoveryMs ?? 0);
+  profile.cssPipelineHashMs += Number(p.pipelineHashMs ?? 0);
+  profile.cssDemandProofMs += Number(p.cssDemandProofMs ?? 0);
+}
+
+function cloneWorkerSafeCssOptions(value: unknown): unknown {
+  if (value == null) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return undefined;
+  }
 }
 
 function resetTopologyValidationProfile(): void {
@@ -619,19 +730,37 @@ function isProductionSourceFreshnessCurrent(
           ) {
             return false;
           }
-          const depsAbs = Array.from(
-            new Set(
-              [...(cssMeta.deps ?? []), ...(cssMeta.urlDeps ?? [])].filter(
-                (p): p is string => typeof p === "string" && p.length > 0,
+          const publishedHash = typeof mod.hash === "string" ? mod.hash : "";
+          if (
+            cssMeta.artifactHash &&
+            cssMeta.depsStampHash &&
+            cssDepProofIsCurrent(cssMeta)
+          ) {
+            const derivedCssFile = path.join(getCasArtifactPath(casRoot, configHash, cssMeta.artifactHash), "transformed.css");
+            if (
+              !fs.existsSync(derivedCssFile) ||
+              (publishedHash !== cssMeta.artifactHash && publishedHash !== cached.hash)
+            ) {
+              return false;
+            }
+          } else {
+            const depsAbs = Array.from(
+              new Set(
+                [...(cssMeta.deps ?? []), ...(cssMeta.urlDeps ?? [])].filter(
+                  (p): p is string => typeof p === "string" && p.length > 0,
+                ),
               ),
-            ),
-          );
-          const depsStampHash = computeDepsContentStampHash(depsAbs, new Map(), workspaceRoot);
-          const expectedCssHash = getCacheKey(
-            `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`,
-          );
-          if (typeof mod.hash !== "string" || mod.hash !== expectedCssHash) {
-            return false;
+            );
+            const depsStampHash = computeDepsContentStampHash(depsAbs, new Map(), workspaceRoot);
+            const expectedCssHash = getCacheKey(
+              `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`,
+            );
+            const derivedCssFile = path.join(getCasArtifactPath(casRoot, configHash, expectedCssHash), "transformed.css");
+            const legacyBaseHashIsMaterialized =
+              publishedHash === cached.hash && fs.existsSync(derivedCssFile);
+            if (publishedHash !== expectedCssHash && !legacyBaseHashIsMaterialized) {
+              return false;
+            }
           }
         }
       } catch {
@@ -646,11 +775,42 @@ function isProductionSourceFreshnessCurrent(
 type CssCasMeta = {
   version: 1;
   baseHash: string;
+  artifactHash?: string;
+  artifactBytesHash?: string;
   pipelineHash: string;
+  depsStampHash?: string;
   deps: string[];
   urlDeps: string[];
+  depsProof?: CssCasDepProof[];
   modules: boolean;
   generatedAt: string;
+  cssDemand?: {
+    proofVersion: number;
+    extractorVersion: number;
+    classDemandHash: string;
+    dependencyHash: string;
+    tokenCount: number;
+    sourceFileCount: number;
+    uncertain: boolean;
+    uncertaintyReasons: string[];
+  } | null;
+  tailwindGraphContent?: {
+    enabled: boolean;
+    files: number;
+    plugins: number;
+    configPath: string | null;
+    fallbackReason: string | null;
+  } | null;
+};
+
+type CssCasDepProof = {
+  filePath: string;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  size: number;
+  hash: string;
 };
 
 function isCssModuleFile(filePath: string): boolean {
@@ -707,6 +867,86 @@ function computeDepsContentStampHash(
   }
   entries.sort();
   return getCacheKey(entries.join("|"));
+}
+
+function buildCssCasDepProof(
+  depsAbs: string[],
+  moduleMetaById: Map<string, { fsPath: string; kind: "js" | "css"; hash: string | null }>,
+  workspaceRoot: string,
+): CssCasDepProof[] {
+  const proofs: CssCasDepProof[] = [];
+  const seen = new Set<string>();
+  for (const depAbs of depsAbs) {
+    const abs = path.resolve(depAbs);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    const depId = toWsModuleId(abs, workspaceRoot);
+    if (depId && moduleMetaById.has(depId)) continue;
+    try {
+      const st = fs.statSync(abs);
+      if (!st.isFile()) continue;
+      proofs.push({
+        filePath: abs,
+        dev: st.dev,
+        ino: st.ino,
+        mtimeMs: st.mtimeMs,
+        ctimeMs: st.ctimeMs,
+        size: st.size,
+        hash: getCacheKey(fs.readFileSync(abs)),
+      });
+    } catch {
+      proofs.push({
+        filePath: abs,
+        dev: 0,
+        ino: 0,
+        mtimeMs: 0,
+        ctimeMs: 0,
+        size: -1,
+        hash: "missing",
+      });
+    }
+  }
+  return proofs.sort((a, b) => a.filePath.localeCompare(b.filePath));
+}
+
+function cssDepProofIsCurrent(
+  cssMeta: CssCasMeta,
+): boolean {
+  if (!Array.isArray(cssMeta.depsProof)) return false;
+  for (const proof of cssMeta.depsProof) {
+    const depAbs = path.resolve(proof.filePath);
+    try {
+      const st = fs.statSync(depAbs);
+      if (
+        !st.isFile() ||
+        proof.dev !== st.dev ||
+        proof.ino !== st.ino ||
+        proof.mtimeMs !== st.mtimeMs ||
+        proof.ctimeMs !== st.ctimeMs ||
+        proof.size !== st.size
+      ) {
+        return false;
+      }
+    } catch {
+      return proof.hash === "missing";
+    }
+  }
+  return true;
+}
+
+function copyFileWithHardlinkFallback(src: string, dst: string): boolean {
+  try {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    if (fs.existsSync(dst)) return true;
+    try {
+      fs.linkSync(src, dst);
+    } catch {
+      fs.copyFileSync(src, dst);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 type DepsManifestIndexEntry = {
@@ -991,6 +1231,11 @@ function depsManifestEntriesSatisfyTopologyContract(
   );
 }
 
+function depsManifestEntryDemandIsIdentityBearing(entry: any): boolean {
+  const topology = normalizeManifestString(entry?.artifactTopology ?? entry?.artifact_topology);
+  return topology === "esm-native" || topology === "esm-native-slim";
+}
+
 function manifestHasDifferentOutputVersion(manifestPath: string, outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION): boolean {
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -1180,7 +1425,6 @@ function writeGate4ValueAccountingArtifact(depsRoot: string): { bytes: number; t
       "deps-usage.v2.json",
       "gate3-profile.json",
       "gate4-value-accounting.json",
-      "production-closure.v1.json",
     ]);
     for (const filePath of sortedDirectoryFiles(depsRoot)) {
       const rel = depsRootRelativePath(depsRoot, filePath);
@@ -1444,6 +1688,7 @@ export async function checkVerifiedDepsSnapshotFreshness(options: {
       if (!isOptimizableDepEntryPath(item.entryPath)) continue;
       const manifestEntry = manifestEntriesByPath.get(canonicalFsPath(item.entryPath));
       if (!manifestEntry) continue;
+      if (!depsManifestEntryDemandIsIdentityBearing(manifestEntry)) continue;
       const currentDemand =
         !item.hasNamespace && !item.hasExportStar && Array.isArray(item.usedExports)
           ? Array.from(new Set(item.usedExports.map((value) => String(value).trim()).filter(Boolean))).sort()
@@ -1514,9 +1759,8 @@ export function rerouteDepsArtifacts(options: {
   casRoot: string;
   configHash: string;
   workspaceRoot: string;
-  productionClosure?: ProductionDependencyClosure | null;
 }): { rerouted: number; pruned: number; sharedPrewarmed: number; idRewritten: number } {
-  const { plan, depsRoot, casRoot, configHash, workspaceRoot, productionClosure } = options;
+  const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
 
   // Build reverse map: canonical entry path → DPL artifact metadata.
   const depsArtifactsByEntry = new Map<
@@ -1665,19 +1909,6 @@ export function rerouteDepsArtifacts(options: {
         mod.fsPath = artifact.artifactPath;
         mod.hash = resolvedHash;
         mod.artifactTopology = artifact.artifactTopology;
-        const closure = productionClosure?.entries?.[artifact.outFile];
-        if (closure) {
-          // Fix 3 — PDC is analysis-only here: attach the closure identity/record
-          // (folds into Tier-4 + manifest) but DO NOT set `usedExports`, so the
-          // linker keeps the dependency's complete wrapper export surface
-          // (baseline linking). Artifact-layer slimming is deferred to the
-          // Cached Artifact Layer phase (backlog-ii), not delivered by narrowing
-          // the linker surface here.
-          mod.dependencyFormat = closure.format;
-          mod.dependencyAbiHash = closure.dependencyAbiHash || undefined;
-          mod.productionClosureHash = closure.productionClosureHash;
-          mod.sideEffects = closure.sideEffects;
-        }
         // Normalize kind: T19 dep-leaf nodes have kind="dep" so the BFS recognises them
         // as artifact boundaries. After rerouting they are concrete JS artifact files;
         // all downstream consumers (CAS hydration loop, Rust bundler) expect kind="js".
@@ -1966,66 +2197,6 @@ export function rerouteDepsArtifacts(options: {
   return { rerouted, pruned, sharedPrewarmed, idRewritten };
 }
 
-export function attachProductionClosureMetadata(options: {
-  plan: BuildPlan;
-  depsRoot: string;
-  workspaceRoot: string;
-  productionClosure?: ProductionDependencyClosure | null;
-}): number {
-  const { plan, depsRoot, workspaceRoot, productionClosure } = options;
-  if (!productionClosure) return 0;
-
-  const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return 0;
-
-  const closureByArtifactPath = new Map<string, ProductionDependencyClosure["entries"][string]>();
-  const closureByArtifactId = new Map<string, ProductionDependencyClosure["entries"][string]>();
-  try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const manifestEntries: Record<string, any> = parsed?.entries ?? {};
-    for (const entry of Object.values(manifestEntries)) {
-      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
-      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
-      const closure = productionClosure.entries[outFile];
-      if (!closure) continue;
-      const artifactPath = path.join(depsRoot, outFile);
-      closureByArtifactPath.set(path.resolve(artifactPath), closure);
-      try {
-        closureByArtifactId.set(toWsModuleId(artifactPath, workspaceRoot), closure);
-      } catch {
-        // Absolute-path matching below is sufficient when workspace ids cannot be formed.
-      }
-    }
-  } catch {
-    return 0;
-  }
-
-  if (closureByArtifactPath.size === 0 && closureByArtifactId.size === 0) return 0;
-
-  let attached = 0;
-  for (const chunk of plan.chunks) {
-    for (const mod of chunk.modules) {
-      let closure = typeof mod.id === "string" ? closureByArtifactId.get(mod.id) : undefined;
-      if (!closure && typeof mod.fsPath === "string" && mod.fsPath.length > 0) {
-        closure = closureByArtifactPath.get(path.resolve(mod.fsPath));
-      }
-      if (!closure) continue;
-
-      // PDC is authoritative identity metadata here. It intentionally does not
-      // set `usedExports`; complete DPL artifacts remain the linked bytes until
-      // the artifact-native closure layer materializes finite artifacts.
-      mod.dependencyFormat = closure.format;
-      mod.dependencyAbiHash = closure.dependencyAbiHash || undefined;
-      mod.productionClosureHash = closure.productionClosureHash;
-      mod.sideEffects = closure.sideEffects;
-      attached += 1;
-    }
-  }
-
-  return attached;
-}
-
 export async function prepareCanonicalProductionDependencyPlan(options: {
   plan: BuildPlan;
   rootDir: string;
@@ -2038,15 +2209,10 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
   configHash: string;
   workspaceRoot: string;
 }): Promise<{
-  productionClosure: ProductionDependencyClosure | null;
   rerouted: number;
   pruned: number;
   sharedPrewarmed: number;
   idRewritten: number;
-  metadataAttached: number;
-  finite: number;
-  fallback: number;
-  pdcMs: number;
   rerouteMs: number;
 }> {
   await repairMissingPlanDependencyArtifacts({
@@ -2072,38 +2238,15 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
   });
   const rerouteMs = Date.now() - rerouteStart;
 
-  const pdcStart = Date.now();
-  const appDemandIdentity = computeAppDemandIdentity(
-    options.plan.chunks.flatMap((chunk) => chunk.modules),
-    options.depsHash,
-  );
-  const productionClosure = await prepareProductionDependencyClosure({
-    rootDir: options.rootDir,
-    depsRoot: options.depsRoot,
-    depsHash: options.depsHash,
-    resolvedEntries: options.resolvedEntries,
-    allowedRoots: options.allowedRoots,
-    appDemandIdentity,
-  });
-  const metadataAttached = attachProductionClosureMetadata({
-    plan: options.plan,
-    depsRoot: options.depsRoot,
-    workspaceRoot: options.workspaceRoot,
-    productionClosure,
-  });
-  const closureEntries = productionClosure ? Object.values(productionClosure.entries) : [];
-  const finite = closureEntries.filter((entry) => entry.usedExports !== null).length;
-
+  // PDC is frozen for the Production Work Elimination path. DPL now owns
+  // dependency artifact topology and the build consumes those artifacts
+  // directly. Keeping PDC on the direct cold path only re-scans app source and
+  // writes identity metadata that does not change emitted dependency bytes.
   return {
-    productionClosure,
     rerouted,
     pruned,
     sharedPrewarmed,
     idRewritten,
-    metadataAttached,
-    finite,
-    fallback: closureEntries.length - finite,
-    pdcMs: Date.now() - pdcStart,
     rerouteMs,
   };
 }
@@ -2689,68 +2832,6 @@ async function resolveUsageEntries(rootDir: string, resolvedEntries: string[] | 
     if (fs.existsSync(candidate)) usageEntries.push(candidate);
   }
   return usageEntries;
-}
-
-export async function prepareProductionDependencyClosure(options: {
-  rootDir: string;
-  depsRoot: string;
-  depsHash: string;
-  resolvedEntries: string[] | undefined;
-  allowedRoots: string[];
-  appDemandIdentity?: string;
-}): Promise<ProductionDependencyClosure | null> {
-  // Fix 1 — warm short-circuit. The closure depends on (deps identity + the
-  // app's import demand). When the build plan's module id+hash set is unchanged
-  // (appDemandIdentity matches the persisted record), neither can have changed,
-  // so reuse the persisted closure and skip the full-app usage scan entirely.
-  // This keeps the scan off the warm hot path (the 1.3s/UP-Portal regression).
-  if (options.appDemandIdentity) {
-    const cached = loadProductionDependencyClosure(options.depsRoot, options.depsHash);
-    if (cached && cached.appDemandIdentity === options.appDemandIdentity) {
-      return cached;
-    }
-  }
-  if (!fs.existsSync(path.join(options.depsRoot, "manifest.json"))) {
-    return null;
-  }
-  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
-  if (usageEntries.length === 0) {
-    // No current roots means no current demand proof. Falling back to complete
-    // DPL artifacts is safe; reviving an old closure here would make PDC
-    // correctness depend on unverified stale state.
-    return null;
-  }
-
-  const manifestIndex = loadDepsManifestIndex(options.depsRoot);
-  const canonicalFileNames = buildCanonicalDepFileNameIndex(
-    Array.from(manifestIndex, ([fileName, entry]) => ({
-      fileName,
-      entryPath: entry.entryPath,
-    })),
-  );
-
-  try {
-    const usage = canonicalizeDepUsageIndex(
-      await scanDepUsage({
-        rootDir: options.rootDir,
-        entries: usageEntries,
-        allowedRoots: options.allowedRoots,
-      }),
-      canonicalFileNames,
-    );
-    saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, usage);
-    const closure = buildProductionDependencyClosure({
-      depsRoot: options.depsRoot,
-      depsHash: options.depsHash,
-      usage,
-      appDemandIdentity: options.appDemandIdentity,
-    });
-    persistProductionDependencyClosure(options.depsRoot, closure);
-    return closure;
-  } catch (err) {
-    logWarn(`[PDC] Closure computation failed; using complete DPL artifacts (${String(err)})`);
-    return null;
-  }
 }
 
 function isReadyManualPackState(
@@ -3657,7 +3738,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         logBuildProfileDuration("depsAuthorityAndPacks", 0);
         logBuildProfileDuration("generateBuildPlan", 0);
         logBuildProfileDuration("depsReroute", 0);
-        logBuildProfileDuration("pdcClosure", 0);
         logBuildProfileDuration("canonicalDependencyPlan", 0);
         logBuildProfileDuration("moduleIndex", 0);
         logBuildProfileDuration("freshnessScan", 0);
@@ -3708,7 +3788,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             projectRoot: rootDir,
             depsHash,
             plan: earlyPublishedPlan,
-            pdcClosureHash: earlyProductionReadinessRecord!.identity.pdcClosureHash,
             artifacts: materializedReadiness.artifacts,
             dist: {
               manifestHash: distProof.manifestHash ?? "",
@@ -4145,8 +4224,9 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     let readinessPlanForIdentity: BuildPlan | null = null;
 
     // ── Production dependency authority ─────────────────────────────────────
-    // Canonical order: DPL artifacts first, then PDC on the production-native
-    // artifact plan, then buildChunks/PAP consume that single plan shape.
+    // Canonical order: DPL artifacts first, then buildChunks/PAP consume that
+    // single artifact plan shape. PDC is frozen and is not part of the live
+    // dependency value or cache-identity path.
     if (!verifiedPraForPublishedPlan) {
       const casRoot = path.join(ionifyDir, "cas");
       const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
@@ -4167,17 +4247,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           `[Build] Deps artifact rerouting: ${canonicalDeps.rerouted} entries rerouted (${canonicalDeps.idRewritten} ids → artifact identity), ${canonicalDeps.pruned} internal modules pruned${canonicalDeps.sharedPrewarmed > 0 ? `, ${canonicalDeps.sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
         );
       }
-      if (canonicalDeps.productionClosure) {
-        logInfo(
-          `[PDC] Production closure ready: ${canonicalDeps.finite} finite, ${canonicalDeps.fallback} conservative fallback (${canonicalDeps.pdcMs}ms, metadata=${canonicalDeps.metadataAttached})`,
-        );
-      }
       logBuildProfileDuration("depsReroute", canonicalDeps.rerouteMs);
-      logBuildProfileDuration("pdcClosure", canonicalDeps.pdcMs);
-      logBuildProfileDuration("canonicalDependencyPlan", canonicalDeps.rerouteMs + canonicalDeps.pdcMs);
+      logBuildProfileDuration("canonicalDependencyPlan", canonicalDeps.rerouteMs);
     } else {
       logBuildProfileDuration("depsReroute", 0);
-      logBuildProfileDuration("pdcClosure", 0);
       logBuildProfileDuration("canonicalDependencyPlan", 0);
     }
     const outDir = options.outDir || "dist";
@@ -4224,10 +4297,27 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     }
     logBuildProfile("moduleIndex", moduleIndexStart);
 
+    const cssDemandGraphRegisterStart = Date.now();
+    const cssDemandGraphFiles = Array.from(moduleMetaById.values())
+      .filter((meta) => {
+        if (meta.kind !== "js") return false;
+        if (meta.fsPath.includes("node_modules") || meta.fsPath.includes("/.ionify/")) return false;
+        const clean = meta.fsPath.split("?")[0]!.split("#")[0]!.toLowerCase();
+        return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+      })
+      .map((meta) => meta.fsPath);
+    const cssDemandRegisteredFiles = registerCssDemandGraphSourceFiles(rootDir, cssDemandGraphFiles);
+    if (isBuildProfileEnabled()) {
+      logInfo(
+        `[BuildProfile][cssDemandGraph] register_ms=${Date.now() - cssDemandGraphRegisterStart} files=${cssDemandRegisteredFiles.length} extraction_ms=0 cacheHit=0 cacheMiss=0 tokens=0`,
+      );
+    }
+
     const moduleOutputs = new Map<string, { code: string; type: "js" | "css" | "asset" }>();
 
     const modulesInPlan = moduleMetaById.size;
     const casRoot = path.join(ionifyDir, "cas");
+    const transformCasProfile = createTransformCasProfile();
 
     let casHits = 0;
 
@@ -4405,7 +4495,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           projectRoot: rootDir,
           depsHash,
           plan: readinessPlanForIdentity,
-          pdcClosureHash: productionReadinessRecord.identity.pdcClosureHash,
           artifacts: verifiedPraOutputReuse.artifacts,
           dist: {
             manifestHash: distProof.manifestHash ?? "",
@@ -4466,7 +4555,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         casExistsMap.set(batchPaths[i], batchExists[i]);
       }
     }
-
     // CAS hydration pass: skip transforms when artifacts already exist.
     const hydrationStart = Date.now();
     for (const [id, meta] of moduleMetaById.entries()) {
@@ -4477,7 +4565,23 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
       if (meta.kind === "css" && baseHashFromPlan) {
         const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
-        const cssMeta = readJsonFile<CssCasMeta>(path.join(baseDir, "meta.json"));
+        let cssMeta = readJsonFile<CssCasMeta>(path.join(baseDir, "meta.json"));
+        if (!cssMeta) {
+          const restoreStart = Date.now();
+          const restored = restoreCssArtifactFromGlobalCache(
+            configHash,
+            baseHashFromPlan,
+            casRoot,
+            cssNeedsJsWrapper,
+          );
+          transformCasProfile.cssGlobalCacheRestoreMs += Date.now() - restoreStart;
+          if (restored.restored) {
+            transformCasProfile.cssGlobalCacheRestoreHit += 1;
+            cssMeta = readJsonFile<CssCasMeta>(path.join(baseDir, "meta.json"));
+          } else {
+            transformCasProfile.cssGlobalCacheRestoreMiss += 1;
+          }
+        }
         if (
           cssMeta &&
           cssMeta.version === 1 &&
@@ -4641,6 +4745,71 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     const transformsNeeded = jobs.length;
     const percentHits = modulesInPlan > 0 ? Math.round((casHits * 100) / modulesInPlan) : 100;
+    const cssJobs = jobs.filter((job) => job.kind === "css");
+    const cssModulesOptionsForWorker = cloneWorkerSafeCssOptions((config as any)?.css?.modules);
+    const cssPreprocessorOptionsForWorker = cloneWorkerSafeCssOptions((config as any)?.css?.preprocessorOptions);
+    const configuredCssWorkers = Number(process.env.IONIFY_CSS_WORKERS || "");
+    const cssWorkerCount = Number.isFinite(configuredCssWorkers) && configuredCssWorkers > 0
+      ? Math.max(1, Math.min(cssJobs.length || 1, Math.floor(configuredCssWorkers)))
+      : cssJobs.length <= 3
+        ? 1
+        : Math.max(1, Math.min(cssJobs.length, Math.max(1, Math.floor(os.cpus().length / 2))));
+    const cssResultsPromise: Promise<TransformJobResult[]> | null = cssJobs.length > 0
+      ? (async () => {
+        const cssStart = Date.now();
+        const cssPool = new TransformWorkerPool({
+          size: cssWorkerCount,
+        });
+        try {
+          const cssResults = await cssPool.runMany(
+            cssJobs.map((job) => ({
+              id: job.id,
+              filePath: job.filePath,
+              ext: job.ext,
+              code: job.code,
+              rootDir,
+              cssModules: job.cssNeedsJsWrapper === true,
+              cssModulesOptions: cssModulesOptionsForWorker,
+              cssPreprocessorOptions: cssPreprocessorOptionsForWorker,
+              cssDemandGraphFiles: cssDemandRegisteredFiles,
+            })),
+          );
+          transformCasProfile.cssCompileWallMs += Date.now() - cssStart;
+          transformCasProfile.cssWorkerJobs += cssJobs.length;
+          for (const result of cssResults as Array<TransformJobResult & { cssProfile?: any }>) {
+            const deps = Array.isArray(result.deps)
+              ? result.deps.filter((p): p is string => typeof p === "string" && p.length > 0)
+              : [];
+            const urlDeps = Array.isArray(result.urlDeps)
+              ? result.urlDeps.filter((p): p is string => typeof p === "string" && p.length > 0)
+              : [];
+            const pipelineHash =
+              typeof result.pipelineHash === "string" && result.pipelineHash.length > 0
+                ? result.pipelineHash
+                : "0";
+            const demandStart = Date.now();
+            result.cssDemand = buildCssDemandAnalysis({
+              rootDir,
+              cssFile: result.filePath,
+              cssHash: getCacheKey(cssJobs.find((job) => job.id === result.id)?.code ?? ""),
+              pipelineHash,
+              deps: Array.from(new Set([...deps, ...urlDeps])),
+            });
+            if (result.cssProfile && typeof result.cssProfile === "object") {
+              result.cssProfile.cssDemandProofMs =
+                Number(result.cssProfile.cssDemandProofMs ?? 0) + (Date.now() - demandStart);
+            }
+            addCssCompileProfile(transformCasProfile, result.cssProfile);
+          }
+          return cssResults;
+        } catch (err) {
+          transformCasProfile.cssCompileWallMs += Date.now() - cssStart;
+          throw err;
+        } finally {
+          await cssPool.close();
+        }
+      })()
+      : null;
 
     // Derive define variants from base transforms already present in CAS.
     const defineStart = Date.now();
@@ -4660,7 +4829,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     if (jobs.length > 0) {
       const transformStart = Date.now();
-      const transformCasProfile = createTransformCasProfile();
       const transformResultsById = new Map<string, TransformJobResult>();
       const nativeHandledIds = new Set<string>();
       const jobById = new Map(jobs.map((job) => [job.id, job]));
@@ -4709,33 +4877,8 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         }
       }
 
-      const cssJobs = jobs.filter((job) => job.kind === "css");
-      if (cssJobs.length > 0) {
-        const cssStart = Date.now();
-        const cssResults = await Promise.all(
-          cssJobs.map(async (job): Promise<TransformJobResult> => {
-            const result = await compileCss({
-              code: job.code,
-              filePath: job.filePath,
-              rootDir,
-              modules: job.cssNeedsJsWrapper === true,
-              modulesOptions: (config as any)?.css?.modules,
-              preprocessorOptions: (config as any)?.css?.preprocessorOptions,
-            });
-            return {
-              id: job.id,
-              filePath: job.filePath,
-              code: result.css,
-              type: "css",
-              tokens: result.tokens ?? null,
-              deps: result.deps.map((dep) => dep.filePath),
-              urlDeps: result.urlDeps.map((dep) => dep.filePath),
-              pipelineHash: result.pipelineHash,
-            };
-          }),
-        );
-        transformCasProfile.cssWorkerTransformStartupMs += Date.now() - cssStart;
-        transformCasProfile.cssWorkerJobs += cssJobs.length;
+      if (cssResultsPromise) {
+        const cssResults = await cssResultsPromise;
         for (const result of cssResults) {
           transformResultsById.set(result.id, result);
         }
@@ -4754,7 +4897,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               code: job.code,
             })),
           );
-          transformCasProfile.cssWorkerTransformStartupMs += Date.now() - workerStart;
+          transformCasProfile.workerTransformMs += Date.now() - workerStart;
           transformCasProfile.workerTransformJobs += workerJobs.length;
           for (const result of results) {
             transformResultsById.set(result.id, result);
@@ -4809,6 +4952,24 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             typeof result.pipelineHash === "string" && result.pipelineHash.length > 0
               ? result.pipelineHash
               : "0";
+          const cssDemand = result.cssDemand as any;
+          const cssDemandProfile = cssDemand?.profile;
+          if (cssDemandProfile && typeof cssDemandProfile === "object") {
+            transformCasProfile.cssDemandExtractionMs += Number(cssDemandProfile.extractionMs ?? 0);
+            transformCasProfile.cssDemandFilesScanned += Number(cssDemandProfile.filesScanned ?? 0);
+            transformCasProfile.cssDemandCacheHit += Number(cssDemandProfile.cacheHits ?? 0);
+            transformCasProfile.cssDemandCacheMiss += Number(cssDemandProfile.cacheMisses ?? 0);
+            transformCasProfile.cssDemandTokens += Number(cssDemandProfile.tokens ?? 0);
+            transformCasProfile.cssDemandProofWriteMs += Number(cssDemandProfile.proofWriteMs ?? 0);
+          }
+          const tailwindGraphContent = result.tailwindGraphContent as any;
+          if (tailwindGraphContent && typeof tailwindGraphContent === "object") {
+            transformCasProfile.cssTailwindGraphContentMs += Number(tailwindGraphContent.ms ?? 0);
+            transformCasProfile.cssTailwindGraphContentFiles += Number(tailwindGraphContent.files ?? 0);
+            transformCasProfile.cssTailwindGraphContentPlugins += Number(tailwindGraphContent.plugins ?? 0);
+            if (tailwindGraphContent.enabled === true) transformCasProfile.cssTailwindGraphContentOptimized += 1;
+            if (tailwindGraphContent.fallbackReason) transformCasProfile.cssTailwindGraphContentFallbacks += 1;
+          }
 
           const depsAbs = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
             Array.from(new Set([...deps, ...urlDeps].map((p) => path.resolve(p)))),
@@ -4834,6 +4995,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             ),
           );
           transformCasProfile.artifactHashBookkeepingCalls += 1;
+          const artifactBytesHash = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
+            getCacheKey(result.code),
+          );
+          transformCasProfile.artifactHashBookkeepingCalls += 1;
           cssDerivedArtifactHashById.set(job.id, artifactHash);
 
           // Persist meta under the base hash (content-identity) for future artifact hash derivation.
@@ -4845,11 +5010,41 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           const meta: CssCasMeta = {
             version: 1,
             baseHash: job.baseHash,
+            artifactHash,
+            artifactBytesHash,
             pipelineHash,
+            depsStampHash,
             deps: depsAbs.sort(),
             urlDeps: Array.from(new Set(urlDeps.map((p) => path.resolve(p)))).sort(),
+            depsProof: buildCssCasDepProof(depsAbs, moduleMetaById, workspace.workspaceRoot),
             modules: cssNeedsJsWrapper,
             generatedAt: new Date().toISOString(),
+            cssDemand: cssDemand?.proof
+              ? {
+                  proofVersion: Number(cssDemand.proof.proofVersion ?? 0),
+                  extractorVersion: Number(cssDemand.proof.extractorVersion ?? 0),
+                  classDemandHash: String(cssDemand.proof.classDemandHash ?? ""),
+                  dependencyHash: String(cssDemand.proof.dependencyHash ?? ""),
+                  tokenCount: Number(cssDemand.proof.tokenCount ?? 0),
+                  sourceFileCount: Array.isArray(cssDemand.proof.sourceFiles) ? cssDemand.proof.sourceFiles.length : 0,
+                  uncertain: Boolean(cssDemand.proof.uncertain),
+                  uncertaintyReasons: Array.isArray(cssDemand.proof.uncertaintyReasons)
+                    ? cssDemand.proof.uncertaintyReasons.map((reason: unknown) => String(reason)).sort()
+                    : [],
+                }
+              : null,
+            tailwindGraphContent: tailwindGraphContent
+              ? {
+                  enabled: tailwindGraphContent.enabled === true,
+                  files: Number(tailwindGraphContent.files ?? 0),
+                  plugins: Number(tailwindGraphContent.plugins ?? 0),
+                  configPath: typeof tailwindGraphContent.configPath === "string" ? tailwindGraphContent.configPath : null,
+                  fallbackReason:
+                    typeof tailwindGraphContent.fallbackReason === "string"
+                      ? tailwindGraphContent.fallbackReason
+                      : null,
+                }
+              : null,
           };
           profileJsonCasWrite(transformCasProfile, path.join(baseDir, "meta.json"), meta, "base");
 
@@ -4872,6 +5067,16 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             // allows the CAS hydration pass to skip PostCSS entirely for .module.css hits).
             profileJsonCasWrite(transformCasProfile, path.join(artifactDir, "tokens.json"), tokens, "variant");
           }
+          const globalWriteStart = Date.now();
+          const globalFiles = writeCssArtifactToGlobalCache(
+            configHash,
+            job.baseHash,
+            artifactHash,
+            casRoot,
+            cssNeedsJsWrapper,
+          );
+          transformCasProfile.cssGlobalCacheWriteMs += Date.now() - globalWriteStart;
+          transformCasProfile.cssGlobalCacheWriteFiles += globalFiles;
 
           // Ensure plan modules use the derived CSS artifact hash so native bundler can hydrate JS wrappers.
           const refs = moduleRefsById.get(job.id) ?? [];
@@ -4890,6 +5095,14 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       logBuildProfile("transformsAndCasWrites", transformStart);
       logTransformCasProfile(transformCasProfile);
     } // end if (jobs.length > 0)
+    if (
+      jobs.length === 0 &&
+      (transformCasProfile.cssGlobalCacheRestoreHit > 0 ||
+        transformCasProfile.cssGlobalCacheRestoreMiss > 0 ||
+        transformCasProfile.cssGlobalCacheRestoreMs > 0)
+    ) {
+      logTransformCasProfile(transformCasProfile);
+    }
 
     // Ensure native bundler plan hashes are aligned with derived CSS artifact hashes so
     // `transformed.js` wrappers (CSS Modules) can be hydrated from CAS deterministically.
@@ -4917,15 +5130,14 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-    // Fix 3 — PDC raw-source injection (virtual re-export shims + production
-    // closure roots) is disabled. The bundler links the complete optimized
-    // dependency wrapper artifacts (baseline), avoiding raw node_modules
-    // re-expansion. Artifact-layer slimming is delivered by the deps optimizer.
+    // Frozen-PDC invariant: production links DPL dependency artifacts directly.
+    // No raw node_modules bridge, virtual re-export shims, or PDC-owned cache
+    // identity are introduced here.
 
-	    const buildMinifyRaw = (config as any)?.build?.minify;
-	    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
-	    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
-	    const mangleEnabled = minifyEnabled;
+    const buildMinifyRaw = (config as any)?.build?.minify;
+    const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
+    const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
+    const mangleEnabled = minifyEnabled;
     const nativeExternalModules = collectNativeExternalModules(plan, buildExternalSpecifiers);
 
     const federationExposeEntryIds = collectFederationExposeEntryPaths(config, rootDir)
@@ -4956,24 +5168,24 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     } else {
       logInfo(`[Build] Emitting chunks via native bundler`);
       const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
-	        casRoot,
-	        versionHash: configHash,
-	        nativeOptions: {
-	          minifier,
-	          minify: minifyEnabled,
-	          mangle: mangleEnabled,
-	          treeshake,
-	          scopeHoist,
+        casRoot,
+        versionHash: configHash,
+        nativeOptions: {
+          minifier,
+          minify: minifyEnabled,
+          mangle: mangleEnabled,
+          treeshake,
+          scopeHoist,
             externalModules: nativeExternalModules,
             federationExposeEntries: federationExposeEntryIds,
-	        },
-	      });
+        },
+      });
       artifacts = baseArtifacts;
       combinedStats = { ...baseStats };
       logBuildProfile("emitChunksAndFiles", emitStart);
     }
 
-	    let federationManifest = buildFederationBuildManifest({
+    let federationManifest = buildFederationBuildManifest({
       config,
       rootDir,
       workspaceRoot: workspace.workspaceRoot,
@@ -5151,10 +5363,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         projectRoot: rootDir,
         depsHash,
         plan: readinessPlanForIdentity ?? emittedPlan,
-        pdcClosureHash:
-          canonicalDepsForReadiness?.productionClosure?.closureHash ??
-          productionReadinessRecord?.identity.pdcClosureHash ??
-          null,
         artifacts,
         dist: {
           manifestHash:
@@ -5616,9 +5824,130 @@ function toPosixPath(value: string): string {
 // Write is done after every successful optimizer run so the cache self-populates.
 
 const GLOBAL_DEP_CACHE_VERSION = "v1";
+const GLOBAL_CSS_ARTIFACT_CACHE_VERSION = "v1";
 
 function getGlobalDepCacheDir(depsHash: string): string {
   return path.join(os.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION, depsHash);
+}
+
+function getGlobalCssBaseDir(configHash: string, baseHash: string): string {
+  return path.join(
+    os.homedir(),
+    ".ionify",
+    "global",
+    "css-artifacts",
+    GLOBAL_CSS_ARTIFACT_CACHE_VERSION,
+    configHash,
+    "base",
+    baseHash,
+  );
+}
+
+function getGlobalCssArtifactDir(configHash: string, artifactHash: string): string {
+  return path.join(
+    os.homedir(),
+    ".ionify",
+    "global",
+    "css-artifacts",
+    GLOBAL_CSS_ARTIFACT_CACHE_VERSION,
+    configHash,
+    "artifact",
+    artifactHash,
+  );
+}
+
+function restoreCssArtifactFromGlobalCache(
+  configHash: string,
+  baseHash: string,
+  casRoot: string,
+  modules: boolean,
+): { restored: boolean; artifactHash: string | null } {
+  const globalBaseDir = getGlobalCssBaseDir(configHash, baseHash);
+  const globalMetaFile = path.join(globalBaseDir, "meta.json");
+  const cssMeta = readJsonFile<CssCasMeta>(globalMetaFile);
+  if (
+    !cssMeta ||
+    cssMeta.version !== 1 ||
+    cssMeta.baseHash !== baseHash ||
+    cssMeta.modules !== modules ||
+    typeof cssMeta.artifactHash !== "string" ||
+    cssMeta.artifactHash.length === 0 ||
+    typeof cssMeta.pipelineHash !== "string" ||
+    cssMeta.pipelineHash.length === 0 ||
+    typeof cssMeta.depsStampHash !== "string" ||
+    cssMeta.depsStampHash.length === 0 ||
+    !cssDepProofIsCurrent(cssMeta)
+  ) {
+    return { restored: false, artifactHash: null };
+  }
+
+  const artifactHash = cssMeta.artifactHash;
+  const globalArtifactDir = getGlobalCssArtifactDir(configHash, artifactHash);
+  const globalCssFile = path.join(globalArtifactDir, "transformed.css");
+  if (!fs.existsSync(globalCssFile)) return { restored: false, artifactHash: null };
+  if (cssMeta.artifactBytesHash) {
+    try {
+      if (getCacheKey(fs.readFileSync(globalCssFile)) !== cssMeta.artifactBytesHash) {
+        return { restored: false, artifactHash: null };
+      }
+    } catch {
+      return { restored: false, artifactHash: null };
+    }
+  }
+
+  const localBaseDir = getCasArtifactPath(casRoot, configHash, baseHash);
+  const localArtifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+  if (!copyFileWithHardlinkFallback(globalMetaFile, path.join(localBaseDir, "meta.json"))) {
+    return { restored: false, artifactHash: null };
+  }
+  if (!copyFileWithHardlinkFallback(globalCssFile, path.join(localArtifactDir, "transformed.css"))) {
+    return { restored: false, artifactHash: null };
+  }
+  if (modules) {
+    const globalTokensFile = path.join(globalArtifactDir, "tokens.json");
+    if (!fs.existsSync(globalTokensFile)) return { restored: false, artifactHash: null };
+    if (!copyFileWithHardlinkFallback(globalTokensFile, path.join(localArtifactDir, "tokens.json"))) {
+      return { restored: false, artifactHash: null };
+    }
+    const globalJsFile = path.join(globalArtifactDir, "transformed.js");
+    if (fs.existsSync(globalJsFile)) {
+      copyFileWithHardlinkFallback(globalJsFile, path.join(localArtifactDir, "transformed.js"));
+    }
+  }
+  return { restored: true, artifactHash };
+}
+
+function writeCssArtifactToGlobalCache(
+  configHash: string,
+  baseHash: string,
+  artifactHash: string,
+  casRoot: string,
+  modules: boolean,
+): number {
+  let files = 0;
+  const localBaseDir = getCasArtifactPath(casRoot, configHash, baseHash);
+  const localArtifactDir = getCasArtifactPath(casRoot, configHash, artifactHash);
+  const globalBaseDir = getGlobalCssBaseDir(configHash, baseHash);
+  const globalArtifactDir = getGlobalCssArtifactDir(configHash, artifactHash);
+  if (copyFileWithHardlinkFallback(path.join(localBaseDir, "meta.json"), path.join(globalBaseDir, "meta.json"))) files += 1;
+  if (
+    copyFileWithHardlinkFallback(
+      path.join(localArtifactDir, "transformed.css"),
+      path.join(globalArtifactDir, "transformed.css"),
+    )
+  ) files += 1;
+  if (modules) {
+    if (
+      copyFileWithHardlinkFallback(
+        path.join(localArtifactDir, "transformed.js"),
+        path.join(globalArtifactDir, "transformed.js"),
+      )
+    ) files += 1;
+    if (copyFileWithHardlinkFallback(path.join(localArtifactDir, "tokens.json"), path.join(globalArtifactDir, "tokens.json"))) {
+      files += 1;
+    }
+  }
+  return files;
 }
 
 /**
@@ -5826,7 +6155,6 @@ function normalizePlanChunkForReuse(chunk: BuildPlan["chunks"][number]) {
       dependencyFormat: mod.dependencyFormat ?? undefined,
       usedExports: mod.usedExports ?? undefined,
       dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
-      productionClosureHash: mod.productionClosureHash ?? undefined,
       sideEffects: mod.sideEffects ?? undefined,
       artifactTopology: mod.artifactTopology ?? undefined,
       artifactHash: mod.hash ?? undefined,
@@ -5878,7 +6206,6 @@ function tryReusePreviousBuildOutputs(
         dependencyFormat: mod.dependencyFormat ?? undefined,
         usedExports: mod.usedExports ?? undefined,
         dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
-        productionClosureHash: mod.productionClosureHash ?? undefined,
         sideEffects: mod.sideEffects ?? undefined,
         artifactTopology: mod.artifactTopology ?? undefined,
         artifactHash: mod.artifactHash,

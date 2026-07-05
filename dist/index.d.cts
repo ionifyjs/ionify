@@ -393,7 +393,6 @@ interface BuildPlanModule {
     dependencyFormat?: "esm" | "cjs" | "unknown" | null;
     usedExports?: string[] | null;
     dependencyAbiHash?: string | null;
-    productionClosureHash?: string | null;
     sideEffects?: "none" | "present" | "unknown" | null;
     artifactTopology?: "wrapper" | "esm-native" | "esm-native-slim" | null;
 }

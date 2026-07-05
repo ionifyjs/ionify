@@ -66,6 +66,7 @@ import { TransformEngine, transformCache } from "@core/transform";
 import { TransformWorkerPool } from "@core/worker/pool";
 import { HMRServer, injectHMRClient, PendingHMRModule } from "@core/hmr";
 import { compileCss, renderCssModule, renderCssRawStringModule, renderCssUrlModule, renderCssTokensModule, rewriteCssUrls } from "@core/loaders/css";
+import { registerCssDemandGraphSourceFiles } from "@core/loaders/css-demand";
 import { isCssLikeExt, isCssLikePath, isCssModuleLikePath } from "@core/utils/css-ext";
 import { isAssetExt, contentTypeForAsset, assetAsModule, normalizeUrlFromFs } from "@core/loaders/asset";
 import { isEntryModule } from "@core/refresh/entryDetection";
@@ -4558,6 +4559,16 @@ export async function startDevServer({
   };
   
   const graph = new Graph(rawVersionInputs, { ionifyDir });
+  const registerDevCssGraphSources = (): void => {
+    registerCssDemandGraphSourceFiles(
+      rootDir,
+      graph.listFilesByKind("js").filter((filePath) => {
+        if (filePath.includes("node_modules") || filePath.includes(`${path.sep}.ionify${path.sep}`)) return false;
+        const clean = filePath.split("?")[0]!.split("#")[0]!.toLowerCase();
+        return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+      }),
+    );
+  };
   const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
   if (userConfig?.federation) {
     syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
@@ -5553,6 +5564,7 @@ export async function startDevServer({
           // This enables `ionify build` to hydrate from CAS immediately after `ionify dev` (Phase U / unified pipeline).
           if (finalBuffer && !fs.existsSync(baseCssFile)) {
             try {
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
@@ -5606,6 +5618,7 @@ export async function startDevServer({
               // `css:url` doesn't require compilation for the response, but build still needs a compiled CSS artifact.
               if (!fs.existsSync(baseCssFile)) {
                 try {
+                  registerDevCssGraphSources();
                   const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                     code: cssSource,
                     filePath: effectiveFsPath,
@@ -5646,6 +5659,7 @@ export async function startDevServer({
               }
             } else {
               // Run PostCSS + (optional) modules pipeline.
+              registerDevCssGraphSources();
               const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
