@@ -69,6 +69,11 @@ export interface IonifyBuildConfig {
   commonjsOptions?: Record<string, unknown>;
   dropConsole?: boolean;
   dropDebugger?: boolean;
+  /**
+   * Maximum estimated dependency artifact bytes per production vendor chunk.
+   * Set to false to force the legacy single-vendor-chunk topology.
+   */
+  vendorChunkMaxBytes?: number | false;
   [key: string]: unknown;
 }
 

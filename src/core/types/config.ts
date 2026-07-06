@@ -111,6 +111,16 @@ export interface IonifyBuildConfig {
          */
         concurrency?: number;
       };
+  /**
+   * Maximum estimated dependency artifact bytes per production vendor chunk.
+   *
+   * The planner uses this only for executable vendor chunk topology; DPL still
+   * owns dependency artifact identity. Set to `false` to force the legacy single
+   * vendor chunk topology.
+   *
+   * @default 4194304 (4 MiB)
+   */
+  vendorChunkMaxBytes?: number | false;
 }
 
 export interface IonifyFederationRemoteConfig {

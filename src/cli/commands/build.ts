@@ -102,6 +102,7 @@ import { Graph } from "@core/graph";
 import { GRAPH_KIND_VIRTUAL, classifyStructuralGraphKind, isRuntimeGraphKind } from "@core/graph-kind";
 import { resolveProductionBuildEntries } from "@core/build-entry-inference";
 import { createProductionGraphVersionInputs } from "@core/production-build-identity";
+import { resolveProductionChunkPolicy } from "@core/chunk-policy";
 
 interface BuildOptions {
   outDir?: string;
@@ -3655,6 +3656,12 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const configHash = computeGraphVersion(rawVersionInputs);
     logInfo(`[Build] Version hash: ${configHash}`);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    const productionChunkPolicy = resolveProductionChunkPolicy(config);
+    if (productionChunkPolicy.vendorMaxBytes !== null) {
+      process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = String(productionChunkPolicy.vendorMaxBytes);
+    } else {
+      delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    }
     logBuildProfile("setupConfigIdentity", setupStart);
 
     // Align deps optimizer (/@deps) with build so native bundler can consume optimized ESM deps

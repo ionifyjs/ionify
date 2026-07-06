@@ -8064,6 +8064,27 @@ var init_build_entry_inference = __esm({
   }
 });
 
+// src/core/chunk-policy.ts
+function normalizePositiveInteger(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.floor(value);
+  return rounded > 0 ? rounded : null;
+}
+function resolveProductionChunkPolicy(config) {
+  const raw = config?.build?.vendorChunkMaxBytes;
+  if (raw === false || raw === null) return { vendorMaxBytes: null };
+  const explicit = normalizePositiveInteger(raw);
+  return { vendorMaxBytes: explicit ?? DEFAULT_VENDOR_CHUNK_MAX_BYTES };
+}
+var DEFAULT_VENDOR_CHUNK_MAX_BYTES;
+var init_chunk_policy = __esm({
+  "src/core/chunk-policy.ts"() {
+    "use strict";
+    init_cjs_shims();
+    DEFAULT_VENDOR_CHUNK_MAX_BYTES = 4 * 1024 * 1024;
+  }
+});
+
 // src/core/production-build-identity.ts
 function createProductionGraphVersionInputs(options) {
   const { config, parserMode, minifier, treeshake, scopeHoist, entries } = options;
@@ -8083,6 +8104,7 @@ function createProductionGraphVersionInputs(options) {
     },
     cssOptions: config?.css,
     assetOptions: config?.assets ?? config?.asset,
+    chunkPolicy: resolveProductionChunkPolicy(config),
     runtimeContracts: {
       reactRefreshRuntimeModule: REACT_REFRESH_RUNTIME_MODULE,
       federation: buildFederationVersionContract(config?.federation)
@@ -8095,6 +8117,7 @@ var init_production_build_identity = __esm({
     init_cjs_shims();
     init_reactRefreshInstrumentation();
     init_federation();
+    init_chunk_policy();
   }
 });
 
@@ -10670,6 +10693,12 @@ async function runBuildCommand(options = {}) {
     const configHash = computeGraphVersion(rawVersionInputs);
     logInfo(`[Build] Version hash: ${configHash}`);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    const productionChunkPolicy = resolveProductionChunkPolicy(config);
+    if (productionChunkPolicy.vendorMaxBytes !== null) {
+      process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = String(productionChunkPolicy.vendorMaxBytes);
+    } else {
+      delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    }
     logBuildProfile("setupConfigIdentity", setupStart);
     const depsPhaseStart = Date.now();
     resetTopologyValidationProfile();
@@ -13410,6 +13439,7 @@ var init_build = __esm({
     init_graph_kind();
     init_build_entry_inference();
     init_production_build_identity();
+    init_chunk_policy();
     DEPS_OPTIMIZER_OUTPUT_VERSION2 = getDepsOptimizerOutputVersion();
     TOPOLOGY_PROOF_VERSION = 1;
     PACKAGE_GRAPH_VERSION = 5;
@@ -22980,6 +23010,7 @@ init_federation();
 init_module_id();
 init_build_entry_inference();
 init_production_build_identity();
+init_chunk_policy();
 init_dep_stops();
 
 // src/core/production-transform-publication.ts
@@ -23347,6 +23378,7 @@ async function runPublishCommand(options = {}) {
   const previousIonifyMode = process.env.IONIFY_MODE;
   const previousConfigHash = process.env.IONIFY_CONFIG_HASH;
   const previousDepsHash = process.env.IONIFY_DEPS_HASH;
+  const previousVendorMaxChunkBytes = process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
   try {
     process.env.NODE_ENV = "production";
     const mode = options.mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "production";
@@ -23398,6 +23430,12 @@ async function runPublishCommand(options = {}) {
     });
     const configHash = computeGraphVersion(rawVersionInputs);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    const productionChunkPolicy = resolveProductionChunkPolicy(config);
+    if (productionChunkPolicy.vendorMaxBytes !== null) {
+      process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = String(productionChunkPolicy.vendorMaxBytes);
+    } else {
+      delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    }
     const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
     const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
     const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false;
@@ -23560,6 +23598,8 @@ async function runPublishCommand(options = {}) {
     else process.env.IONIFY_CONFIG_HASH = previousConfigHash;
     if (previousDepsHash === void 0) delete process.env.IONIFY_DEPS_HASH;
     else process.env.IONIFY_DEPS_HASH = previousDepsHash;
+    if (previousVendorMaxChunkBytes === void 0) delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    else process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = previousVendorMaxChunkBytes;
   }
 }
 function resolvePublicationPhase(options) {

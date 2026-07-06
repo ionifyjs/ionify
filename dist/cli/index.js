@@ -65,6 +65,7 @@ import {
   resolveMinifier,
   resolveParser,
   resolveProductionBuildEntries,
+  resolveProductionChunkPolicy,
   resolveScopeHoist,
   resolveTreeshake,
   resolveWorkspace,
@@ -79,7 +80,7 @@ import {
   writeProductionPublicationPlan,
   writeProductionPublicationState,
   writeProductionReadinessRecord
-} from "../chunk-XXQ4WOL2.js";
+} from "../chunk-3ROH22V6.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -9594,6 +9595,7 @@ async function runPublishCommand(options = {}) {
   const previousIonifyMode = process.env.IONIFY_MODE;
   const previousConfigHash = process.env.IONIFY_CONFIG_HASH;
   const previousDepsHash = process.env.IONIFY_DEPS_HASH;
+  const previousVendorMaxChunkBytes = process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
   try {
     process.env.NODE_ENV = "production";
     const mode = options.mode ?? process.env.IONIFY_MODE ?? process.env.MODE ?? "production";
@@ -9645,6 +9647,12 @@ async function runPublishCommand(options = {}) {
     });
     const configHash = computeGraphVersion(rawVersionInputs);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    const productionChunkPolicy = resolveProductionChunkPolicy(config);
+    if (productionChunkPolicy.vendorMaxBytes !== null) {
+      process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = String(productionChunkPolicy.vendorMaxBytes);
+    } else {
+      delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    }
     const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
     const depsSourcemapEnabled = config?.optimizeDeps?.sourcemap === true;
     const depsBundleEsmEnabled = config?.optimizeDeps?.bundleEsm !== false;
@@ -9807,6 +9815,8 @@ async function runPublishCommand(options = {}) {
     else process.env.IONIFY_CONFIG_HASH = previousConfigHash;
     if (previousDepsHash === void 0) delete process.env.IONIFY_DEPS_HASH;
     else process.env.IONIFY_DEPS_HASH = previousDepsHash;
+    if (previousVendorMaxChunkBytes === void 0) delete process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES;
+    else process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = previousVendorMaxChunkBytes;
   }
 }
 function resolvePublicationPhase(options) {
@@ -11085,7 +11095,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11106,7 +11116,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11124,7 +11134,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -12966,7 +12976,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-S3W6TX5M.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);
