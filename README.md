@@ -96,22 +96,25 @@ export default defineConfig(({ mode, env }) => ({
 
 ## Project Status
 
-| Capability                   | Status         |
-| ---------------------------- | -------------- |
-| Persistent Graph             | ✅ Stable       |
-| Content Addressable Storage  | ✅ Stable       |
-| Native Dependency Resolver   | ✅ Stable       |
-| Dependency Publication Layer | ✅ Stable       |
-| One Dependency Authority     | ✅ Stable       |
-| Unified Dev + Build Pipeline | ✅ Stable       |
-| Federation Foundation        | ✅ Stable       |
-| Workspace Engine             | ✅ Stable       |
-| Ionify Analyze               | ✅ Stable       |
-| Cloud CAS                    | 🚧 In Progress |
+| Capability                            | Status         |
+| --------------------------------------| -------------- |
+| Persistent Graph                      | ✅ Stable       |
+| Content Addressable Storage           | ✅ Stable       |
+| Native Dependency Resolver            | ✅ Stable       |
+| Unified Dev + Build Pipeline          | ✅ Stable       |
+| Dependency Publication Layer (DPL)    | ✅ Stable       |
+| One Dependency Authority (ODA)        | ✅ Stable       |
+| Production Artifact Publishing (PAP)  | ✅ Stable       |
+| One CSS Authority (CSSA)              | ✅ Stable       |
+| Federation Foundation                 | ✅ Stable       |
+| Workspace Engine                      | ✅ Stable       |
+| Ionify Analyze                        | ✅ Stable       |
+| Cloud CAS                             | 🚧 In Progress |
 
 ## What's New
 
-- Fix bug #5: stale dev dependency URLs could survive dependency routing changes and produce `/@deps/*` startup failures. Issue: https://github.com/ionifyjs/ionify/issues/5.
+- CSSA: the one CSS authority shared by dev,
+build, worker execution, CAS, and CSS artifact restore.
 
 ## Links
 
