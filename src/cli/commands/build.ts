@@ -22,7 +22,7 @@ import { loadIonifyConfig } from "@cli/utils/config";
 import { readLockfile } from "@cli/utils/lockfile";
 import { resolveMinifier, type MinifierChoice } from "@cli/utils/minifier";
 import { resolveTreeshake } from "@cli/utils/treeshake";
-import { native, computeGraphVersion, getDepsOptimizerOutputVersion } from "@native/index";
+import { native, computeGraphVersion, getDepsOptimizerOutputVersion, ensureNativeGraph } from "@native/index";
 import { COMPRESSION_CAS_VERSION, getCasArtifactPath, getCompressionCasArtifactPath } from "@core/utils/cas";
 import { isCssModuleLikePath } from "@core/utils/css-ext";
 import { resolveScopeHoist } from "@cli/utils/scope-hoist";
@@ -30,17 +30,29 @@ import { resolveOptimizationLevel, getOptimizationPreset } from "@cli/utils/opti
 import { resolveParser, applyParserEnv } from "@cli/utils/parser";
 import {
   generateBuildPlan,
+  admitCanonicalBuildPlanMutation,
   writeBuildManifest,
   emitChunks,
   writeAssetsManifest,
+  type CanonicalBuildContext,
+  type CanonicalDefineRecipe,
   type EmittedOutputInfo,
 } from "@core/bundler";
-import type { BuildPlan } from "../../types/plan";
+import type { BuildPlan, ProofKind } from "../../types/plan";
 import { TransformWorkerPool, type TransformJobResult } from "@core/worker/pool";
 import { getCacheKey } from "@core/cache";
+import {
+  writeTransformArtifact,
+  admitTransformArtifact,
+  type TransformArtifactExpectation,
+} from "@core/transform-artifact-proof";
+import {
+  materializeCanonicalGeneration,
+  type CanonicalMaterializeContext,
+} from "@core/canonical-materialize";
 import { resolveWorkspace } from "@core/workspace";
 import { loadEnv as loadIonifyEnv } from "@cli/utils/env";
-import { applyDefineReplacements, buildDefineConfig, substituteEnvPlaceholders } from "@core/utils/define";
+import { applyDefineReplacements, buildDefineConfig, buildDefineRecipe, substituteEnvPlaceholders } from "@core/utils/define";
 import { computeDefineSignature } from "@core/utils/define-signature";
 import { WS_MODULE_PREFIX, fromWsModuleId, toWsModuleId } from "@core/module-id";
 import { computeChunkGroupIdFromStableIds } from "@core/deps/vendor-pack-utils";
@@ -50,10 +62,16 @@ import {
   buildCanonicalDepFileNameIndex,
   canonicalizeDepFileName,
   canonicalizeDepUsageIndex,
+  collectRuntimeMutationFactsForFiles,
   scanDepEntryPaths,
   scanDepUsage,
+  scanDepUsageFacts,
+  usageIndexFromRuntimeDemands,
+  type DplRuntimeDemandFact,
   type DepUsageIndex,
+  type RuntimeSourceMutationFacts,
 } from "@core/deps/usage";
+import type { NativeDplPublicationEdge, NativeGraphRecordBatchNode } from "@native/index";
 import {
   createProductionReadinessRecord,
   hashFileIfExists,
@@ -72,12 +90,17 @@ import { VendorPackV2IndexManager } from "@core/deps/vendor-pack-v2";
 import { renderCssTokensModule } from "@core/loaders/css";
 import {
   buildCssDemandAnalysis,
+  computeCssDemandGraphContentStamp,
+  refreshCssDemandGraphContentStamp,
   registerCssDemandGraphSourceFiles,
+  requiresCssDemandGraphContentStamp,
 } from "@core/loaders/css-demand";
 import { isForbiddenFsPath } from "@core/utils/public-path";
 import { computeDepsHash } from "@cli/utils/deps-hash";
 import {
+  PRODUCTION_PLAN_OUTPUT_VERSION,
   readProductionPublicationPlan,
+  readProductionPublicationState,
   writeProductionBuildPlanProof,
   type ProductionPublicationIdentity,
 } from "@core/production-artifact-publishing";
@@ -120,7 +143,15 @@ interface BuildOptions {
    * without paying for a full production build.
    */
   depsOnly?: boolean;
+  /** PAP Phase A asks dependency preparation to return the exact Planner
+   * mutation it admitted. Plain `optimize-all` remains DPL-only. */
+  publicationContracts?: boolean;
 }
+
+export type BuildDependencyPreparation = {
+  depsHash: string;
+  canonicalPlan: BuildPlan | null;
+};
 
 const DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
 const TOPOLOGY_PROOF_VERSION = 1;
@@ -166,6 +197,7 @@ function logBuildProfileText(label: string, value: string): void {
 type TransformCasProfile = {
   nativeJsTransformMs: number;
   nativeJsTransformJobs: number;
+  nativeJsTransformReuseJobs: number;
   cssCompileWallMs: number;
   cssCompileTotalMs: number;
   cssPostcssConfigLoadMs: number;
@@ -223,6 +255,7 @@ function createTransformCasProfile(): TransformCasProfile {
   return {
     nativeJsTransformMs: 0,
     nativeJsTransformJobs: 0,
+    nativeJsTransformReuseJobs: 0,
     cssCompileWallMs: 0,
     cssCompileTotalMs: 0,
     cssPostcssConfigLoadMs: 0,
@@ -358,7 +391,7 @@ function profileJsonCasWrite(
 function logTransformCasProfile(profile: TransformCasProfile): void {
   if (!isBuildProfileEnabled()) return;
   logInfo(
-    `[BuildProfile][transformCas] nativeJsTransform_ms=${profile.nativeJsTransformMs} jobs=${profile.nativeJsTransformJobs}`,
+    `[BuildProfile][transformCas] nativeJsTransform_ms=${profile.nativeJsTransformMs} jobs=${profile.nativeJsTransformJobs} reusedMutationFacts=${profile.nativeJsTransformReuseJobs}`,
   );
   logInfo(
     `[BuildProfile][transformCas] cssCompileWall_ms=${profile.cssCompileWallMs.toFixed(2)} cssJobs=${profile.cssWorkerJobs} workerTransform_ms=${profile.workerTransformMs.toFixed(2)} workerJobs=${profile.workerTransformJobs}`,
@@ -577,14 +610,17 @@ type PublicDirCopyResult = {
   assets: CopiedAssetEntry[];
   copied: CopiedAssetEntry[];
   conflicts: string[];
+  reservedConflicts: string[];
 };
+
+const ENGINE_OWNED_PUBLIC_OUTPUTS = new Set(["index.html", "manifest.json", "manifest.assets.json", "build.stats.json"]);
 
 async function copyPublicDirToOutDir(
   publicDirAbs: string | null,
   outDirAbs: string,
   previousPublicAssets: CopiedAssetEntry[] = [],
 ): Promise<PublicDirCopyResult> {
-  if (!publicDirAbs) return { assets: [], copied: [], conflicts: [] };
+  if (!publicDirAbs) return { assets: [], copied: [], conflicts: [], reservedConflicts: [] };
   const srcRoot = path.resolve(publicDirAbs);
   const destRoot = path.resolve(outDirAbs);
   const previousByFile = new Map(previousPublicAssets.map((asset) => [asset.file, asset]));
@@ -593,13 +629,14 @@ async function copyPublicDirToOutDir(
   try {
     srcStat = fs.statSync(srcRoot);
   } catch {
-    return { assets: [], copied: [], conflicts: [] };
+    return { assets: [], copied: [], conflicts: [], reservedConflicts: [] };
   }
-  if (!srcStat.isDirectory()) return { assets: [], copied: [], conflicts: [] };
+  if (!srcStat.isDirectory()) return { assets: [], copied: [], conflicts: [], reservedConflicts: [] };
 
   const currentEntries: CopiedAssetEntry[] = [];
   const copiedEntries: CopiedAssetEntry[] = [];
   const conflicts: string[] = [];
+  const reservedConflicts: string[] = [];
 
   const queue: string[] = [srcRoot];
   while (queue.length) {
@@ -632,6 +669,28 @@ async function copyPublicDirToOutDir(
           currentEntries.push(previous);
           continue;
         }
+        try {
+          const srcBytes = await fs.promises.readFile(srcPath);
+          const destStat = await fs.promises.stat(destPath);
+          if (destStat.isFile() && destStat.size === srcBytes.length) {
+            const srcHash = getCacheKey(srcBytes);
+            const destHash = getCacheKey(await fs.promises.readFile(destPath));
+            if (destHash === srcHash) {
+              currentEntries.push({
+                file: relPosix,
+                bytes: srcBytes.length,
+                hash: srcHash,
+              });
+              continue;
+            }
+          }
+        } catch {
+          // Fall through to the conservative conflict path below.
+        }
+        if (ENGINE_OWNED_PUBLIC_OUTPUTS.has(relPosix)) {
+          reservedConflicts.push(relPosix);
+          continue;
+        }
         conflicts.push(relPosix);
         continue;
       }
@@ -659,8 +718,13 @@ async function copyPublicDirToOutDir(
   if (conflicts.length) {
     logWarn(`[Build][public] Skipped ${conflicts.length} file(s) due to output conflicts (will not overwrite build artifacts)`);
   }
+  if (reservedConflicts.length) {
+    logWarn(
+      `[Build][public] Skipped ${reservedConflicts.length} engine-owned public file(s) (${reservedConflicts.join(", ")})`,
+    );
+  }
 
-  return { assets: currentEntries, copied: copiedEntries, conflicts };
+  return { assets: currentEntries, copied: copiedEntries, conflicts, reservedConflicts };
 }
 
 type SourceFreshnessCacheEntry = {
@@ -673,13 +737,19 @@ type SourceFreshnessCacheEntry = {
   hash: string;
 };
 
-function isProductionSourceFreshnessCurrent(
+export type ProductionSourceFreshnessAudit = {
+  current: boolean;
+  changedPaths: string[];
+  reason?: string;
+};
+
+export function auditProductionSourceFreshness(
   plan: BuildPlan,
   ionifyDir: string,
   workspaceRoot: string,
   casRoot: string,
   configHash: string,
-): boolean {
+): ProductionSourceFreshnessAudit {
   const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
   let freshnessCache: Record<string, SourceFreshnessCacheEntry> = {};
   try {
@@ -688,9 +758,10 @@ function isProductionSourceFreshnessCurrent(
       freshnessCache = parsed as Record<string, SourceFreshnessCacheEntry>;
     }
   } catch {
-    return false;
+    return { current: false, changedPaths: [], reason: "missing-source-freshness-cache" };
   }
 
+  const changedPaths: string[] = [];
   for (const chunk of plan.chunks) {
     for (const mod of chunk.modules) {
       if (mod.kind !== "js" && mod.kind !== "css") continue;
@@ -704,19 +775,29 @@ function isProductionSourceFreshnessCurrent(
         const st = fs.statSync(fsPath);
         const cacheKey = `${mod.id}\n${fsPath}`;
         const cached = freshnessCache[cacheKey];
+        const statMatches =
+          cached &&
+          cached.fsPath === fsPath &&
+          cached.dev === st.dev &&
+          cached.ino === st.ino &&
+          cached.mtimeMs === st.mtimeMs &&
+          cached.ctimeMs === st.ctimeMs &&
+          cached.size === st.size &&
+          typeof cached.hash === "string" &&
+          cached.hash.length > 0;
+        const diskHash = statMatches ? cached.hash : getCacheKey(fs.readFileSync(fsPath));
+        if (!cached || cached.hash !== diskHash) {
+          changedPaths.push(fsPath);
+          continue;
+        }
         if (
-          !cached ||
-          cached.fsPath !== fsPath ||
-          cached.dev !== st.dev ||
-          cached.ino !== st.ino ||
-          cached.mtimeMs !== st.mtimeMs ||
-          cached.ctimeMs !== st.ctimeMs ||
-          cached.size !== st.size ||
-          typeof cached.hash !== "string" ||
-          cached.hash.length === 0 ||
-          (mod.kind !== "css" && typeof mod.hash === "string" && mod.hash.length > 0 && mod.hash !== cached.hash)
+          mod.kind !== "css" &&
+          typeof mod.hash === "string" &&
+          mod.hash.length > 0 &&
+          mod.hash !== diskHash
         ) {
-          return false;
+          changedPaths.push(fsPath);
+          continue;
         }
         if (mod.kind === "css") {
           const cssMeta = readJsonFile<CssCasMeta>(
@@ -724,12 +805,12 @@ function isProductionSourceFreshnessCurrent(
           );
           if (
             !cssMeta ||
-            cssMeta.version !== 1 ||
+            cssMeta.version !== CSS_CAS_META_VERSION ||
             cssMeta.baseHash !== cached.hash ||
             typeof cssMeta.pipelineHash !== "string" ||
             cssMeta.pipelineHash.length === 0
           ) {
-            return false;
+            return { current: false, changedPaths, reason: "css-meta-stale" };
           }
           const publishedHash = typeof mod.hash === "string" ? mod.hash : "";
           if (
@@ -742,7 +823,7 @@ function isProductionSourceFreshnessCurrent(
               !fs.existsSync(derivedCssFile) ||
               (publishedHash !== cssMeta.artifactHash && publishedHash !== cached.hash)
             ) {
-              return false;
+              return { current: false, changedPaths, reason: "css-artifact-stale" };
             }
           } else {
             const depsAbs = Array.from(
@@ -753,28 +834,157 @@ function isProductionSourceFreshnessCurrent(
               ),
             );
             const depsStampHash = computeDepsContentStampHash(depsAbs, new Map(), workspaceRoot);
+            // The surrounding per-source stat gate has already proven every plan
+            // source unchanged, so the meta stamp is implicitly current here.
             const expectedCssHash = getCacheKey(
-              `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}`,
+              `css:v3:${mod.id}:${cached.hash}:${cssMeta.pipelineHash}:${depsStampHash}:${cssMeta.modules ? 1 : 0}:${metaTailwindStampForRecipe(cssMeta)}`,
             );
             const derivedCssFile = path.join(getCasArtifactPath(casRoot, configHash, expectedCssHash), "transformed.css");
             const legacyBaseHashIsMaterialized =
               publishedHash === cached.hash && fs.existsSync(derivedCssFile);
             if (publishedHash !== expectedCssHash && !legacyBaseHashIsMaterialized) {
-              return false;
+              return { current: false, changedPaths, reason: "css-recipe-stale" };
             }
           }
         }
       } catch {
-        return false;
+        return { current: false, changedPaths: [], reason: "source-unreadable" };
       }
     }
   }
 
-  return true;
+  return {
+    current: changedPaths.length === 0,
+    changedPaths: Array.from(new Set(changedPaths)).sort(),
+    reason: changedPaths.length > 0 ? "source-content-changed" : undefined,
+  };
 }
 
+/**
+ * Advance only the freshness-cache records covered by Planner's committed
+ * canonical mutation. The cache remains an accelerator: module identity and
+ * hashes come from the Planner plan, and any source race leaves the old entry
+ * in place so the next audit fails closed.
+ */
+function updateSourceFreshnessCacheForCanonicalMutation(
+  plan: BuildPlan,
+  ionifyDir: string,
+  workspaceRoot: string,
+  changedPaths: readonly string[],
+): void {
+  if (changedPaths.length === 0) return;
+  const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
+  let freshnessCache: Record<string, SourceFreshnessCacheEntry>;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(freshnessCacheFile, "utf8"));
+    if (!parsed || typeof parsed !== "object") return;
+    freshnessCache = parsed as Record<string, SourceFreshnessCacheEntry>;
+  } catch {
+    return;
+  }
+
+  const changed = new Set(changedPaths.map((filePath) => path.resolve(filePath)));
+  let updated = false;
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js" || typeof mod.hash !== "string" || mod.hash.length === 0) continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, workspaceRoot);
+      }
+      if (!fsPath || !changed.has(path.resolve(fsPath))) continue;
+      try {
+        const bytes = fs.readFileSync(fsPath);
+        if (getCacheKey(bytes) !== mod.hash) continue;
+        const st = fs.statSync(fsPath);
+        freshnessCache[`${mod.id}\n${fsPath}`] = {
+          fsPath,
+          dev: st.dev,
+          ino: st.ino,
+          mtimeMs: st.mtimeMs,
+          ctimeMs: st.ctimeMs,
+          size: st.size,
+          hash: mod.hash,
+        };
+        updated = true;
+      } catch {
+        // A concurrent source mutation must remain visible to the next audit.
+      }
+    }
+  }
+  if (!updated) return;
+  try {
+    const tmp = `${freshnessCacheFile}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(freshnessCache)}\n`, "utf8");
+    fs.renameSync(tmp, freshnessCacheFile);
+  } catch {
+    // Cache persistence is non-authoritative; the next build re-audits.
+  }
+}
+
+function collectSourceOnlyMutationProof(
+  plan: BuildPlan,
+  workspaceRoot: string,
+  parserMode: string,
+  changedPaths: readonly string[],
+): {
+  ok: boolean;
+  changed: number;
+  changedPaths: string[];
+  runtimeMutations: RuntimeSourceMutationFacts["mutations"];
+  reason?: string;
+} {
+  if (changedPaths.length === 0) {
+    return { ok: false, changed: 0, changedPaths: [], runtimeMutations: [], reason: "no-source-changes" };
+  }
+  const planScanStart = performance.now();
+  const changedSet = new Set(changedPaths.map((filePath) => path.resolve(filePath)));
+  const changedJsPaths: string[] = [];
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js" && mod.kind !== "css") continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, workspaceRoot);
+      }
+      if (!fsPath || !path.isAbsolute(fsPath)) continue;
+      if (fsPath.includes("node_modules") || fsPath.includes("/.ionify/")) continue;
+      if (!changedSet.has(path.resolve(fsPath))) continue;
+      if (mod.kind !== "css") changedJsPaths.push(fsPath);
+    }
+  }
+  const planScanMs = performance.now() - planScanStart;
+  const runtimeFactsStart = performance.now();
+  const runtimeFacts = collectRuntimeMutationFactsForFiles(changedJsPaths, parserMode);
+  const runtimeFactsMs = performance.now() - runtimeFactsStart;
+  logBuildProfileText(
+    "sourceOnlyMutationProofBreakdown",
+    `planScan_ms=${planScanMs.toFixed(2)} nativeFacts_ms=${runtimeFactsMs.toFixed(2)} files=${changedJsPaths.length}`,
+  );
+  if (runtimeFacts?.profile) {
+    logBuildProfileText(
+      "runtimeMutationFactBreakdown",
+      `inputRead_ms=${runtimeFacts.profile.inputReadMs.toFixed(2)} nativeCall_ms=${runtimeFacts.profile.nativeMutationMs.toFixed(2)} aggregation_ms=${runtimeFacts.profile.aggregationMs.toFixed(2)}`,
+    );
+  }
+  if (!runtimeFacts) {
+    return { ok: false, changed: changedPaths.length, changedPaths: [], runtimeMutations: [], reason: "runtime-demand-facts-unavailable" };
+  }
+  return {
+    ok: true,
+    changed: changedPaths.length,
+    changedPaths: Array.from(changedPaths),
+    runtimeMutations: runtimeFacts.mutations,
+  };
+}
+
+// v2: Tailwind graph-content freshness moved from per-artifact source dependency
+// lists to the CSSA aggregated stamp (tailwindGraphContent.stamp). v1 metas are
+// rejected (fail closed → one recompile) so pre-stamp state cannot serve stale CSS.
+const CSS_CAS_META_VERSION = 2;
+
 type CssCasMeta = {
-  version: 1;
+  version: typeof CSS_CAS_META_VERSION;
   baseHash: string;
   artifactHash?: string;
   artifactBytesHash?: string;
@@ -801,8 +1011,16 @@ type CssCasMeta = {
     plugins: number;
     configPath: string | null;
     fallbackReason: string | null;
+    /** CSSA aggregated graph-content stamp proving the Tailwind content set. */
+    stamp?: string | null;
   } | null;
 };
+
+/** Tailwind stamp component of the css:v3 artifact identity recipe. */
+function metaTailwindStampForRecipe(cssMeta: Pick<CssCasMeta, "tailwindGraphContent"> | null | undefined): string {
+  const tw = cssMeta?.tailwindGraphContent;
+  return tw?.enabled === true && typeof tw.stamp === "string" && tw.stamp.length > 0 ? tw.stamp : "none";
+}
 
 type CssCasDepProof = {
   filePath: string;
@@ -928,11 +1146,23 @@ function cssDepProofIsCurrent(
       ) {
         return false;
       }
+      if (getCacheKey(fs.readFileSync(depAbs)) !== proof.hash) {
+        return false;
+      }
     } catch {
       return proof.hash === "missing";
     }
   }
   return true;
+}
+
+function cssMetaAdmitsCurrentTailwindGraph(cssMeta: CssCasMeta, currentGraphStamp: string | null): boolean {
+  if (cssMeta.tailwindGraphContent?.enabled !== true || Number(cssMeta.tailwindGraphContent.files ?? 0) <= 0) {
+    return true;
+  }
+  const stamp = cssMeta.tailwindGraphContent.stamp;
+  if (typeof stamp !== "string" || stamp.length === 0) return false;
+  return currentGraphStamp !== null && stamp === currentGraphStamp;
 }
 
 function copyFileWithHardlinkFallback(src: string, dst: string): boolean {
@@ -960,6 +1190,7 @@ type DepsManifestIndexEntry = {
   externalCount: number;
   chunkGroup: string | null;
   chunkFiles: string[];
+  artifactTopologyReason: string | null;
 };
 
 type VerifiedDepsSnapshotFreshness = {
@@ -967,6 +1198,7 @@ type VerifiedDepsSnapshotFreshness = {
   checked: number;
   missing: string[];
   reason?: string;
+  detail?: string;
 };
 
 function canonicalFsPath(value: string): string {
@@ -984,8 +1216,14 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
     const raw = fs.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
     const entries: Record<string, any> = parsed?.entries ?? {};
+    const activeEntriesRaw = parsed?.activeEntries ?? parsed?.active_entries;
+    const activeManifestKeys =
+      activeEntriesRaw && typeof activeEntriesRaw === "object"
+        ? new Set(Object.values(activeEntriesRaw).filter((value): value is string => typeof value === "string"))
+        : null;
     const map = new Map<string, DepsManifestIndexEntry>();
-    for (const [entryPath, entry] of Object.entries(entries)) {
+    for (const [manifestKey, entry] of Object.entries(entries)) {
+      if (activeManifestKeys && !activeManifestKeys.has(manifestKey)) continue;
       const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
       if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
       const sizeBytes =
@@ -1027,8 +1265,15 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
       const chunkFiles = (Array.isArray(chunkFilesRaw) ? chunkFilesRaw : [])
         .map((v) => (typeof v === "string" ? v : null))
         .filter((v): v is string => typeof v === "string" && v.length > 0);
+      const artifactTopologyReasonRaw =
+        (entry as any).artifactTopologyReason ?? (entry as any).artifact_topology_reason;
       map.set(outFile, {
-        entryPath,
+        entryPath:
+          typeof (entry as any)?.entryPath === "string"
+            ? (entry as any).entryPath
+            : typeof (entry as any)?.entry_path === "string"
+              ? (entry as any).entry_path
+              : manifestKey.split("::usage::", 1)[0],
         packageLabel: (entry as any).package || "unknown",
         hasSourcemap: (entry as any).hasSourcemap === true,
         sizeBytes,
@@ -1037,6 +1282,10 @@ function loadDepsManifestIndex(depsRoot: string): Map<string, DepsManifestIndexE
         externalCount,
         chunkGroup,
         chunkFiles,
+        artifactTopologyReason:
+          typeof artifactTopologyReasonRaw === "string" && artifactTopologyReasonRaw.length > 0
+            ? artifactTopologyReasonRaw
+            : null,
       });
     }
     return map;
@@ -1220,21 +1469,6 @@ export function validateDepsManifestEntryTopology(
   } finally {
     topologyValidationProfile.proofValidationTimeMs += Date.now() - proofStarted;
   }
-}
-
-function depsManifestEntriesSatisfyTopologyContract(
-  entries: Record<string, any>,
-  depsRoot: string,
-  outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION,
-): boolean {
-  return Object.values(entries).every(
-    (entry) => validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok,
-  );
-}
-
-function depsManifestEntryDemandIsIdentityBearing(entry: any): boolean {
-  const topology = normalizeManifestString(entry?.artifactTopology ?? entry?.artifact_topology);
-  return topology === "esm-native" || topology === "esm-native-slim";
 }
 
 function manifestHasDifferentOutputVersion(manifestPath: string, outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION): boolean {
@@ -1583,41 +1817,25 @@ function writeDepsMeasurementArtifacts(depsRoot: string): void {
   logBuildProfileDuration("gate4ValueAccountingWriteTime", gate4.timeMs);
 }
 
-function loadVerifiedManifestEntryPathMap(depsRoot: string): Map<string, any> | null {
-  const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return null;
+type DplSnapshotPublicationFact = {
+  routeActive: boolean;
+  entryPath: string;
+  artifactTopology: string;
+  nodeEnv: string;
+  outputVersion: number;
+  exportDemand: string[];
+};
+
+function readDplSnapshotPublicationFacts(
+  depsRoot: string,
+  outputVersion = DEPS_OPTIMIZER_OUTPUT_VERSION,
+): DplSnapshotPublicationFact[] | null {
+  const readActivePublications = native?.depsActivePublications;
+  if (!readActivePublications) return null;
   try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const entries: Record<string, any> = parsed?.entries ?? {};
-    if (!depsManifestEntriesSatisfyTopologyContract(entries, depsRoot)) return null;
-    const currentNodeEnv = process.env.NODE_ENV ?? "";
-    const out = new Map<string, any>();
-    for (const [manifestKey, entry] of Object.entries(entries)) {
-      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
-      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
-      const outputVersion =
-        typeof (entry as any)?.outputVersion === "number"
-          ? (entry as any).outputVersion
-          : typeof (entry as any)?.output_version === "number"
-            ? (entry as any).output_version
-            : 0;
-      if (outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION) continue;
-      const nodeEnv = (entry as any)?.nodeEnv ?? (entry as any)?.node_env ?? "";
-      if (
-        typeof nodeEnv === "string" &&
-        nodeEnv.length > 0 &&
-        currentNodeEnv.length > 0 &&
-        nodeEnv.toLowerCase() !== currentNodeEnv.toLowerCase()
-      ) {
-        continue;
-      }
-      if (!fs.existsSync(path.join(depsRoot, outFile))) continue;
-      const entryPath = (entry as any)?.entryPath ?? (entry as any)?.entry_path ?? manifestKey;
-      if (typeof entryPath !== "string" || entryPath.length === 0) continue;
-      out.set(canonicalFsPath(entryPath), entry);
-    }
-    return out;
+    const publications = readActivePublications(depsRoot);
+    if (publications.some((publication) => publication.outputVersion !== outputVersion)) return null;
+    return publications;
   } catch {
     return null;
   }
@@ -1629,97 +1847,186 @@ export async function checkVerifiedDepsSnapshotFreshness(options: {
   resolvedEntries: string[] | undefined;
   allowedRoots: string[];
   config: any;
+  runtimeDemands?: DplRuntimeDemandFact[];
 }): Promise<VerifiedDepsSnapshotFreshness> {
-  if (!native?.resolveModule) {
-    return { fresh: true, checked: 0, missing: [], reason: "native-resolver-unavailable" };
+  // Polarity: freshness is a completeness PROOF that authorizes skipping the
+  // optimizer. Anything that prevents producing the proof must report NOT
+  // fresh (fail closed → the optimizer repair path runs), never fresh-by-
+  // default — an unprovable snapshot silently accepted is exactly how a stale
+  // publication survives while demand has grown.
+  if (!native?.depsRuntimeDemandCovered) {
+    return { fresh: false, checked: 0, missing: [], reason: "dpl-demand-authority-unavailable" };
   }
 
-  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
-  if (usageEntries.length === 0) {
-    return { fresh: true, checked: 0, missing: [], reason: "no-entry-roots" };
-  }
-
-  const manifestEntriesByPath = loadVerifiedManifestEntryPathMap(options.depsRoot);
-  if (!manifestEntriesByPath) {
+  const demandFacts = await collectDplGenerationDemandFacts(options);
+  if (!demandFacts.ok) return demandFacts.failure;
+  try {
+    // TS supplies syntax facts only. DPL resolves package identity, selects the
+    // active publication, and verifies topology/export ABI for every demand.
+    const coverage = native.depsRuntimeDemandCovered(options.depsRoot, demandFacts.demands);
+    if (!coverage.covered) {
+      return {
+        fresh: false,
+        checked: coverage.checked,
+        missing: [],
+        reason: "dpl-runtime-demand-uncovered",
+        detail: coverage.reason ?? undefined,
+      };
+    }
+    return { fresh: true, checked: coverage.checked, missing: [], reason: undefined };
+  } catch {
     return { fresh: false, checked: 0, missing: [], reason: "manifest-missing-or-invalid" };
   }
+}
 
-  const optimizeExclude = Array.isArray(options.config?.optimizeDeps?.exclude)
-    ? new Set(options.config.optimizeDeps.exclude.map((s: any) => String(s)))
-    : null;
+type DplGenerationDemandFacts =
+  | { ok: true; demands: DplRuntimeDemandFact[] }
+  | { ok: false; failure: VerifiedDepsSnapshotFreshness };
 
-  let scanned: Array<{ entryPath: string; packageName: string }> = [];
+/**
+ * Collect emitted-runtime syntax facts for DPL generation admission. This is
+ * deliberately identity-free: TS may filter configured external exclusions,
+ * while package resolution, active-route selection, topology, and export ABI
+ * remain DPL-owned.
+ */
+async function collectDplGenerationDemandFacts(options: {
+  rootDir: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  config: any;
+  runtimeDemands?: DplRuntimeDemandFact[];
+}): Promise<DplGenerationDemandFacts> {
+  const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
+  if (usageEntries.length === 0) return { ok: true, demands: [] };
+
+  let runtimeDemands = options.runtimeDemands;
   try {
-    scanned = await scanDepEntryPaths({
-      rootDir: options.rootDir,
-      entries: usageEntries,
-      allowedRoots: options.allowedRoots,
-    });
+    if (!runtimeDemands) {
+      // C3-c Phase B: prefer the retained canonical Parser(B)+Resolver demand on the
+      // true-cold path (sole authority); the source scanner runs only off that path.
+      const coldPump =
+        __c3ColdPumpDemand && __c3ColdPumpDemand.rootDir === options.rootDir
+          ? __c3ColdPumpDemand
+          : null;
+      runtimeDemands = coldPump
+        ? coldPump.demands
+        : (
+            await scanDepUsageFacts({
+              rootDir: options.rootDir,
+              entries: usageEntries,
+              allowedRoots: options.allowedRoots,
+            })
+          ).runtimeDemands;
+    }
   } catch {
-    return { fresh: true, checked: 0, missing: [], reason: "scan-failed" };
-  }
-
-  const currentEntryPaths = new Set<string>();
-  for (const entry of scanned) {
-    if (optimizeExclude?.has(entry.packageName)) continue;
-    if (!isOptimizableDepEntryPath(entry.entryPath)) continue;
-    currentEntryPaths.add(canonicalFsPath(entry.entryPath));
-  }
-
-  const missing = Array.from(currentEntryPaths)
-    .filter((entryPath) => !manifestEntriesByPath.has(entryPath))
-    .sort();
-  if (missing.length > 0) {
     return {
-      fresh: false,
-      checked: currentEntryPaths.size,
-      missing,
-      reason: "manifest-missing-current-deps",
+      ok: false,
+      failure: { fresh: false, checked: 0, missing: [], reason: "runtime-demand-scan-failed" },
     };
   }
 
-  try {
-    const usage = await scanDepUsage({
-      rootDir: options.rootDir,
-      entries: usageEntries,
-      allowedRoots: options.allowedRoots,
-    });
-    for (const item of usage.values()) {
-      if (optimizeExclude?.has(item.packageName)) continue;
-      if (!isOptimizableDepEntryPath(item.entryPath)) continue;
-      const manifestEntry = manifestEntriesByPath.get(canonicalFsPath(item.entryPath));
-      if (!manifestEntry) continue;
-      if (!depsManifestEntryDemandIsIdentityBearing(manifestEntry)) continue;
-      const currentDemand =
-        !item.hasNamespace && !item.hasExportStar && Array.isArray(item.usedExports)
-          ? Array.from(new Set(item.usedExports.map((value) => String(value).trim()).filter(Boolean))).sort()
-          : [];
-      const persistedRaw = manifestEntry.exportDemand ?? manifestEntry.export_demand ?? [];
-      const persistedDemand = Array.isArray(persistedRaw)
-        ? Array.from(new Set(persistedRaw.map((value: unknown) => String(value).trim()).filter(Boolean))).sort()
-        : [];
-      if (
-        currentDemand.length !== persistedDemand.length ||
-        currentDemand.some((value, index) => value !== persistedDemand[index])
-      ) {
-        return {
-          fresh: false,
-          checked: currentEntryPaths.size,
-          missing: [],
-          reason: "manifest-export-demand-mismatch",
-        };
+  const optimizeExclude = Array.isArray(options.config?.optimizeDeps?.exclude)
+    ? new Set(options.config.optimizeDeps.exclude.map((value: any) => String(value)))
+    : null;
+  return {
+    ok: true,
+    demands: runtimeDemands.filter((demand) => {
+      if (!optimizeExclude || optimizeExclude.size === 0) return true;
+      for (const excluded of optimizeExclude) {
+        if (demand.specifier === excluded || demand.specifier.startsWith(`${excluded}/`)) return false;
       }
+      return true;
+    }),
+  };
+}
+
+async function publishVerifiedDepsGeneration(options: {
+  rootDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  config: any;
+  runtimeDemands?: DplRuntimeDemandFact[];
+}): Promise<void> {
+  const sentinelPath = path.join(options.depsRoot, ".verified");
+  const publishGeneration = native?.depsPublishVerifiedGeneration;
+  if (!publishGeneration) {
+    removeSnapshotMarker(sentinelPath);
+    throw new Error("[deps] DPL generation publication authority is unavailable");
+  }
+  const demandFacts = await collectDplGenerationDemandFacts(options);
+  if (!demandFacts.ok) {
+    removeSnapshotMarker(sentinelPath);
+    throw new Error(`[deps] Cannot publish DPL generation: ${demandFacts.failure.reason ?? "unknown"}`);
+  }
+  const coverage = publishGeneration(options.depsRoot, demandFacts.demands);
+  if (!coverage.covered) {
+    throw new Error(
+      `[deps] DPL did not admit the optimized generation ` +
+        `(dpl-runtime-demand-uncovered, checked=${coverage.checked}` +
+        `${coverage.reason ? `, detail=${coverage.reason}` : ""})`,
+    );
+  }
+  writeDepArtifactsToGlobalCache(
+    options.depsHash,
+    options.depsRoot,
+    DEPS_OPTIMIZER_OUTPUT_VERSION,
+  );
+}
+
+/**
+ * Accept a globally-restored deps snapshot ONLY after it passes the same
+ * freshness proof a local sentinel must pass. The global cache is keyed by
+ * depsHash (lockfile identity), but a snapshot cached before new imports were
+ * added satisfies the hash while missing current demand — writing the sentinel
+ * for it would bless an incomplete publication for every future build. On an
+ * unproven restore the restored artifacts stay on disk as a warm starting
+ * point, the sentinel is NOT written, and the caller falls through to the
+ * optimizer repair path which tops up the missing publications.
+ */
+export async function verifyRestoredDepsSnapshot(options: {
+  rootDir: string;
+  depsRoot: string;
+  sentinelPath: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+  config: any;
+}): Promise<boolean> {
+  // A restored global marker is never authoritative locally. Proof must create
+  // the local marker after inspecting the restored publication substrate.
+  if (!removeSnapshotMarker(options.sentinelPath)) {
+    throw new Error(
+      `[Ionify] Cannot invalidate restored dependency marker ${options.sentinelPath}`,
+    );
+  }
+  const publishGeneration = native?.depsPublishVerifiedGeneration;
+  if (!publishGeneration) return false;
+  const demandFacts = await collectDplGenerationDemandFacts({
+    rootDir: options.rootDir,
+    resolvedEntries: options.resolvedEntries,
+    allowedRoots: options.allowedRoots,
+    config: options.config,
+  });
+  if (!demandFacts.ok) {
+    logWarn(
+      `[deps] Restored global snapshot does not cover current demand (${demandFacts.failure.reason ?? "unknown"}); repairing`,
+    );
+    return false;
+  }
+  try {
+    const coverage = publishGeneration(options.depsRoot, demandFacts.demands);
+    if (!coverage.covered) {
+      logWarn(
+        `[deps] Restored global snapshot does not cover current demand ` +
+          `(dpl-runtime-demand-uncovered${coverage.reason ? `, detail=${coverage.reason}` : ""}); repairing`,
+      );
+      return false;
     }
   } catch {
-    // Entry presence is still a valid freshness proof if the usage scan fails.
+    return false;
   }
-
-  return {
-    fresh: true,
-    checked: currentEntryPaths.size,
-    missing: [],
-    reason: undefined,
-  };
+  return true;
 }
 
 export function collectNativeExternalModules(plan: BuildPlan, configuredExternals: readonly string[]): string[] {
@@ -1741,16 +2048,15 @@ export function collectNativeExternalModules(plan: BuildPlan, configuredExternal
 /**
  * T3 — Route node_modules deps through deps optimizer artifacts.
  *
- * Reads the deps manifest at `depsRoot/manifest.json`, builds a reverse map from
- * canonical entry paths to artifact paths, then walks the build plan:
+ * Consumes DPL's native publication-closure facts, builds a reverse map from
+ * canonical route-active entry paths to artifact paths, then walks the build plan:
  *   - Entry modules (matching a manifest entry) are rerouted to the pre-built artifact,
  *     their hash is recomputed from artifact bytes, and the artifact is written into CAS.
  *   - Internal transitive modules (node_modules files that are NOT direct entries) are
  *     pruned from the plan since the entry artifact already bundles them.
- *   - Shared dep artifacts (shared.sc*.js, vendor-pack.*.js) imported by the rerouted
- *     wrappers are pre-warmed into Tier-1 CAS and injected as synthetic plan modules.
- *     This prevents the Rust bundler from fully re-parsing 10-50MB of pre-built shared
- *     chunks on every build — they are hydrated from CAS instead (CAS-First principle).
+ *   - DPL dependencyImports/sharedImports/packageGraph facts replace source topology
+ *     recursively. Every published artifact is hydrated into Tier-1 CAS exactly once;
+ *     wrapper bytes are never reparsed by TS to infer dependency ownership.
  *
  * Returns `{ rerouted, pruned, sharedPrewarmed }` counts.
  */
@@ -1762,63 +2068,185 @@ export function rerouteDepsArtifacts(options: {
   workspaceRoot: string;
 }): { rerouted: number; pruned: number; sharedPrewarmed: number; idRewritten: number } {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
+  // G2-C3: authority is no longer transported as an out-of-band set. Each module
+  // the reroute reroutes/injects is stamped with its owning authority's
+  // `proofKind` directly on the plan module (DplContentHash), so the plan is
+  // self-describing and admission dispatches on it — no side-channel.
 
-  // Build reverse map: canonical entry path → DPL artifact metadata.
-  const depsArtifactsByEntry = new Map<
-    string,
-    {
+  type DplRerouteArtifact = {
+    outFile: string;
+    artifactPath: string;
+    artifactHash: string;
+    artifactTopology: "wrapper" | "esm-native" | "esm-native-slim";
+    dependencyAbi: NonNullable<BuildPlan["chunks"][number]["modules"][number]["dependencyAbi"]>;
+    sharedImports: string[];
+    dependencyImports: string[];
+    graphFiles: Array<{
       outFile: string;
       artifactPath: string;
-      artifactHash: string;
-      artifactTopology: "wrapper" | "esm-native" | "esm-native-slim";
-      sharedImports: string[];
-      graphFiles: Array<{ outFile: string; artifactPath: string }>;
-    }
-  >();
-  const manifestPath = path.join(depsRoot, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+      dependencyAbi: NonNullable<BuildPlan["chunks"][number]["modules"][number]["dependencyAbi"]>;
+    }>;
+  };
+  const depsArtifactsByEntry = new Map<string, DplRerouteArtifact>();
+  const publishedArtifacts: DplRerouteArtifact[] = [];
+  const readActivePublications = native?.depsActivePublications;
+  if (!readActivePublications) {
+    throw new Error("[deps] DPL publication-closure authority is unavailable");
+  }
   try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const manifestEntries: Record<string, any> = parsed?.entries ?? {};
-    for (const [entryPath, entry] of Object.entries(manifestEntries)) {
-      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file ?? null;
-      if (typeof outFile !== "string" || !outFile.endsWith(".js")) continue;
+    const publications = readActivePublications(depsRoot);
+    for (const publication of publications) {
+      const outFile = publication.outFile;
+      if (path.basename(outFile) !== outFile || !outFile.endsWith(".js")) {
+        throw new Error(`[deps] DPL published an invalid artifact path: ${outFile}`);
+      }
       const artifactPath = path.join(depsRoot, outFile);
-      if (!fs.existsSync(artifactPath)) continue;
-      const artifactHash: string = (entry as any)?.artifactHash ?? "";
-      const topology = normalizeManifestString((entry as any)?.artifactTopology ?? (entry as any)?.artifact_topology);
+      const topology = normalizeManifestString(publication.artifactTopology);
       const artifactTopology: "wrapper" | "esm-native" | "esm-native-slim" =
         topology === "esm-native" || topology === "esm-native-slim" || topology === "wrapper"
           ? topology
           : "wrapper";
-      const sharedImports: string[] = Array.isArray((entry as any)?.sharedImports)
-        ? (entry as any).sharedImports
-        : [];
-      const packageGraph = (entry as any)?.packageGraph ?? (entry as any)?.package_graph;
-      const graphFiles: Array<{ outFile: string; artifactPath: string }> = [];
-      if (packageGraph && typeof packageGraph === "object" && packageGraph.status === "ready") {
-        const files = Array.isArray(packageGraph.files) ? packageGraph.files : [];
-        for (const file of files) {
-          const graphOutFile = typeof file?.outFile === "string" ? file.outFile : typeof file?.out_file === "string" ? file.out_file : "";
-          if (!graphOutFile.endsWith(".js") || graphOutFile === outFile) continue;
-          const graphArtifactPath = path.join(depsRoot, graphOutFile);
-          if (fs.existsSync(graphArtifactPath)) graphFiles.push({ outFile: graphOutFile, artifactPath: graphArtifactPath });
+      const exportAbi = publication.exportAbi;
+      if (
+        !exportAbi ||
+        !Number.isInteger(exportAbi.version) ||
+        exportAbi.version <= 0 ||
+        typeof exportAbi.abiHash !== "string" ||
+        exportAbi.abiHash.length === 0
+      ) {
+        throw new Error(`[deps] DPL publication ${outFile} has no transportable export ABI`);
+      }
+      const dependencyAbi = {
+        version: exportAbi.version,
+        names: Array.from(new Set(exportAbi.names)).sort(),
+        hasDefault: exportAbi.hasDefault,
+        uncertain: exportAbi.uncertain,
+        abiHash: exportAbi.abiHash,
+        imports: publication.dependencyImportAbi.map((dependency) => ({
+          outFile: dependency.outFile,
+          mode: dependency.mode,
+          names: Array.from(new Set(dependency.names)).sort(),
+          hasDefault: dependency.hasDefault,
+          hasNamespace: dependency.hasNamespace,
+          hasSideEffect: dependency.hasSideEffect,
+          hasExportStar: dependency.hasExportStar,
+          uncertain: dependency.uncertain,
+        })),
+      };
+      const graphAbiByOutFile = new Map(
+        publication.packageGraphFileAbi.map((file) => [file.outFile, file] as const),
+      );
+      const artifact: DplRerouteArtifact = {
+        outFile,
+        artifactPath,
+        artifactHash: publication.artifactHash,
+        artifactTopology,
+        dependencyAbi,
+        sharedImports: Array.from(new Set(publication.sharedImports)).sort(),
+        dependencyImports: Array.from(new Set(publication.dependencyImports)).sort(),
+        graphFiles: Array.from(new Set(publication.packageGraphFiles))
+          .filter((graphOutFile) => graphOutFile !== outFile)
+          .sort()
+          .map((graphOutFile) => ({
+            outFile: graphOutFile,
+            artifactPath: path.join(depsRoot, graphOutFile),
+            dependencyAbi: {
+              version: exportAbi.version,
+              names: Array.from(new Set(graphAbiByOutFile.get(graphOutFile)?.exports ?? [])).sort(),
+              hasDefault: (graphAbiByOutFile.get(graphOutFile)?.exports ?? []).includes("default"),
+              uncertain: false,
+              abiHash: exportAbi.abiHash,
+              imports: [],
+            },
+          })),
+      };
+      publishedArtifacts.push(artifact);
+      for (const member of publication.publicationMembers ?? []) {
+        const memberTopology = normalizeManifestString(member.artifactTopology);
+        const artifactTopology: "wrapper" | "esm-native" | "esm-native-slim" =
+          memberTopology === "esm-native" || memberTopology === "esm-native-slim" || memberTopology === "wrapper"
+            ? memberTopology
+            : "wrapper";
+        const memberAbi = member.exportAbi;
+        if (
+          path.basename(member.outFile) !== member.outFile ||
+          !member.outFile.endsWith(".js") ||
+          !member.artifactHash ||
+          !memberAbi ||
+          !Number.isInteger(memberAbi.version) ||
+          memberAbi.version <= 0 ||
+          !memberAbi.abiHash
+        ) {
+          throw new Error(`[deps] DPL publication member ${member.outFile} has an invalid artifact contract`);
         }
+        const memberDependencyAbi = {
+          version: memberAbi.version,
+          names: Array.from(new Set(memberAbi.names)).sort(),
+          hasDefault: memberAbi.hasDefault,
+          uncertain: memberAbi.uncertain,
+          abiHash: memberAbi.abiHash,
+          imports: member.dependencyImportAbi.map((dependency) => ({
+            outFile: dependency.outFile,
+            mode: dependency.mode,
+            names: Array.from(new Set(dependency.names)).sort(),
+            hasDefault: dependency.hasDefault,
+            hasNamespace: dependency.hasNamespace,
+            hasSideEffect: dependency.hasSideEffect,
+            hasExportStar: dependency.hasExportStar,
+            uncertain: dependency.uncertain,
+          })),
+        };
+        publishedArtifacts.push({
+          outFile: member.outFile,
+          artifactPath: path.join(depsRoot, member.outFile),
+          artifactHash: member.artifactHash,
+          artifactTopology,
+          dependencyAbi: memberDependencyAbi,
+          sharedImports: [],
+          dependencyImports: memberDependencyAbi.imports.map((dependency) => dependency.outFile),
+          graphFiles: [],
+        });
       }
-      let canonicalEntry: string;
-      try {
-        canonicalEntry = fs.realpathSync.native(entryPath);
-      } catch {
-        canonicalEntry = path.resolve(entryPath);
+      if (!publication.routeActive) continue;
+      const canonicalEntry = canonicalFsPath(publication.entryPath);
+      if (depsArtifactsByEntry.has(canonicalEntry)) {
+        throw new Error(`[deps] DPL published multiple active routes for ${publication.entryPath}`);
       }
-      depsArtifactsByEntry.set(canonicalEntry, { outFile, artifactPath, artifactHash, artifactTopology, sharedImports, graphFiles });
+      depsArtifactsByEntry.set(canonicalEntry, artifact);
     }
-  } catch {
-    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  } catch (error) {
+    throw new Error(`[deps] Failed to consume DPL publication closure: ${String(error)}`);
   }
 
-  if (depsArtifactsByEntry.size === 0) return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  if (depsArtifactsByEntry.size === 0)
+    return { rerouted: 0, pruned: 0, sharedPrewarmed: 0, idRewritten: 0 };
+  const depsArtifactsByOutFile = new Map<string, DplRerouteArtifact>();
+  for (const artifact of publishedArtifacts) {
+    const existing = depsArtifactsByOutFile.get(artifact.outFile);
+    if (existing) {
+      const existingContract = JSON.stringify({
+        hash: existing.artifactHash,
+        topology: existing.artifactTopology,
+        shared: existing.sharedImports,
+        dependencies: existing.dependencyImports,
+        graph: existing.graphFiles.map((file) => file.outFile),
+        abi: existing.dependencyAbi.abiHash,
+      });
+      const nextContract = JSON.stringify({
+        hash: artifact.artifactHash,
+        topology: artifact.artifactTopology,
+        shared: artifact.sharedImports,
+        dependencies: artifact.dependencyImports,
+        graph: artifact.graphFiles.map((file) => file.outFile),
+        abi: artifact.dependencyAbi.abiHash,
+      });
+      if (existingContract !== nextContract) {
+        throw new Error(`[deps] DPL publication conflict for ${artifact.outFile}`);
+      }
+      continue;
+    }
+    depsArtifactsByOutFile.set(artifact.outFile, artifact);
+  }
 
   let rerouted = 0;
   let pruned = 0;
@@ -1842,11 +2270,10 @@ export function rerouteDepsArtifacts(options: {
   // (which would trip swc_bundler's span-hygiene invariant).
   const claimedNewIds = new Set<string>();
 
-  // Track rerouted module paths per chunk so we can scan their /@deps/ imports.
-  // key: chunkId → set of rerouted artifact paths
-  const reroutedPathsByChunk = new Map<string, Set<string>>();
-  const graphFilesByChunk = new Map<string, Map<string, { outFile: string; artifactPath: string }>>();
-  const graphDepsByModuleId = new Map<string, string[]>();
+  const dplArtifactByModuleId = new Map<
+    string,
+    DplRerouteArtifact
+  >();
 
   for (const chunk of plan.chunks) {
     const keptModules: typeof chunk.modules = [];
@@ -1860,12 +2287,6 @@ export function rerouteDepsArtifacts(options: {
         fsPath = mod.id;
       }
 
-      const isNodeModules = fsPath ? fsPath.includes("node_modules") : mod.id.includes("node_modules");
-      if (!isNodeModules) {
-        keptModules.push(mod);
-        continue;
-      }
-
       let canonical: string | null = null;
       if (fsPath) {
         try {
@@ -1876,6 +2297,18 @@ export function rerouteDepsArtifacts(options: {
       }
 
       const artifact = canonical ? depsArtifactsByEntry.get(canonical) : null;
+      const isNodeModules = fsPath ? fsPath.includes("node_modules") : mod.id.includes("node_modules");
+      if (!artifact && !isNodeModules) {
+        // G2-C3: workspace Transform-domain source is Transform-owned. Stamp the
+        // required admission contract POSITIVELY (this is a workspace source
+        // module, not "whatever DPL didn't claim"). CSS keeps its own authority
+        // (CSSA) and receives a CssProof kind in a later increment; a consumable
+        // JS class not covered here reaches admission unstamped → fails closed.
+        if (mod.kind === "js") (mod as any).proofKind = "TransformArtifactProof";
+        keptModules.push(mod);
+        continue;
+      }
+
       if (artifact) {
         // ── CAS-First fast path ──────────────────────────────────────────────
         // When the optimizer persisted artifactHash in the manifest we can skip
@@ -1910,6 +2343,8 @@ export function rerouteDepsArtifacts(options: {
         mod.fsPath = artifact.artifactPath;
         mod.hash = resolvedHash;
         mod.artifactTopology = artifact.artifactTopology;
+        mod.dependencyAbi = artifact.dependencyAbi;
+        mod.dependencyAbiHash = artifact.dependencyAbi.abiHash;
         // Normalize kind: T19 dep-leaf nodes have kind="dep" so the BFS recognises them
         // as artifact boundaries. After rerouting they are concrete JS artifact files;
         // all downstream consumers (CAS hydration loop, Rust bundler) expect kind="js".
@@ -1939,36 +2374,15 @@ export function rerouteDepsArtifacts(options: {
           idRewritten += 1;
         }
 
-        if (newId && artifact.graphFiles.length > 0) {
-          let chunkGraphFiles = graphFilesByChunk.get(chunk.id);
-          if (!chunkGraphFiles) {
-            chunkGraphFiles = new Map();
-            graphFilesByChunk.set(chunk.id, chunkGraphFiles);
-          }
-          const graphDepIds: string[] = [];
-          for (const graphFile of artifact.graphFiles) {
-            let graphId: string;
-            try {
-              graphId = toWsModuleId(graphFile.artifactPath, workspaceRoot);
-            } catch {
-              graphId = graphFile.artifactPath;
-            }
-            graphDepIds.push(graphId);
-            chunkGraphFiles.set(graphId, graphFile);
-          }
-          graphDepsByModuleId.set(newId, graphDepIds);
-        }
+        if (newId) dplArtifactByModuleId.set(newId, artifact);
 
+        // G2-C3: DPL owns this artifact's identity + integrity contract. Stamp the
+        // required admission contract (transporting DPL's decision; membership came
+        // from depsActivePublications, not a path guess).
+        (mod as any).proofKind = "DplContentHash";
         keptModules.push(mod);
         rerouted += 1;
 
-        // Record artifact path for shared-file discovery below.
-        let chunkSet = reroutedPathsByChunk.get(chunk.id);
-        if (!chunkSet) {
-          chunkSet = new Set();
-          reroutedPathsByChunk.set(chunk.id, chunkSet);
-        }
-        chunkSet.add(artifact.artifactPath);
       } else {
         pruned += 1;
       }
@@ -2006,196 +2420,555 @@ export function rerouteDepsArtifacts(options: {
         if (Array.isArray((mod as any).dynamicDeps)) {
           (mod as any).dynamicDeps = remapDepList((mod as any).dynamicDeps);
         }
+        if (Array.isArray(mod.runtimeLinks)) {
+          mod.runtimeLinks = mod.runtimeLinks.flatMap((link) => {
+            const [targetId] = remapDepList([link.targetId]);
+            return targetId ? [{ ...link, targetId }] : [];
+          });
+        }
       }
     }
   }
 
-  if (graphDepsByModuleId.size > 0) {
-    for (const chunk of plan.chunks) {
-      for (const mod of chunk.modules) {
-        const graphDeps = typeof mod.id === "string" ? graphDepsByModuleId.get(mod.id) : undefined;
-        if (!graphDeps?.length) continue;
-        const nextDeps = new Set([...(mod.deps ?? []), ...graphDeps]);
-        mod.deps = Array.from(nextDeps);
+  let sharedPrewarmed = 0;
+
+  // DPL topology replaces the source graph at the dependency boundary. Build
+  // recursively admits only DPL-published outFiles and never derives package
+  // identity or reparses wrapper bytes to rediscover dependency ownership.
+  const owners = new Map<
+    string,
+    { chunk: BuildPlan["chunks"][number]; mod: BuildPlan["chunks"][number]["modules"][number] }
+  >();
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      const existing = owners.get(mod.id);
+      if (existing && dplArtifactByModuleId.has(mod.id)) {
+        throw new Error(`[deps] DPL artifact has multiple plan owners: ${mod.id}`);
       }
+      if (!existing) owners.set(mod.id, { chunk, mod });
     }
   }
 
-  if (graphFilesByChunk.size > 0) {
-    for (const chunk of plan.chunks) {
-      const graphFiles = graphFilesByChunk.get(chunk.id);
-      if (!graphFiles) continue;
-      const existingIds = new Set(chunk.modules.map((mod) => mod.id));
-      for (const [graphId, graphFile] of graphFiles.entries()) {
-        if (existingIds.has(graphId)) continue;
-        let graphCode: string;
-        try {
-          graphCode = fs.readFileSync(graphFile.artifactPath, "utf8");
-        } catch {
-          continue;
-        }
-        const graphHash = getCacheKey(graphCode);
-        const graphCasDir = getCasArtifactPath(casRoot, configHash, graphHash);
-        const graphCasFile = path.join(graphCasDir, "transformed.js");
-        if (!fs.existsSync(graphCasFile)) {
-          fs.mkdirSync(graphCasDir, { recursive: true });
-          fs.writeFileSync(graphCasFile, graphCode, "utf8");
-        }
-        chunk.modules.push({
-          id: graphId,
-          fsPath: graphFile.artifactPath,
-          hash: graphHash,
+  const moduleIdForOutFile = (outFile: string): string => {
+    if (path.basename(outFile) !== outFile || !outFile.endsWith(".js")) {
+      throw new Error(`[deps] Invalid DPL topology outFile: ${outFile}`);
+    }
+    const artifactPath = path.join(depsRoot, outFile);
+    return toWsModuleId(artifactPath, workspaceRoot) ?? artifactPath;
+  };
+  const hydrateArtifact = (artifactPath: string, expectedHash = ""): string => {
+    if (!fs.existsSync(artifactPath)) {
+      throw new Error(`[deps] DPL topology artifact is missing: ${path.basename(artifactPath)}`);
+    }
+    const code = fs.readFileSync(artifactPath, "utf8");
+    const hash = getCacheKey(code);
+    if (expectedHash && expectedHash !== hash) {
+      throw new Error(`[deps] DPL artifact hash mismatch: ${path.basename(artifactPath)}`);
+    }
+    const casDir = getCasArtifactPath(casRoot, configHash, hash);
+    const casFile = path.join(casDir, "transformed.js");
+    if (!fs.existsSync(casFile) || !casTextFileMatchesHash(casFile, hash)) {
+      fs.mkdirSync(casDir, { recursive: true });
+      fs.writeFileSync(casFile, code, "utf8");
+    }
+    return hash;
+  };
+
+  const queue = Array.from(dplArtifactByModuleId.keys());
+  const visited = new Set<string>();
+  const sharedInjected = new Set<string>();
+  while (queue.length > 0) {
+    const moduleId = queue.shift()!;
+    if (!visited.add(moduleId)) continue;
+    const artifact = dplArtifactByModuleId.get(moduleId);
+    const owner = owners.get(moduleId);
+    if (!artifact || !owner) {
+      throw new Error(`[deps] DPL topology owner is missing for ${moduleId}`);
+    }
+
+    const declared = [
+      ...artifact.dependencyImports.map((outFile) => ({
+        outFile,
+        kind: "dependency" as const,
+        dependencyAbi: undefined,
+      })),
+      ...artifact.sharedImports.map((outFile) => ({
+        outFile,
+        kind: "shared" as const,
+        dependencyAbi: undefined,
+      })),
+      ...artifact.graphFiles.map((file) => ({
+        outFile: file.outFile,
+        kind: "graph" as const,
+        dependencyAbi: file.dependencyAbi,
+      })),
+    ];
+    const dependencyIds: string[] = [];
+    for (const target of declared) {
+      const targetPath = path.join(depsRoot, target.outFile);
+      const targetId = moduleIdForOutFile(target.outFile);
+      dependencyIds.push(targetId);
+      const targetArtifact = depsArtifactsByOutFile.get(target.outFile);
+      if (target.kind === "dependency" && !targetArtifact) {
+        throw new Error(`[deps] DPL dependencyImport is unpublished: ${target.outFile}`);
+      }
+      if (!owners.has(targetId)) {
+        const hash = hydrateArtifact(targetPath, targetArtifact?.artifactHash ?? "");
+        const targetModule: BuildPlan["chunks"][number]["modules"][number] = {
+          id: targetId,
+          fsPath: targetPath,
+          hash,
           kind: "js",
           deps: [],
           dynamicDeps: [],
-          artifactTopology: "esm-native",
-        });
-        existingIds.add(graphId);
+          artifactTopology:
+            targetArtifact?.artifactTopology ?? (target.kind === "graph" ? "esm-native" : undefined),
+          dependencyAbi: targetArtifact?.dependencyAbi ?? target.dependencyAbi,
+          dependencyAbiHash:
+            targetArtifact?.dependencyAbi.abiHash ?? target.dependencyAbi?.abiHash,
+          // G2-C3: DPL-injected dependency/shared/graph target → DPL contract.
+          proofKind: "DplContentHash",
+        };
+        owner.chunk.modules.push(targetModule);
+        owners.set(targetId, { chunk: owner.chunk, mod: targetModule });
+        if (target.kind === "shared" && sharedInjected.add(targetId)) sharedPrewarmed += 1;
+      }
+      if (targetArtifact) {
+        dplArtifactByModuleId.set(targetId, targetArtifact);
+        queue.push(targetId);
       }
     }
-  }
-
-  // ── Phase U extension: Pre-warm shared dep artifacts into Tier-1 CAS ──
-  //
-  // Dep wrapper files (e.g. axios@1.12.2_xxx.js) import shared runtime chunks
-  // (e.g. /@deps/shared.sc4685e79e.js) which can be 3-12MB each. These shared
-  // files are not in the plan's module list, so the Rust bundler re-parses and
-  // applies full SWC transforms to them on every build — even though they are
-  // stable, pre-built artifacts that never change between builds.
-  //
-  // Fix: scan each rerouted wrapper for /@deps/<file>.js imports, resolve them
-  // to depsRoot, pre-warm them into Tier-1 CAS, and add them as synthetic plan
-  // modules. The Rust bundler will then CAS-hydrate them (no re-parse).
-  //
-  // This is architecturally aligned: same CAS-First mechanism used for wrappers,
-  // no new abstractions, no bridges, no hacks.
-
-  // ── CAS-First fast path: use sharedImports persisted in manifest ──────────
-  // When the optimizer has recorded sharedImports we can skip wrapper readFileSync
-  // + regex entirely. Build the lookup once from the already-loaded manifest data.
-  const artifactSharedImports = new Map<string, string[]>();
-  for (const entry of depsArtifactsByEntry.values()) {
-    if (entry.sharedImports.length > 0) {
-      artifactSharedImports.set(entry.artifactPath, entry.sharedImports);
-    }
-  }
-
-  // Regex only needed as fallback for artifacts optimized before version 16.
-  const depsImportRe = /["'](\/@deps\/([^"'?]+\.js))["']/g;
-
-  // Track which shared files have already been added to avoid duplicate plan modules.
-  const prewarnedSharedPaths = new Set<string>();
-  let sharedPrewarmed = 0;
-
-  for (const [chunkId, artifactPaths] of reroutedPathsByChunk.entries()) {
-    const chunk = plan.chunks.find(c => c.id === chunkId);
-    if (!chunk) continue;
-
-    // Collect all /@deps/ references from this chunk's rerouted wrappers.
-    const sharedFilesToAdd: Array<{ absPath: string; hash: string }> = [];
-
-    for (const wrapperPath of artifactPaths) {
-      // ── Fast path: use persisted sharedImports, skip wrapper read + regex ──
-      const persistedImports = artifactSharedImports.get(wrapperPath);
-      if (persistedImports !== undefined) {
-        for (const relFile of persistedImports) {
-          const absPath = path.join(depsRoot, relFile);
-          if (prewarnedSharedPaths.has(absPath)) continue;
-          if (!fs.existsSync(absPath)) continue;
-          // Shared files don't have individual manifest entries — read+hash+CAS-write
-          // them here (only happens on cold CAS; subsequent builds hit the existsSync
-          // check above and continue immediately).
-          let sharedCode: string;
-          try {
-            sharedCode = fs.readFileSync(absPath, "utf8");
-          } catch {
-            continue;
-          }
-          const sharedHash = getCacheKey(sharedCode);
-          const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
-          const sharedCasFile = path.join(sharedCasDir, "transformed.js");
-          if (!fs.existsSync(sharedCasFile)) {
-            fs.mkdirSync(sharedCasDir, { recursive: true });
-            fs.writeFileSync(sharedCasFile, sharedCode, "utf8");
-          }
-          prewarnedSharedPaths.add(absPath);
-          sharedFilesToAdd.push({ absPath, hash: sharedHash });
-          sharedPrewarmed += 1;
-        }
-        continue;
-      }
-
-      // ── Fallback: no persistedImports — read wrapper and scan for /@deps/ ──
-      // Only hit for artifacts optimized before DEPS_OPTIMIZER_OUTPUT_VERSION 16.
-      let wrapperCode: string;
-      try {
-        wrapperCode = fs.readFileSync(wrapperPath, "utf8");
-      } catch {
-        continue;
-      }
-
-      // Scan for /@deps/<file>.js references (imports of shared/vendor-pack files).
-      depsImportRe.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = depsImportRe.exec(wrapperCode)) !== null) {
-        const relFile = match[2]; // e.g. "shared.sc4685e79e.js"
-        // Only pre-warm files that live in depsRoot (shared.*.js, vendor-pack.*.js, etc.)
-        // and skip individual dep wrappers (they are already in the plan via rerouting).
-        // Heuristic: shared/pack files don't look like "package@version_hash.js".
-        const isSharedOrPack =
-          relFile.startsWith("shared.") ||
-          relFile.startsWith("vendor-pack.") ||
-          relFile.startsWith("vendor-core.");
-        if (!isSharedOrPack) continue;
-
-        const absPath = path.join(depsRoot, relFile);
-        if (prewarnedSharedPaths.has(absPath)) continue;
-        if (!fs.existsSync(absPath)) continue;
-
-        // Read, hash, and CAS-write the shared artifact.
-        let sharedCode: string;
-        try {
-          sharedCode = fs.readFileSync(absPath, "utf8");
-        } catch {
-          continue;
-        }
-        const sharedHash = getCacheKey(sharedCode);
-        const sharedCasDir = getCasArtifactPath(casRoot, configHash, sharedHash);
-        const sharedCasFile = path.join(sharedCasDir, "transformed.js");
-        if (!fs.existsSync(sharedCasFile)) {
-          fs.mkdirSync(sharedCasDir, { recursive: true });
-          fs.writeFileSync(sharedCasFile, sharedCode, "utf8");
-        }
-
-        prewarnedSharedPaths.add(absPath);
-        sharedFilesToAdd.push({ absPath, hash: sharedHash });
-        sharedPrewarmed += 1;
-      }
-    }
-
-    // Inject synthetic plan modules for the discovered shared artifacts.
-    // id = workspace-scoped artifact id (portable, deterministic — never an absolute
-    // OS path in the manifest); fsPath = absolute path so the Rust bundler's
-    // modules_by_path map resolves them to CAS correctly.
-    for (const { absPath, hash } of sharedFilesToAdd) {
-      let sharedId = absPath;
-      try {
-        sharedId = toWsModuleId(absPath, workspaceRoot) ?? absPath;
-      } catch {
-        sharedId = absPath;
-      }
-      chunk.modules.push({
-        id: sharedId,
-        fsPath: absPath,
-        hash,
-        kind: "js",
-        deps: [],
-        dynamicDeps: [],
-      });
-    }
+    owner.mod.deps = Array.from(new Set(dependencyIds));
+    owner.mod.dynamicDeps = [];
   }
 
   return { rerouted, pruned, sharedPrewarmed, idRewritten };
+}
+
+function stablePlanChunkId(prefix: string, moduleIds: string[]): string {
+  const sorted = [...moduleIds].sort();
+  const digest = crypto.createHash("sha256").update(sorted.join("\u001f")).digest("hex");
+  return `${prefix}-${digest.slice(0, 8)}`;
+}
+
+function estimateCanonicalPlanModuleBytes(mod: BuildPlan["chunks"][number]["modules"][number], workspaceRoot: string): number {
+  let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : "";
+  if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
+    fsPath = fromWsModuleId(mod.id, workspaceRoot) ?? "";
+  }
+  if (!fsPath && typeof mod.id === "string" && path.isAbsolute(mod.id)) {
+    fsPath = mod.id;
+  }
+  if (!fsPath || !path.isAbsolute(fsPath)) return 1;
+  try {
+    const stat = fs.statSync(fsPath);
+    return Math.max(1, stat.size);
+  } catch {
+    return 1;
+  }
+}
+
+type DepsArtifactPlanningFact = {
+  chunkGroup: string | null;
+  dependencies: string[];
+};
+
+function buildDepsArtifactCostIndex(depsRoot: string): Map<string, DepsArtifactPlanningFact> {
+  const out = new Map<string, DepsArtifactPlanningFact>();
+  const manifestPath = path.join(depsRoot, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return out;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const entries: Record<string, any> = parsed?.entries ?? {};
+    for (const entry of Object.values(entries)) {
+      const outFile = (entry as any)?.outFile ?? (entry as any)?.out_file;
+      if (typeof outFile !== "string" || outFile.length === 0) continue;
+      const chunkGroupRaw = (entry as any)?.chunkGroup ?? (entry as any)?.chunk_group;
+      const declaredChunkGroup =
+        typeof chunkGroupRaw === "string" && chunkGroupRaw.length > 0 ? chunkGroupRaw : null;
+      const packageGraph = (entry as any)?.packageGraph ?? (entry as any)?.package_graph;
+      const packageGraphFiles =
+        packageGraph && packageGraph.status === "ready" && Array.isArray(packageGraph.files)
+          ? packageGraph.files
+          : [];
+      // A DPL packageGraph is one emitted dependency artifact split into local
+      // ESM files. Its entry and closure files must remain an atomic planning
+      // unit just like a declared chunkGroup; splitting them can create a
+      // reverse vendor edge when an external dependency lands in an earlier
+      // partition. The group key is derived only from DPL's outFile identity.
+      const chunkGroup =
+        declaredChunkGroup ?? (packageGraphFiles.length > 0 ? `package-graph:${outFile}` : null);
+      const fact: DepsArtifactPlanningFact = {
+        chunkGroup,
+        dependencies: [
+          ...(Array.isArray((entry as any)?.dependencyImports)
+            ? (entry as any).dependencyImports
+                .map((dependency: any) => dependency?.outFile ?? dependency?.out_file)
+                .filter((file: unknown): file is string => typeof file === "string" && file.endsWith(".js"))
+            : []),
+          ...(Array.isArray((entry as any)?.sharedImports)
+            ? (entry as any).sharedImports.filter(
+                (file: unknown): file is string => typeof file === "string" && file.endsWith(".js"),
+              )
+            : []),
+        ],
+      };
+      out.set(outFile, fact);
+
+      if (chunkGroup && packageGraphFiles.length > 0) {
+        for (const graphFile of packageGraphFiles) {
+          const graphOutFile = graphFile?.outFile ?? graphFile?.out_file;
+          if (typeof graphOutFile !== "string" || !graphOutFile.endsWith(".js")) continue;
+          const existing = out.get(graphOutFile);
+          if (existing?.chunkGroup && existing.chunkGroup !== chunkGroup) {
+            // Conflicting DPL proofs fail closed to a standalone unit.
+            existing.chunkGroup = null;
+            continue;
+          }
+          out.set(graphOutFile, {
+            chunkGroup,
+            dependencies: existing?.dependencies ?? [],
+          });
+        }
+      }
+
+      // DPL chunk groups are atomic runtime units. The shared chunk has no
+      // standalone manifest entry, so project its group proof from each member's
+      // chunkFiles list onto the synthetic shared artifact consumed by the plan.
+      const chunkFilesRaw = (entry as any)?.chunkFiles ?? (entry as any)?.chunk_files;
+      if (declaredChunkGroup && Array.isArray(chunkFilesRaw)) {
+        for (const chunkFile of chunkFilesRaw) {
+          if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
+          const existing = out.get(chunkFile);
+          if (existing && existing.chunkGroup && existing.chunkGroup !== declaredChunkGroup) {
+            // Conflicting DPL proofs are not safe to merge speculatively.
+            existing.chunkGroup = null;
+            continue;
+          }
+          out.set(chunkFile, {
+            chunkGroup: declaredChunkGroup,
+            dependencies: existing?.dependencies ?? [],
+          });
+        }
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+type CanonicalVendorPlanningUnit = {
+  modules: BuildPlan["chunks"][number]["modules"];
+  cost: number;
+  outFiles: Set<string>;
+  dependencies: Set<string>;
+  order: number;
+};
+
+function orderCanonicalVendorPlanningUnits(
+  units: CanonicalVendorPlanningUnit[],
+): CanonicalVendorPlanningUnit[] {
+  if (units.length < 2) return units;
+
+  const unitByOutFile = new Map<string, number>();
+  units.forEach((unit, index) => {
+    for (const outFile of unit.outFiles) unitByOutFile.set(outFile, index);
+  });
+  const edges = units.map(() => new Set<number>());
+  units.forEach((unit, index) => {
+    for (const dependency of unit.dependencies) {
+      const target = unitByOutFile.get(dependency);
+      if (target !== undefined && target !== index) edges[index]!.add(target);
+    }
+  });
+
+  let nextIndex = 0;
+  const indices = new Array<number>(units.length).fill(-1);
+  const lowLinks = new Array<number>(units.length).fill(0);
+  const stack: number[] = [];
+  const onStack = new Array<boolean>(units.length).fill(false);
+  const components: number[][] = [];
+  const visit = (node: number): void => {
+    indices[node] = nextIndex;
+    lowLinks[node] = nextIndex;
+    nextIndex += 1;
+    stack.push(node);
+    onStack[node] = true;
+    for (const target of edges[node]!) {
+      if (indices[target] === -1) {
+        visit(target);
+        lowLinks[node] = Math.min(lowLinks[node]!, lowLinks[target]!);
+      } else if (onStack[target]) {
+        lowLinks[node] = Math.min(lowLinks[node]!, indices[target]!);
+      }
+    }
+    if (lowLinks[node] !== indices[node]) return;
+    const component: number[] = [];
+    while (stack.length > 0) {
+      const member = stack.pop()!;
+      onStack[member] = false;
+      component.push(member);
+      if (member === node) break;
+    }
+    component.sort((a, b) => units[a]!.order - units[b]!.order);
+    components.push(component);
+  };
+  for (let index = 0; index < units.length; index += 1) {
+    if (indices[index] === -1) visit(index);
+  }
+
+  const componentByUnit = new Array<number>(units.length);
+  components.forEach((component, componentIndex) => {
+    for (const unitIndex of component) componentByUnit[unitIndex] = componentIndex;
+  });
+  const merged = components.map((component) => {
+    const members = component.map((index) => units[index]!);
+    return {
+      modules: members.flatMap((unit) => unit.modules),
+      cost: members.reduce((sum, unit) => sum + unit.cost, 0),
+      outFiles: new Set(members.flatMap((unit) => [...unit.outFiles])),
+      dependencies: new Set(members.flatMap((unit) => [...unit.dependencies])),
+      order: Math.min(...members.map((unit) => unit.order)),
+    } satisfies CanonicalVendorPlanningUnit;
+  });
+
+  // Dependency-first topological order. A contiguous partition of this order
+  // cannot invent a reverse chunk edge from unrelated modules sharing a bin.
+  const consumers = merged.map(() => new Set<number>());
+  const indegree = new Array<number>(merged.length).fill(0);
+  edges.forEach((targets, sourceUnit) => {
+    const source = componentByUnit[sourceUnit]!;
+    for (const targetUnit of targets) {
+      const dependency = componentByUnit[targetUnit]!;
+      if (source === dependency || consumers[dependency]!.has(source)) continue;
+      consumers[dependency]!.add(source);
+      indegree[source] += 1;
+    }
+  });
+  const ready = merged
+    .map((_, index) => index)
+    .filter((index) => indegree[index] === 0)
+    .sort((a, b) => merged[a]!.order - merged[b]!.order);
+  const ordered: CanonicalVendorPlanningUnit[] = [];
+  while (ready.length > 0) {
+    const component = ready.shift()!;
+    ordered.push(merged[component]!);
+    for (const consumer of consumers[component]!) {
+      indegree[consumer] -= 1;
+      if (indegree[consumer] === 0) {
+        ready.push(consumer);
+        ready.sort((a, b) => merged[a]!.order - merged[b]!.order);
+      }
+    }
+  }
+  return ordered.length === merged.length ? ordered : merged.sort((a, b) => a.order - b.order);
+}
+
+function expandCanonicalVendorPlanningDependencies(
+  units: CanonicalVendorPlanningUnit[],
+  costIndex: Map<string, DepsArtifactPlanningFact>,
+): void {
+  const plannedOutFiles = new Set<string>();
+  for (const unit of units) {
+    for (const outFile of unit.outFiles) plannedOutFiles.add(outFile);
+  }
+
+  const memo = new Map<string, Set<string>>();
+  const resolving = new Set<string>();
+  const resolveToPlanned = (outFile: string): Set<string> => {
+    if (plannedOutFiles.has(outFile)) return new Set([outFile]);
+    const cached = memo.get(outFile);
+    if (cached) return cached;
+    if (resolving.has(outFile)) return new Set();
+    const fact = costIndex.get(outFile);
+    if (!fact) return new Set();
+
+    resolving.add(outFile);
+    const resolved = new Set<string>();
+    for (const dependency of fact.dependencies) {
+      for (const planned of resolveToPlanned(dependency)) resolved.add(planned);
+    }
+    resolving.delete(outFile);
+    memo.set(outFile, resolved);
+    return resolved;
+  };
+
+  for (const unit of units) {
+    const expanded = new Set<string>();
+    for (const dependency of unit.dependencies) {
+      for (const planned of resolveToPlanned(dependency)) expanded.add(planned);
+    }
+    unit.dependencies = expanded;
+  }
+}
+
+function canonicalPlanModuleCost(
+  mod: BuildPlan["chunks"][number]["modules"][number],
+  workspaceRoot: string,
+): { bytes: number; cost: number } {
+  const bytes = estimateCanonicalPlanModuleBytes(mod, workspaceRoot);
+  // rerouteDepsArtifacts materializes the complete DPL publication closure
+  // before this partitioner runs: dependencyImports, sharedImports, and every
+  // packageGraph file are concrete plan modules, while missing facts fail the
+  // build. Their emitted file sizes therefore already are the complete byte
+  // cost. Re-applying root-level module/edge estimates here counts the same
+  // closure twice and invents cross-chunk boundaries inside a complete graph.
+  return { bytes, cost: bytes };
+}
+
+export function rebalanceCanonicalVendorChunks(options: {
+  plan: BuildPlan;
+  depsRoot: string;
+  workspaceRoot: string;
+  maxBytes: number | null;
+}): { before: number; after: number; modules: number; totalEstimatedBytes: number } {
+  const maxBytes = typeof options.maxBytes === "number" && options.maxBytes > 0 ? options.maxBytes : null;
+  if (maxBytes === null) return { before: 0, after: 0, modules: 0, totalEstimatedBytes: 0 };
+
+  const vendorEntries = options.plan.chunks
+    .map((chunk, index) => ({ chunk, index }))
+    .filter(({ chunk }) => chunk.id.startsWith("chunk-vendor"));
+  if (vendorEntries.length === 0) return { before: 0, after: 0, modules: 0, totalEstimatedBytes: 0 };
+
+  const seenModules = new Set<string>();
+  const vendorModules: BuildPlan["chunks"][number]["modules"] = [];
+  const consumers = new Set<string>();
+  for (const { chunk } of vendorEntries) {
+    for (const consumer of chunk.consumers ?? []) consumers.add(consumer);
+    for (const mod of chunk.modules) {
+      if (seenModules.has(mod.id)) continue;
+      seenModules.add(mod.id);
+      vendorModules.push(mod);
+    }
+  }
+  if (vendorModules.length === 0) {
+    return { before: vendorEntries.length, after: 0, modules: 0, totalEstimatedBytes: 0 };
+  }
+
+  const costIndex = buildDepsArtifactCostIndex(options.depsRoot);
+  const estimated = vendorModules.map((mod) => ({
+    mod,
+    ...canonicalPlanModuleCost(mod, options.workspaceRoot),
+    outFile: path.basename(mod.id),
+    chunkGroup: costIndex.get(path.basename(mod.id))?.chunkGroup ?? null,
+    dependencies: costIndex.get(path.basename(mod.id))?.dependencies ?? [],
+  }));
+  const totalEstimatedBytes = estimated.reduce((sum, entry) => sum + entry.bytes, 0);
+  const totalPlanningCost = estimated.reduce((sum, entry) => sum + entry.cost, 0);
+  const planningUnits: CanonicalVendorPlanningUnit[] = [];
+  const unitByKey = new Map<string, CanonicalVendorPlanningUnit>();
+  for (const [order, entry] of estimated.entries()) {
+    const key = entry.chunkGroup ? `dpl:${entry.chunkGroup}` : `module:${entry.mod.id}`;
+    let unit = unitByKey.get(key);
+    if (!unit) {
+      unit = { modules: [], cost: 0, outFiles: new Set(), dependencies: new Set(), order };
+      unitByKey.set(key, unit);
+      planningUnits.push(unit);
+    }
+    unit.modules.push(entry.mod);
+    unit.cost += entry.cost;
+    unit.outFiles.add(entry.outFile);
+    for (const dependency of entry.dependencies) unit.dependencies.add(dependency);
+  }
+  expandCanonicalVendorPlanningDependencies(planningUnits, costIndex);
+
+  const orderedUnits = orderCanonicalVendorPlanningUnits(planningUnits);
+  // Greedy first-fit against maxBytes fixes the bin COUNT; the final partition
+  // then minimizes the maximum bin cost over the same dependency-first order
+  // (linear partition via binary search on the cost cap). Greedy packs early
+  // bins tight and hands every cut's overflow to one bin, and the bundler's
+  // wall time is bound by its largest chunk's link+minify critical path — a
+  // balanced contiguous partition keeps that path flat while preserving unit
+  // atomicity, topological order, bin count, and the maxBytes promise (the
+  // optimal cap is never above a cap greedy already proved feasible).
+  const binCountFor = (cap: number): number => {
+    let bins = 0;
+    let cost = 0;
+    let open = false;
+    for (const unit of orderedUnits) {
+      if (open && cost + unit.cost > cap) {
+        open = false;
+        cost = 0;
+      }
+      if (!open) {
+        bins += 1;
+        open = true;
+      }
+      cost += unit.cost;
+    }
+    return bins;
+  };
+  const targetBins = binCountFor(maxBytes);
+  // A unit larger than any cap sits alone in its own bin (the scan closes the
+  // bin at the next unit), so the search floor is 1, not the largest unit —
+  // otherwise one oversized unit (e.g. a 4.3MB not-esm wrapper) would pin the
+  // cap above maxBytes and disable balancing for every other bin.
+  let low = 1;
+  let high = Math.min(
+    maxBytes,
+    orderedUnits.reduce((sum, unit) => sum + unit.cost, 0),
+  );
+  let balancedCap = high;
+  while (low <= high) {
+    const cap = Math.floor((low + high) / 2);
+    if (binCountFor(cap) <= targetBins) {
+      balancedCap = cap;
+      high = cap - 1;
+    } else {
+      low = cap + 1;
+    }
+  }
+
+  const groups: BuildPlan["chunks"][number]["modules"][] = [];
+  let current: BuildPlan["chunks"][number]["modules"] = [];
+  let currentCost = 0;
+  for (const unit of orderedUnits) {
+    if (current.length > 0 && currentCost + unit.cost > balancedCap) {
+      groups.push(current);
+      current = [];
+      currentCost = 0;
+    }
+    current.push(...unit.modules);
+    currentCost += unit.cost;
+  }
+  if (current.length > 0) groups.push(current);
+
+  const sortedConsumers = Array.from(consumers).sort();
+  const nextVendorChunks = groups.map((modules) => ({
+    id: stablePlanChunkId("chunk-vendor", modules.map((mod) => mod.id)),
+    modules,
+    entry: false,
+    shared: true,
+    consumers: sortedConsumers,
+    css: modules.filter((mod) => mod.kind === "css").map((mod) => mod.id).sort(),
+    assets: modules.filter((mod) => mod.kind === "asset").map((mod) => mod.id).sort(),
+  }));
+
+  const firstVendorIndex = vendorEntries[0]!.index;
+  const vendorIndexSet = new Set(vendorEntries.map(({ index }) => index));
+  const nextChunks = options.plan.chunks.filter((_, index) => !vendorIndexSet.has(index));
+  nextChunks.splice(firstVendorIndex, 0, ...nextVendorChunks);
+  options.plan.chunks = nextChunks;
+
+  if (isBuildProfileEnabled()) {
+    const top = estimated
+      .slice()
+      .sort((a, b) => b.bytes - a.bytes || a.mod.id.localeCompare(b.mod.id))
+      .slice(0, 8)
+      .map((entry) => `${entry.mod.id}=${entry.bytes}/${entry.cost}`)
+      .join(",");
+    logInfo(
+      `[BuildProfile][canonicalVendorRebalance] before=${vendorEntries.length} after=${nextVendorChunks.length} modules=${vendorModules.length} maxBytes=${maxBytes} totalEstimatedBytes=${totalEstimatedBytes} totalPlanningCost=${totalPlanningCost} top=${top}`,
+    );
+  }
+
+  return {
+    before: vendorEntries.length,
+    after: nextVendorChunks.length,
+    modules: vendorModules.length,
+    totalEstimatedBytes,
+  };
 }
 
 export async function prepareCanonicalProductionDependencyPlan(options: {
@@ -2209,23 +2982,32 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
   casRoot: string;
   configHash: string;
   workspaceRoot: string;
+  config?: any;
+  vendorMaxBytes: number | null;
+  skipDependencyCoverageRepair?: boolean;
 }): Promise<{
   rerouted: number;
   pruned: number;
   sharedPrewarmed: number;
   idRewritten: number;
   rerouteMs: number;
+  rebalancedVendorChunks: number;
 }> {
-  await repairMissingPlanDependencyArtifacts({
-    plan: options.plan,
-    rootDir: options.rootDir,
-    ionifyDir: options.ionifyDir,
-    depsRoot: options.depsRoot,
-    depsHash: options.depsHash,
-    resolvedEntries: options.resolvedEntries,
-    allowedRoots: options.allowedRoots,
-    workspaceRoot: options.workspaceRoot,
-  });
+  const coverageRepairStart = Date.now();
+  if (!options.skipDependencyCoverageRepair) {
+    await repairMissingPlanDependencyArtifacts({
+      plan: options.plan,
+      rootDir: options.rootDir,
+      ionifyDir: options.ionifyDir,
+      depsRoot: options.depsRoot,
+      depsHash: options.depsHash,
+      resolvedEntries: options.resolvedEntries,
+      allowedRoots: options.allowedRoots,
+      workspaceRoot: options.workspaceRoot,
+      config: options.config,
+    });
+  }
+  logBuildProfile("dependencyCoverageRepair", coverageRepairStart);
 
   writeDepsMeasurementArtifacts(options.depsRoot);
 
@@ -2236,6 +3018,12 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
     casRoot: options.casRoot,
     configHash: options.configHash,
     workspaceRoot: options.workspaceRoot,
+  });
+  const rebalance = rebalanceCanonicalVendorChunks({
+    plan: options.plan,
+    depsRoot: options.depsRoot,
+    workspaceRoot: options.workspaceRoot,
+    maxBytes: options.vendorMaxBytes,
   });
   const rerouteMs = Date.now() - rerouteStart;
 
@@ -2249,6 +3037,7 @@ export async function prepareCanonicalProductionDependencyPlan(options: {
     sharedPrewarmed,
     idRewritten,
     rerouteMs,
+    rebalancedVendorChunks: rebalance.after,
   };
 }
 
@@ -2261,17 +3050,34 @@ async function repairMissingPlanDependencyArtifacts(options: {
   resolvedEntries: string[] | undefined;
   allowedRoots: string[];
   workspaceRoot: string;
+  config?: any;
 }): Promise<void> {
   if (!native?.optimizeDependenciesBatch && !native?.optimizeDependency) return;
 
-  const currentManifest = loadDepsManifestIndex(options.depsRoot);
   const coveredEntryPaths = new Set<string>();
-  for (const entry of currentManifest.values()) {
-    if (!entry.entryPath) continue;
-    coveredEntryPaths.add(canonicalFsPath(entry.entryPath));
+  // Entries that fell back to a whole-package wrapper only because no export
+  // demand reached them (e.g. alias node_modules instances of a logical entry
+  // whose demand was attributed to a sibling instance). If current demand now
+  // exists for their identity, they are repair-eligible: a re-optimization with
+  // demand either slims them or records a different topology reason, so this
+  // check self-quiesces after one repair.
+  const demandlessWrapperByEntryPath = new Map<string, string>();
+  const readActivePublications = native?.depsActivePublications;
+  if (!readActivePublications) {
+    throw new Error("[deps] DPL publication-closure authority is unavailable during plan coverage repair");
+  }
+  const currentPublications = readActivePublications(options.depsRoot);
+  for (const publication of currentPublications) {
+    if (!publication.routeActive || !publication.entryPath) continue;
+    const canonical = canonicalFsPath(publication.entryPath);
+    coveredEntryPaths.add(canonical);
+    if (publication.artifactTopologyReason === "package-graph-no-export-demand") {
+      demandlessWrapperByEntryPath.set(canonical, publication.entryPath);
+    }
   }
 
   const missing = new Set<string>();
+  const demandlessInPlan = new Set<string>();
   for (const chunk of options.plan.chunks) {
     for (const mod of chunk.modules) {
       let fsPath: string | null =
@@ -2286,7 +3092,28 @@ async function repairMissingPlanDependencyArtifacts(options: {
       if (!isOptimizableDepEntryPath(fsPath)) continue;
       const canonical = canonicalFsPath(fsPath);
       if (!coveredEntryPaths.has(canonical)) missing.add(canonical);
+      else if (demandlessWrapperByEntryPath.has(canonical)) demandlessInPlan.add(canonical);
     }
+  }
+
+  if (missing.size === 0 && demandlessInPlan.size === 0) return;
+
+  fs.mkdirSync(options.depsRoot, { recursive: true });
+  const dplDemand = await scanDplUsageDemand({
+    rootDir: options.rootDir,
+    depsRoot: options.depsRoot,
+    depsHash: options.depsHash,
+    resolvedEntries: options.resolvedEntries,
+    allowedRoots: options.allowedRoots,
+  });
+
+  // Demand-less wrappers are re-submitted whenever demand facts exist; DPL owns
+  // the identity decision (path or `pkg@version:subpath` adoption from the
+  // usage-facts artifact). Entries whose effective demand is still empty are
+  // cache hits inside the optimizer (persisted empty demand == effective empty
+  // demand, unchanged source), so re-submission stays cheap and self-quiescing.
+  if (dplDemand.demandByEntryPath.size > 0) {
+    for (const canonical of demandlessInPlan) missing.add(canonical);
   }
 
   if (missing.size === 0) return;
@@ -2298,14 +3125,6 @@ async function repairMissingPlanDependencyArtifacts(options: {
     // The repair path is still valid when the sentinel was already absent.
   }
 
-  fs.mkdirSync(options.depsRoot, { recursive: true });
-  const dplDemand = await scanDplUsageDemand({
-    rootDir: options.rootDir,
-    depsRoot: options.depsRoot,
-    depsHash: options.depsHash,
-    resolvedEntries: options.resolvedEntries,
-    allowedRoots: options.allowedRoots,
-  });
   const repairEntries = Array.from(missing).map((entryPath) =>
     withDplUsageDemand(entryPath, options.depsHash, dplDemand.demandByEntryPath),
   );
@@ -2343,21 +3162,24 @@ async function repairMissingPlanDependencyArtifacts(options: {
     failed = singleFailures;
   }
 
-  const repairedManifest = loadDepsManifestIndex(options.depsRoot);
   const repairedEntryPaths = new Set<string>();
-  for (const entry of repairedManifest.values()) {
-    if (!entry.entryPath) continue;
-    repairedEntryPaths.add(canonicalFsPath(entry.entryPath));
+  const repairedPublications = readActivePublications(options.depsRoot);
+  for (const publication of repairedPublications) {
+    if (!publication.routeActive || !publication.entryPath) continue;
+    repairedEntryPaths.add(canonicalFsPath(publication.entryPath));
   }
   const stillMissing = repairEntries.filter((entry) => !repairedEntryPaths.has(canonicalFsPath(entry.entryPath)));
 
   if (failed === 0 && stillMissing.length === 0) {
-    try {
-      fs.writeFileSync(sentinelPath, String(Date.now()));
-    } catch {
-      // A missing sentinel only costs the next build a validation pass.
-    }
-    writeDepArtifactsToGlobalCache(options.depsHash, options.depsRoot);
+    await publishVerifiedDepsGeneration({
+      rootDir: options.rootDir,
+      depsRoot: options.depsRoot,
+      depsHash: options.depsHash,
+      resolvedEntries: options.resolvedEntries,
+      allowedRoots: options.allowedRoots,
+      config: options.config,
+      runtimeDemands: dplDemand.runtimeDemands ?? undefined,
+    });
     logInfo(`[deps] Repaired ${repairEntries.length} plan dependency artifact(s) before canonical reroute`);
   } else {
     const failedLabel = failed > 0 ? `, failed=${failed}` : "";
@@ -2474,6 +3296,189 @@ function computeBuildVendorPackRequestsSavedPercent(depsRoot: string, depsHash: 
 }
 
 type PackEntry = { entryPath: string; fileName: string; packageLabel: string; packageName?: string | null };
+type DplPackRequestEntry = { entryPath: string; packageLabel: string };
+
+type DplChunkedPublication = {
+  chunkGroupId: string;
+  chunkFiles: string[];
+  sharedFileName: string;
+  entries: PackEntry[];
+};
+
+type NativeChunkedPublicationResult = {
+  chunk_group?: string;
+  chunkGroup?: string;
+  chunk_files?: string[];
+  chunkFiles?: string[];
+  entries?: Array<{
+    entry_path?: string;
+    entryPath?: string;
+    out_path?: string;
+    outPath?: string;
+  }>;
+};
+
+function dplArtifactRelativePath(depsRoot: string, artifactPath: string): string | null {
+  const absolute = path.resolve(artifactPath);
+  const relative = path.relative(path.resolve(depsRoot), absolute);
+  if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    return null;
+  }
+  return toPosixPath(relative);
+}
+
+function validateDplArtifactClosure(depsRoot: string, files: readonly string[]): string[] | null {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    const value = toPosixPath(String(file).trim());
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+  }
+  if (normalized.length === 0) return null;
+  for (const file of normalized) {
+    const relative = path.normalize(file);
+    if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) return null;
+    if (!relative.endsWith(".js") || !fs.existsSync(path.join(depsRoot, relative))) return null;
+  }
+  return normalized;
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSorted = Array.from(new Set(left)).sort();
+  const rightSorted = Array.from(new Set(right)).sort();
+  return leftSorted.length === rightSorted.length && leftSorted.every((value, index) => value === rightSorted[index]);
+}
+
+export function resolveDplChunkedPackPublication(options: {
+  depsRoot: string;
+  requests: DplPackRequestEntry[];
+  result: NativeChunkedPublicationResult;
+}): DplChunkedPublication | null {
+  const { depsRoot, requests, result } = options;
+  const chunkGroupId = String(result.chunkGroup ?? result.chunk_group ?? "").trim();
+  const chunkFiles = validateDplArtifactClosure(
+    depsRoot,
+    Array.isArray(result.chunkFiles)
+      ? result.chunkFiles
+      : Array.isArray(result.chunk_files)
+        ? result.chunk_files
+        : [],
+  );
+  if (!chunkGroupId || !chunkFiles) return null;
+
+  const publications = Array.isArray(result.entries) ? result.entries : [];
+  if (publications.length !== requests.length) return null;
+  const byEntryPath = new Map<string, string>();
+  for (const publication of publications) {
+    const entryPath = publication.entryPath ?? publication.entry_path;
+    const outPath = publication.outPath ?? publication.out_path;
+    if (typeof entryPath !== "string" || typeof outPath !== "string") return null;
+    const key = canonicalFsPath(entryPath);
+    const fileName = dplArtifactRelativePath(depsRoot, outPath);
+    if (!fileName || !fileName.endsWith(".js") || !fs.existsSync(path.join(depsRoot, fileName))) return null;
+    if (byEntryPath.has(key)) return null;
+    byEntryPath.set(key, fileName);
+  }
+
+  const entries: PackEntry[] = [];
+  const seenRequests = new Set<string>();
+  for (const request of requests) {
+    const key = canonicalFsPath(request.entryPath);
+    if (seenRequests.has(key)) return null;
+    seenRequests.add(key);
+    const fileName = byEntryPath.get(key);
+    if (!fileName) return null;
+    entries.push({ ...request, entryPath: key, fileName });
+  }
+  if (seenRequests.size !== byEntryPath.size) return null;
+
+  return {
+    chunkGroupId,
+    chunkFiles,
+    sharedFileName: chunkFiles[0]!,
+    entries,
+  };
+}
+
+function readDplChunkedPackPublication(options: {
+  depsRoot: string;
+  requests: DplPackRequestEntry[];
+  nodeEnv: string;
+}): DplChunkedPublication | null {
+  const { depsRoot, requests, nodeEnv } = options;
+  const readActivePublications = native?.depsActivePublications;
+  if (!readActivePublications) return null;
+  let publications: Array<{
+    routeActive: boolean;
+    entryPath: string;
+    outFile: string;
+    artifactHash: string;
+    artifactTopology: string;
+    chunkGroup?: string | null;
+    chunkFiles: string[];
+    sharedImports: string[];
+    dependencyImports: string[];
+    packageGraphFiles: string[];
+    nodeEnv: string;
+    outputVersion: number;
+  }>;
+  try {
+    publications = readActivePublications(depsRoot);
+  } catch {
+    return null;
+  }
+  const byEntryPath = new Map<string, (typeof publications)[number]>();
+  for (const publication of publications) {
+    if (!publication.routeActive) continue;
+    const key = canonicalFsPath(publication.entryPath);
+    if (byEntryPath.has(key)) return null;
+    byEntryPath.set(key, publication);
+  }
+
+  let chunkGroupId: string | null = null;
+  let chunkFiles: string[] | null = null;
+  const entries: PackEntry[] = [];
+  const seenRequests = new Set<string>();
+  for (const request of requests) {
+    const key = canonicalFsPath(request.entryPath);
+    if (seenRequests.has(key)) return null;
+    seenRequests.add(key);
+    const publication = byEntryPath.get(key);
+    if (!publication) return null;
+    const fileName = publication.outFile;
+    if (
+      !publication.chunkGroup ||
+      publication.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION ||
+      publication.nodeEnv.toLowerCase() !== nodeEnv.toLowerCase() ||
+      !fs.existsSync(path.join(depsRoot, fileName))
+    ) {
+      return null;
+    }
+    const publicationChunkFiles = validateDplArtifactClosure(depsRoot, publication.chunkFiles);
+    if (!publicationChunkFiles) return null;
+    if (chunkGroupId === null) {
+      chunkGroupId = publication.chunkGroup;
+      chunkFiles = publicationChunkFiles;
+    } else if (
+      chunkGroupId !== publication.chunkGroup ||
+      !sameStringSet(chunkFiles ?? [], publicationChunkFiles)
+    ) {
+      return null;
+    }
+    entries.push({ ...request, entryPath: key, fileName });
+  }
+
+  if (!chunkGroupId || !chunkFiles || entries.length !== requests.length) return null;
+  return {
+    chunkGroupId,
+    chunkFiles,
+    sharedFileName: chunkFiles[0]!,
+    entries,
+  };
+}
 
 type VendorManualPackStatus = "planned" | "building" | "ready" | "failed";
 type VendorManualPackState = {
@@ -2732,45 +3737,160 @@ function saveDepUsageIndexToDisk(depsRoot: string, depsHash: string, index: DepU
 function depUsageDemandByEntryPath(index: DepUsageIndex | null | undefined): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (!index) return out;
-
-  const byIdentity = new Map<
-    string,
-    {
-      entryPaths: Set<string>;
-      usedExports: Set<string>;
-      uncertain: boolean;
-    }
-  >();
   for (const usage of index.values()) {
     if (!usage) continue;
-    const subpath = computeSubpathFromEntryPath(usage.entryPath) || ".";
-    const identity = `${usage.packageName}@${usage.packageVersion}:${subpath}`;
-    let bucket = byIdentity.get(identity);
-    if (!bucket) {
-      bucket = { entryPaths: new Set(), usedExports: new Set(), uncertain: false };
-      byIdentity.set(identity, bucket);
-    }
-    bucket.entryPaths.add(canonicalFsPath(usage.entryPath));
-    if (usage.hasNamespace || usage.hasExportStar) {
-      bucket.uncertain = true;
-      continue;
-    }
+    // This map is deliberately path-keyed raw input. DPL's native DemandIndex
+    // owns pkg@version:subpath adoption across physical install instances.
+    if (usage.hasNamespace || usage.hasExportStar) continue;
     if (!Array.isArray(usage.usedExports) || usage.usedExports.length === 0) continue;
-    for (const name of usage.usedExports
+    const demand = Array.from(new Set(usage.usedExports
       .map((value) => (typeof value === "string" ? value.trim() : ""))
-      .filter(Boolean)) {
-      bucket.usedExports.add(name);
-    }
-  }
-
-  for (const bucket of byIdentity.values()) {
-    if (bucket.uncertain || bucket.usedExports.size === 0) continue;
-    const demand = Array.from(bucket.usedExports).sort();
-    for (const entryPath of bucket.entryPaths) {
-      out.set(entryPath, demand);
-    }
+      .filter(Boolean))).sort();
+    if (demand.length > 0) out.set(canonicalFsPath(usage.entryPath), demand);
   }
   return out;
+}
+
+// One usage-demand scan per build process: batch optimization and plan
+// coverage repair share the same source-derived demand facts.
+let dplUsageDemandMemo: {
+  key: string;
+  value: {
+    index: DepUsageIndex | null;
+    demandByEntryPath: Map<string, string[]>;
+    runtimeDemands: DplRuntimeDemandFact[] | null;
+  };
+} | null = null;
+
+/**
+ * C3-c Phase A — the cold canonical derivation pump.
+ *
+ * Drives the native canonical scheduler (`begin/nextWave/ack/end`) BEFORE the deps
+ * phase, deriving each app-source module ONCE (Transform(A) → Define(B) → Parser(B) →
+ * Resolver(ResolveKind)) with empty depStops (ResolveKind bounds the frontier). Per wave
+ * it MATERIALIZES base + define (+ TransformArtifactProof marker-last) via the frozen
+ * G2-C2 writer, ACKs, and RELEASES the generation bytes (codeA/mapA/codeB) — bounded
+ * per-wave memory. It retains ONLY the compact semantic projections the later phases
+ * need:
+ *   - app Graph records (Phase C admission);
+ *   - resolved Resolver dependency-boundary targets (Phase C dep-leaf join — no re-resolve);
+ *   - normalized Parser(B) DPL demand (Phase B publication).
+ * Fail-closed: a materialization failure ACKs false and throws (no partial activation).
+ */
+type CanonicalColdDerivation = {
+  moduleCount: number;
+  waves: number;
+  peakWaveMaterialBytes: number;
+  /** Phase C: app-source Graph node records (already resolved edges). */
+  appRecords: NativeGraphRecordBatchNode[];
+  /** Phase C: canonical resolved dependency-boundary target paths (Resolver Fact A). */
+  depBoundaryTargets: Set<string>;
+  /** Phase B: normalized Parser(B) dependency demand for DPL publication. */
+  dplDemand: DplRuntimeDemandFact[];
+};
+
+// C3-c Method-2 Phase B: the canonical Parser(B)+Resolver demand retained by the cold
+// derivation, stashed so the DPL demand chokepoints (scanDplUsageDemand /
+// collectDplGenerationDemandFacts) consume it as the SOLE authority — the source scanner
+// (`scanDepUsageFacts`) never runs on the true-cold path. Keyed by rootDir+depsHash so a
+// stale stash from a different build target is never adopted. Cleared for warm/mutation
+// paths (which keep their published/canonical demand).
+let __c3ColdPumpDemand:
+  | { rootDir: string; depsHash: string; demands: DplRuntimeDemandFact[]; entryRoots: string[] }
+  | null = null;
+
+function runCanonicalColdDerivation(opts: {
+  entryPaths: string[];
+  workspaceRoot: string;
+  externalSpecifiers: readonly string[];
+  context: CanonicalBuildContext;
+  parserMode?: string;
+}): CanonicalColdDerivation {
+  const { entryPaths, workspaceRoot, externalSpecifiers, context } = opts;
+  if (
+    !native?.canonicalSchedulerBegin ||
+    !native.canonicalSchedulerNextWave ||
+    !native.canonicalSchedulerAck ||
+    !native.canonicalSchedulerEnd
+  ) {
+    throw new Error("[C3-c] canonical scheduler unavailable; cannot run cold derivation (fail-closed)");
+  }
+  const materializeCtx: CanonicalMaterializeContext = {
+    casRoot: context.casRoot,
+    configHash: context.configHash,
+    defineHash: context.defineHash,
+  };
+  const schedId = native.canonicalSchedulerBegin(
+    entryPaths,
+    workspaceRoot,
+    externalSpecifiers.length ? Array.from(externalSpecifiers) : null,
+    context.defineRecipe?.replacements ?? [],
+    context.defineRecipe?.importMetaEnvLiteral ?? undefined,
+    opts.parserMode ?? "hybrid",
+    // Phase A runs BEFORE DPL publication: no depStops yet. ResolveKind bounds the
+    // frontier (Fact A); dep-leaf artifact identity (Fact B) is joined in Phase C.
+    [],
+  );
+  const appRecords: NativeGraphRecordBatchNode[] = [];
+  const depBoundaryTargets = new Set<string>();
+  const dplDemand: DplRuntimeDemandFact[] = [];
+  let moduleCount = 0;
+  let waves = 0;
+  let peakWaveMaterialBytes = 0;
+  try {
+    for (;;) {
+      const wave = native.canonicalSchedulerNextWave(schedId);
+      if (wave.length === 0) break;
+      waves += 1;
+      let waveMaterialBytes = 0;
+      let ok = true;
+      for (const g of wave) {
+        try {
+          // Material projection: base A + define B + proof marker-last (frozen G2-C2).
+          materializeCanonicalGeneration(
+            { sourceHash: g.sourceHash, codeA: g.codeA, mapA: g.mapA ?? null, codeB: g.codeB },
+            materializeCtx,
+          );
+        } catch {
+          ok = false;
+          break;
+        }
+        waveMaterialBytes +=
+          Buffer.byteLength(g.codeA, "utf8") +
+          Buffer.byteLength(g.mapA ?? "", "utf8") +
+          Buffer.byteLength(g.codeB, "utf8");
+        // Compact semantic projections (retained; the wave's bytes are released on ACK).
+        appRecords.push(g.record);
+        for (const t of g.depBoundaryTargets ?? []) depBoundaryTargets.add(t);
+        const depSpecSet = new Set(g.depSpecifiers ?? []);
+        let importerPath: string;
+        try { importerPath = fs.realpathSync.native(g.filePath); } catch { importerPath = g.filePath; }
+        for (const d of g.demands ?? []) {
+          if (depSpecSet.has(d.specifier)) {
+            dplDemand.push({
+              importerPath,
+              specifier: d.specifier,
+              usedExports: [...(d.usedExports ?? [])],
+              hasNamespace: !!d.hasNamespace,
+              hasExportStar: !!d.hasExportStar,
+              isDynamic: !!d.isDynamic,
+            });
+          }
+        }
+        moduleCount += 1;
+      }
+      if (waveMaterialBytes > peakWaveMaterialBytes) peakWaveMaterialBytes = waveMaterialBytes;
+      // ACK → the native scheduler may advance; the wave objects (codeA/mapA/codeB) go
+      // out of scope here → per-wave bounded memory (no whole-closure byte retention).
+      native.canonicalSchedulerAck(schedId, ok);
+      if (!ok) {
+        throw new Error("[C3-c] canonical materialization failed; build fails closed");
+      }
+    }
+  } finally {
+    try { native.canonicalSchedulerEnd(schedId); } catch { /* best-effort cleanup */ }
+  }
+  return { moduleCount, waves, peakWaveMaterialBytes, appRecords, depBoundaryTargets, dplDemand };
 }
 
 async function scanDplUsageDemand(options: {
@@ -2779,34 +3899,93 @@ async function scanDplUsageDemand(options: {
   depsHash: string;
   resolvedEntries: string[] | undefined;
   allowedRoots: string[];
-}): Promise<{ index: DepUsageIndex | null; demandByEntryPath: Map<string, string[]> }> {
+}): Promise<{
+  index: DepUsageIndex | null;
+  demandByEntryPath: Map<string, string[]>;
+  runtimeDemands: DplRuntimeDemandFact[] | null;
+}> {
+  const memoKey = `${options.depsHash}\n${path.resolve(options.rootDir)}`;
+  if (dplUsageDemandMemo && dplUsageDemandMemo.key === memoKey) return dplUsageDemandMemo.value;
+  const result = await scanDplUsageDemandUncached(options);
+  dplUsageDemandMemo = { key: memoKey, value: result };
+  return result;
+}
+
+async function scanDplUsageDemandUncached(options: {
+  rootDir: string;
+  depsRoot: string;
+  depsHash: string;
+  resolvedEntries: string[] | undefined;
+  allowedRoots: string[];
+}): Promise<{
+  index: DepUsageIndex | null;
+  demandByEntryPath: Map<string, string[]>;
+  runtimeDemands: DplRuntimeDemandFact[] | null;
+}> {
   const usageEntries = await resolveUsageEntries(options.rootDir, options.resolvedEntries);
   if (usageEntries.length === 0 || !native?.resolveModule) {
     const cached = loadDepUsageIndexFromDisk(options.depsRoot, options.depsHash);
-    return { index: cached, demandByEntryPath: depUsageDemandByEntryPath(cached) };
+    return {
+      index: cached,
+      demandByEntryPath: depUsageDemandByEntryPath(cached),
+      runtimeDemands: usageEntries.length === 0 ? [] : null,
+    };
   }
   try {
     const manifestIndex = loadDepsManifestIndex(options.depsRoot);
     const canonicalFileNames = buildCanonicalDepFileNameIndex(
       Array.from(manifestIndex, ([fileName, entry]) => ({ fileName, entryPath: entry.entryPath })),
     );
-    const index = canonicalizeDepUsageIndex(
-      await scanDepUsage({
+    // C3-c Phase B: on the true-cold path the canonical Parser(B)+Resolver demand is the
+    // SOLE authority — build the usage index from it (same dep-entry canonicalization the
+    // scanner uses) rather than re-scanning source. `scanDepUsageFacts` never runs here.
+    const coldPump =
+      __c3ColdPumpDemand &&
+      __c3ColdPumpDemand.rootDir === options.rootDir &&
+      __c3ColdPumpDemand.depsHash === options.depsHash
+        ? __c3ColdPumpDemand
+        : null;
+    if (coldPump) {
+      const pumpUsage = usageIndexFromRuntimeDemands(
+        coldPump.demands,
+        options.rootDir,
+        coldPump.entryRoots,
+      );
+      const index = canonicalizeDepUsageIndex(pumpUsage, canonicalFileNames);
+      saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, index);
+      logInfo(`[C3-c] Phase B DPL demand authority: Parser(B)+Resolver (deps=${index.size}, demands=${coldPump.demands.length}) — source scanner retired`);
+      return {
+        index,
+        demandByEntryPath: depUsageDemandByEntryPath(index),
+        runtimeDemands: coldPump.demands,
+      };
+    }
+    const scanned = await scanDepUsageFacts({
         rootDir: options.rootDir,
         entries: usageEntries,
         allowedRoots: options.allowedRoots,
-      }),
+      });
+    const index = canonicalizeDepUsageIndex(
+      scanned.usage,
       canonicalFileNames,
     );
     saveDepUsageIndexToDisk(options.depsRoot, options.depsHash, index);
-    return { index, demandByEntryPath: depUsageDemandByEntryPath(index) };
+    return {
+      index,
+      demandByEntryPath: depUsageDemandByEntryPath(index),
+      runtimeDemands: scanned.runtimeDemands,
+    };
   } catch (err) {
     logWarn(`[deps] WARN: DPL usage demand scan failed; using complete dep artifacts (${String(err)})`);
     const cached = loadDepUsageIndexFromDisk(options.depsRoot, options.depsHash);
-    return { index: cached, demandByEntryPath: new Map() };
+    return { index: cached, demandByEntryPath: new Map(), runtimeDemands: null };
   }
 }
 
+// Path-keyed usage FACTS only. Demand identity (alias node_modules instances of
+// the same `pkg@version:subpath` sharing demand) is owned by DPL: the Rust
+// optimizer adopts demand from the usage-facts artifact (`deps-usage.v2.json`)
+// written by `scanDplUsageDemand` before every production batch.
 function withDplUsageDemand(
   entryPath: string,
   depsHash: string,
@@ -2876,6 +4055,7 @@ async function prepareProductionAutoCorePack(options: {
   depsRoot: string;
   config: any;
 }): Promise<{ enabled: boolean; didWork: boolean; reasons?: string[] }> {
+  const profileStart = Date.now();
   const { rootDir, ionifyDir, depsHash, depsRoot, config } = options;
   const optimizeDeps = (config as any)?.optimizeDeps ?? {};
   const vendorPacksRaw = optimizeDeps.vendorPacks ?? false;
@@ -2924,8 +4104,9 @@ async function prepareProductionAutoCorePack(options: {
     return { enabled: true, didWork: false };
   }
 
-  const entries: PackEntry[] = [];
+  const requests: DplPackRequestEntry[] = [];
   const seen = new Set<string>();
+  const requestResolutionStart = Date.now();
   for (const spec of vendorSpecifiers) {
     try {
       const resolved = native.resolveModule(spec, rootDir) as any;
@@ -2936,43 +4117,32 @@ async function prepareProductionAutoCorePack(options: {
       if (!fsPath.includes("node_modules")) continue;
       if (!isOptimizableDepEntryPath(fsPath)) continue;
 
-      const pkg = resolved?.pkg ?? null;
-      const packageName = typeof pkg?.name === "string" ? pkg.name : spec;
-      const packageVersion = typeof pkg?.version === "string" ? pkg.version : "0.0.0";
-      const subpath = computeSubpathFromEntryPath(fsPath);
-      const dep = registerDepEntry({
-        entryPath: fsPath,
-        packageName,
-        packageVersion,
-        subpath,
-      });
-      if (!dep?.fileName || seen.has(dep.fileName)) continue;
-      seen.add(dep.fileName);
-      entries.push({ entryPath: fsPath, fileName: dep.fileName, packageLabel: spec });
+      const canonicalEntryPath = canonicalFsPath(fsPath);
+      if (seen.has(canonicalEntryPath)) continue;
+      seen.add(canonicalEntryPath);
+      requests.push({ entryPath: canonicalEntryPath, packageLabel: spec });
     } catch {
       // ignore resolution failures
     }
   }
+  logBuildProfile("productionAutoPackRequestResolution", requestResolutionStart);
 
-  if (entries.length <= 1) return { enabled: true, didWork: false };
-  entries.sort((a, b) => a.packageLabel.localeCompare(b.packageLabel));
+  if (requests.length <= 1) return { enabled: true, didWork: false };
+  requests.sort((a, b) => a.packageLabel.localeCompare(b.packageLabel));
 
-  const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
-  const sharedFileName = `shared.${chunkGroupId}.js`;
-  const sharedPath = path.join(depsRoot, sharedFileName);
-
-  // T17: Read state file before alreadyReady check so we can validate nodeEnv
-  // provenance. statePath must be declared here (not inside the alreadyReady branch).
+  // The state file is diagnostics only. Readiness is reconstructed from DPL's
+  // active publication facts so TS never predicts a dependency artifact name.
   const statePath = path.join(depsRoot, "vendor-pack.feature.core.json");
-  const existingState = readJsonFile<VendorManualPackState>(statePath);
   const currentNodeEnv = process.env.NODE_ENV ?? "development";
-  const alreadyReady =
-    fs.existsSync(sharedPath) &&
-    entries.every((e) => fs.existsSync(path.join(depsRoot, e.fileName))) &&
-    // nodeEnv guard: empty/absent means pre-T17 pack — allow as cache hit on first run,
-    // the pack will be re-stamped with nodeEnv on next re-optimization cycle.
-    (!existingState?.nodeEnv || existingState.nodeEnv.toLowerCase() === currentNodeEnv.toLowerCase());
+  const activePublicationStart = Date.now();
+  const activePublication = readDplChunkedPackPublication({
+    depsRoot,
+    requests,
+    nodeEnv: currentNodeEnv,
+  });
+  logBuildProfile("productionAutoPackDplPublicationRead", activePublicationStart);
 
+  const routingIndexStart = Date.now();
   const vendorPackV2 = new VendorPackV2IndexManager({
     depsRoot,
     depsHash,
@@ -2981,8 +4151,10 @@ async function prepareProductionAutoCorePack(options: {
     log: { info: logInfo, warn: logWarn },
   });
   vendorPackV2.loadFromDisk();
+  logBuildProfile("productionAutoPackRoutingIndexRead", routingIndexStart);
 
-  if (alreadyReady) {
+  if (activePublication) {
+    const publicationAdmissionStart = Date.now();
     writeJsonFile(statePath, {
       version: 1,
       depsHash,
@@ -2991,18 +4163,38 @@ async function prepareProductionAutoCorePack(options: {
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "ready",
-      chunkGroupId,
-      sharedFileName,
-      entries,
+      chunkGroupId: activePublication.chunkGroupId,
+      sharedFileName: activePublication.sharedFileName,
+      entries: activePublication.entries,
     } satisfies VendorManualPackState);
 
-    vendorPackV2.ensurePackModuleFromEntries({
+    const pack = vendorPackV2.ensurePackModuleFromEntries({
       label: "feature/core",
-      packFileName: `vendor-pack.feature.core.${chunkGroupId}.js`,
-      sharedFileName,
-      entries,
+      packFileName: `vendor-pack.feature.core.${activePublication.chunkGroupId}.js`,
+      sharedFileName: activePublication.sharedFileName,
+      chunkFiles: activePublication.chunkFiles,
+      entries: activePublication.entries,
       prunePackPrefix: "vendor-pack.feature.core.",
     });
+    logBuildProfile("productionAutoPackPublicationAdmission", publicationAdmissionStart);
+    logBuildProfile("productionAutoPackTotal", profileStart);
+    if (!pack) {
+      vendorPackV2.prunePackPrefix("vendor-pack.feature.core.");
+      writeJsonFile(statePath, {
+        version: 1,
+        depsHash,
+        outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+        nodeEnv: currentNodeEnv,
+        group: "core",
+        updatedAt: new Date().toISOString(),
+        status: "failed",
+        chunkGroupId: activePublication.chunkGroupId,
+        sharedFileName: activePublication.sharedFileName,
+        entries: activePublication.entries,
+        error: "DPL chunked publication could not prove a pack-compatible export ABI",
+      } satisfies VendorManualPackState);
+      return { enabled: true, didWork: false, reasons: ["core-pack-abi-unproven"] };
+    }
 
     return { enabled: true, didWork: false };
   }
@@ -3015,24 +4207,32 @@ async function prepareProductionAutoCorePack(options: {
     group: "core",
     updatedAt: new Date().toISOString(),
     status: "building",
-    chunkGroupId,
-    sharedFileName,
-    entries,
+    chunkGroupId: null,
+    sharedFileName: null,
+    entries: [],
   } satisfies VendorManualPackState);
 
   let didWork = false;
+  let attemptedPublication: DplChunkedPublication | null = null;
   try {
     const chunked = native?.optimizeDependenciesChunked;
     if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
     didWork = true;
-    const result = chunked(entries.map((e) => ({ entryPath: e.entryPath, depsHash })), ionifyDir);
-    const groupId = (result as any)?.chunk_group ?? (result as any)?.chunkGroup ?? chunkGroupId;
-
-    const sharedFileName = `shared.${groupId}.js`;
-    const sharedOut = path.join(depsRoot, sharedFileName);
-    const ok =
-      fs.existsSync(sharedOut) && entries.every((e) => fs.existsSync(path.join(depsRoot, e.fileName)));
-    if (!ok) throw new Error("Auto core pack optimizer did not produce expected outputs");
+    const result = chunked(requests.map((entry) => ({ entryPath: entry.entryPath, depsHash })), ionifyDir);
+    attemptedPublication = resolveDplChunkedPackPublication({ depsRoot, requests, result });
+    if (!attemptedPublication) {
+      throw new Error("DPL chunked optimizer returned an incomplete publication closure");
+    }
+    const active = readDplChunkedPackPublication({ depsRoot, requests, nodeEnv: currentNodeEnv });
+    if (
+      !active ||
+      active.chunkGroupId !== attemptedPublication.chunkGroupId ||
+      !sameStringSet(active.chunkFiles, attemptedPublication.chunkFiles) ||
+      active.entries.some((entry, index) => entry.fileName !== attemptedPublication!.entries[index]?.fileName)
+    ) {
+      throw new Error("DPL active publication does not select the optimizer-returned chunked closure");
+    }
+    attemptedPublication = active;
 
     writeJsonFile(statePath, {
       version: 1,
@@ -3042,19 +4242,22 @@ async function prepareProductionAutoCorePack(options: {
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "ready",
-      chunkGroupId: groupId,
-      sharedFileName,
-      entries,
+      chunkGroupId: active.chunkGroupId,
+      sharedFileName: active.sharedFileName,
+      entries: active.entries,
     } satisfies VendorManualPackState);
 
-    vendorPackV2.ensurePackModuleFromEntries({
+    const pack = vendorPackV2.ensurePackModuleFromEntries({
       label: "feature/core",
-      packFileName: `vendor-pack.feature.core.${groupId}.js`,
-      sharedFileName,
-      entries,
+      packFileName: `vendor-pack.feature.core.${active.chunkGroupId}.js`,
+      sharedFileName: active.sharedFileName,
+      chunkFiles: active.chunkFiles,
+      entries: active.entries,
       prunePackPrefix: "vendor-pack.feature.core.",
     });
+    if (!pack) throw new Error("DPL chunked publication could not prove a pack-compatible export ABI");
   } catch (err) {
+    vendorPackV2.prunePackPrefix("vendor-pack.feature.core.");
     writeJsonFile(statePath, {
       version: 1,
       depsHash,
@@ -3063,14 +4266,15 @@ async function prepareProductionAutoCorePack(options: {
       group: "core",
       updatedAt: new Date().toISOString(),
       status: "failed",
-      chunkGroupId,
-      sharedFileName,
-      entries,
+      chunkGroupId: attemptedPublication?.chunkGroupId ?? null,
+      sharedFileName: attemptedPublication?.sharedFileName ?? null,
+      entries: attemptedPublication?.entries ?? [],
       error: String(err),
     } satisfies VendorManualPackState);
     logWarn(`[deps] WARN: Auto core production pack build failed: ${String(err)}`);
   }
 
+  logBuildProfile("productionAutoPackTotal", profileStart);
   return { enabled: true, didWork };
 }
 
@@ -3590,6 +4794,11 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const envPrefix = config?.envPrefix || ["VITE_", "IONIFY_"];
     const defineConfig = buildDefineConfig(config?.define, envValues, envPrefix);
     logInfo(`[define] ${Object.keys(defineConfig).length} replacements configured`);
+    // C3-c: build the canonical Define recipe once, here where defineConfig is the
+    // authority, and transport it EXPLICITLY into generateBuildPlan (no module-global
+    // side channel). The cold graph observation derives B (Parser(B)) from this recipe;
+    // an explicit empty recipe legitimately means "no Define" (Define proves B == A).
+    const canonicalDefineRecipe: CanonicalDefineRecipe = buildDefineRecipe(defineConfig);
     
     // Check if optimization level is specified (overrides individual settings)
     const optLevel = resolveOptimizationLevel(config?.optimizationLevel, {
@@ -3656,6 +4865,21 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const configHash = computeGraphVersion(rawVersionInputs);
     logInfo(`[Build] Version hash: ${configHash}`);
     process.env.IONIFY_CONFIG_HASH = configHash;
+    // C3-c: assemble the generation-coherent canonical build context ONCE, here, from
+    // the values already in scope (defineConfig, configHash, ionifyDir). defineRecipe +
+    // defineHash are both projections of the same defineConfig; casRoot/configHash are
+    // the CAS root/namespace. Transported unchanged into generateBuildPlan — never
+    // reacquired downstream. (casRoot/defineHash are used again later via these hoisted
+    // bindings, not recomputed.)
+    const casRoot = path.join(ionifyDir, "cas");
+    const defineSignature = computeDefineSignature(defineConfig as any);
+    const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
+    const canonicalBuildContext: CanonicalBuildContext = {
+      defineRecipe: canonicalDefineRecipe,
+      defineHash,
+      configHash,
+      casRoot,
+    };
     const productionChunkPolicy = resolveProductionChunkPolicy(config);
     if (productionChunkPolicy.vendorMaxBytes !== null) {
       process.env.IONIFY_VENDOR_MAX_CHUNK_BYTES = String(productionChunkPolicy.vendorMaxBytes);
@@ -3694,6 +4918,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     const buildExternalSpecifiers = collectConfiguredExternalSpecifiers(config);
     const productionPublicationIdentity: ProductionPublicationIdentity = {
+      productionPlanOutputVersion: PRODUCTION_PLAN_OUTPUT_VERSION,
       mode: buildMode,
       nodeEnv: "production",
       configHash,
@@ -3706,13 +4931,35 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const earlyOutDir = options.outDir || "dist";
     const earlyAbsOutDir = path.resolve(earlyOutDir);
     const earlyPlanStart = Date.now();
-    const earlyPublishedPlan = readProductionPublicationPlan(ionifyDir, productionPublicationIdentity);
+    const earlyPublicationState = readProductionPublicationState(ionifyDir);
+    const earlyPublishedPlan = readProductionPublicationPlan(
+      ionifyDir,
+      productionPublicationIdentity,
+      earlyPublicationState,
+    );
     const earlyProductionReadinessRecord: ProductionReadinessRecord | null =
       earlyPublishedPlan ? readProductionReadinessRecord(ionifyDir) : null;
+    const earlyPraIdentityVerified =
+      earlyPublishedPlan !== null &&
+      isVerifiedProductionReadinessForPlan(earlyProductionReadinessRecord, {
+        configHash,
+        workspaceRoot: workspace.workspaceRoot,
+        projectRoot: rootDir,
+        depsHash,
+        plan: earlyPublishedPlan,
+        depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+      });
+    let sourceMutationOutputBase: {
+      artifacts: Array<{ id: string; files: ReusedChunkFiles }>;
+      stats: Record<string, any>;
+      routingManifest: EmittedOutputInfo;
+    } | null = null;
+    let earlySourceFreshnessAudit: ProductionSourceFreshnessAudit | null = null;
+    let earlyPublishedDplGenerationCurrent = false;
     if (earlyPublishedPlan) {
       logBuildProfile("publishedProductionPlanRead", earlyPlanStart);
       const sourceFreshnessPreflightStart = Date.now();
-      const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(
+      earlySourceFreshnessAudit = auditProductionSourceFreshness(
         earlyPublishedPlan,
         ionifyDir,
         workspace.workspaceRoot,
@@ -3720,21 +4967,24 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         configHash,
       );
       logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
+      const sourceFreshnessCurrent = earlySourceFreshnessAudit.current;
+      if (!sourceFreshnessCurrent && earlyPraIdentityVerified && earlyProductionReadinessRecord) {
+        sourceMutationOutputBase = tryVerifyProductionReadinessMaterializedOutputs(
+          earlyAbsOutDir,
+          earlyProductionReadinessRecord,
+        );
+      }
       const verifiedPraForDeployReadyOutput =
         sourceFreshnessCurrent &&
-        isVerifiedProductionReadinessForPlan(earlyProductionReadinessRecord, {
-          configHash,
-          workspaceRoot: workspace.workspaceRoot,
-          projectRoot: rootDir,
-          depsHash,
-          plan: earlyPublishedPlan,
-          depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
-        });
+        earlyPraIdentityVerified;
       const materializedReadiness =
         verifiedPraForDeployReadyOutput && earlyProductionReadinessRecord
           ? tryVerifyProductionReadinessMaterializedOutputs(earlyAbsOutDir, earlyProductionReadinessRecord)
           : null;
-      if (materializedReadiness) {
+      // PRA owns deploy-ready build reuse, not explicit DPL publication.
+      // `optimize-all` must reach DPL so DPL can validate or republish its
+      // current topology/ABI contract before the deps-only short-circuit.
+      if (!options.depsOnly && materializedReadiness) {
         logInfo("Building...");
         logInfo(`[Build] Using published Production Plan (${earlyPublishedPlan.chunks.length} chunk(s), identity verified)`);
         const totalPlannedModules = earlyPublishedPlan.chunks.reduce((acc, chunk) => acc + chunk.modules.length, 0);
@@ -3818,6 +5068,24 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         return;
       }
     }
+    // A partial PAP publication can satisfy dependency readiness for build,
+    // but only DPL may admit its generation. Keep this after the exact PRA
+    // fast path so deploy-ready reuse performs no dependency probe at all.
+    if (
+      !options.depsOnly &&
+      earlyPublishedPlan &&
+      earlySourceFreshnessAudit?.current === true &&
+      earlyPublicationState?.tiers.deps.state === "published"
+    ) {
+      const dplPublishedGenerationProofStart = Date.now();
+      try {
+        earlyPublishedDplGenerationCurrent =
+          native?.depsVerifiedGenerationCurrent?.(depsRoot) === true;
+      } catch {
+        earlyPublishedDplGenerationCurrent = false;
+      }
+      logBuildProfile("dplPublishedGenerationProof", dplPublishedGenerationProofStart);
+    }
 
     // Phase 5-Cloud-EI: tag this build's env so a downstream `--push` can
     // trust it without re-deriving from process.env.NODE_ENV (which may have
@@ -3833,13 +5101,120 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       logInfo(`AST cache initialized with version hash`);
     }
 
+    const sourceOnlyMutationProofStart = Date.now();
+    const sourceOnlyMutationProof =
+      earlyPublishedPlan && (!options.depsOnly || options.publicationContracts === true)
+        ? collectSourceOnlyMutationProof(
+            earlyPublishedPlan,
+            workspace.workspaceRoot,
+            parserMode,
+            earlySourceFreshnessAudit?.changedPaths ?? [],
+          )
+        : { ok: false, changed: 0, changedPaths: [], runtimeMutations: [], reason: "no-published-plan" };
+    logBuildProfile("sourceOnlyMutationProof", sourceOnlyMutationProofStart);
+    if (!sourceOnlyMutationProof.ok) {
+      logBuildProfileText("sourceOnlyAdmission", `dpl-rejected:${sourceOnlyMutationProof.reason ?? "unknown"}`);
+    }
+    const sourceOnlyCanonicalMutation =
+      sourceOnlyMutationProof.ok && earlyPublishedPlan
+        ? admitCanonicalBuildPlanMutation({
+            plan: earlyPublishedPlan,
+            versionInputs: rawVersionInputs,
+            changedSourcePaths: sourceOnlyMutationProof.changedPaths,
+            runtimeMutations: sourceOnlyMutationProof.runtimeMutations,
+            depsRoot,
+            externalSpecifiers: buildExternalSpecifiers,
+            consumer: options.depsOnly ? "plan" : "bundler",
+          })
+        : null;
+    const sourceOnlyCanonicalPlan = sourceOnlyCanonicalMutation?.plan ?? null;
+    const sourceMutationPlannerChunkIds =
+      sourceOnlyCanonicalMutation?.affectedChunkIds ?? null;
+    const sourceMutationPublicationContext =
+      sourceOnlyCanonicalMutation?.publicationContext ?? null;
+    // Source-only admission is atomic across the two existing owners: DPL
+    // proves package publication/ABI and Planner proves the complete emitted
+    // runtime topology. Neither proof can suppress dependency work alone.
+    const skipDepsAuthorityForSourceOnlyEdit = sourceOnlyCanonicalPlan !== null;
+    const skipDepsAuthorityForPublishedPlan =
+      !options.depsOnly &&
+      earlyPublishedPlan !== null &&
+      earlySourceFreshnessAudit?.current === true &&
+      earlyPublishedDplGenerationCurrent;
+    const skipDepsAuthorityForCanonicalPlan =
+      skipDepsAuthorityForSourceOnlyEdit || skipDepsAuthorityForPublishedPlan;
+    if (sourceOnlyMutationProof.ok && !skipDepsAuthorityForSourceOnlyEdit) {
+      logBuildProfileText("sourceOnlyAdmission", "planner-rejected");
+    } else if (skipDepsAuthorityForSourceOnlyEdit) {
+      logBuildProfileText("sourceOnlyAdmission", "dpl-and-planner-admitted");
+      const freshnessCacheUpdateStart = Date.now();
+      updateSourceFreshnessCacheForCanonicalMutation(
+        sourceOnlyCanonicalPlan!,
+        ionifyDir,
+        workspace.workspaceRoot,
+        sourceOnlyMutationProof.changedPaths,
+      );
+      logBuildProfile("sourceFreshnessDeltaWrite", freshnessCacheUpdateStart);
+    }
+
+    // ── C3-c Method-2 Phase A (cold path only) ────────────────────────────────
+    // Derive the app graph ONCE via the canonical scheduler
+    // (Transform(A)→Define(B)→Parser(B)→Resolver disposition) BEFORE the deps phase,
+    // materializing base+define per wave and retaining ONLY compact projections:
+    //   • appRecords          → Phase C graph pre-population (skip Parser(A));
+    //   • depBoundaryTargets  → Phase C dep-leaf join (Resolver Fact A ∩ depStops);
+    //   • dplDemand           → Phase B DPL publication demand (retires scanDepUsageFacts).
+    // Warm/mutation paths keep their published/canonical plan graph, so the pump does not
+    // run there (Method 3 owns those). Guarded by the same cold-path predicate that later
+    // reaches `generateBuildPlan`.
+    let coldDerivation: CanonicalColdDerivation | null = null;
+    // Reset any stash from a prior in-process build before this build decides its path;
+    // warm/mutation paths must never adopt a previous cold build's pump demand.
+    __c3ColdPumpDemand = null;
+    if (!skipDepsAuthorityForCanonicalPlan && !options.depsOnly) {
+      const coldWsRoot = workspace.workspaceRoot;
+      const coldEntrySet = Array.from(
+        new Set([...(entries ?? []), ...collectFederationExposeEntryPaths(config, rootDir)]),
+      );
+      const coldEntryAbs = coldEntrySet
+        .map((e) =>
+          path.isAbsolute(e)
+            ? e
+            : e.startsWith(WS_MODULE_PREFIX)
+              ? fromWsModuleId(e, coldWsRoot)
+              : path.resolve(rootDir, e),
+        )
+        .filter((p): p is string => typeof p === "string" && p.length > 0 && fs.existsSync(p));
+      if (coldEntryAbs.length > 0) {
+        const coldStart = Date.now();
+        coldDerivation = runCanonicalColdDerivation({
+          entryPaths: coldEntryAbs,
+          workspaceRoot: coldWsRoot,
+          externalSpecifiers: buildExternalSpecifiers,
+          context: canonicalBuildContext,
+        });
+        logBuildProfile("coldCanonicalDerivation", coldStart);
+        logInfo(
+          `[C3-c] cold canonical derivation: modules=${coldDerivation.moduleCount} waves=${coldDerivation.waves} ` +
+            `peakWaveBytes=${coldDerivation.peakWaveMaterialBytes} depBoundary=${coldDerivation.depBoundaryTargets.size} demand=${coldDerivation.dplDemand.length}`,
+        );
+        // Phase B: publish the retained canonical demand as the sole DPL-demand authority.
+        __c3ColdPumpDemand = {
+          rootDir,
+          depsHash,
+          demands: coldDerivation.dplDemand,
+          entryRoots: coldEntryAbs,
+        };
+      }
+    }
+
     const vendorPacksRaw = config?.optimizeDeps?.vendorPacks ?? false;
-		    const vendorPacksManualConfigured =
-		      vendorPacksRaw &&
-		      typeof vendorPacksRaw === "object" &&
-		      !Array.isArray(vendorPacksRaw) &&
-		      Object.keys(vendorPacksRaw as any).length > 0;
-		    const vendorPacksAutoConfigured = vendorPacksRaw === "auto";
+    const vendorPacksManualConfigured =
+      vendorPacksRaw &&
+      typeof vendorPacksRaw === "object" &&
+      !Array.isArray(vendorPacksRaw) &&
+      Object.keys(vendorPacksRaw as any).length > 0;
+    const vendorPacksAutoConfigured = vendorPacksRaw === "auto";
 
     // ── T8: Parallel deps optimization ────────────────────────────────────────
     // When vendorPacks:"auto" is configured, P1 (batch optimizer — non-vendor
@@ -3858,7 +5233,19 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Manual vendor packs (vendorPacksManualConfigured) always run sequentially —
     // their pack entry resolution is interleaved with usage scanning inside
     // prepareProductionManualPacks. A future T8b pass can hoist that.
-    if (vendorPacksAutoConfigured) {
+    if (skipDepsAuthorityForSourceOnlyEdit) {
+      depsMeasurementProfile.cacheMode = "local-verified-warm-source-only";
+      logInfo(
+        `[deps] Skipping dependency freshness scan for source-only edit ` +
+          `(changed=${sourceOnlyMutationProof.changed}, depsHash=${depsHash}, DPL publication identity and Planner topology admitted)`,
+      );
+    } else if (skipDepsAuthorityForPublishedPlan) {
+      depsMeasurementProfile.cacheMode = "pap-contract-current";
+      logInfo(
+        `[deps] Reusing DPL-verified Production Contracts generation ` +
+          `(depsHash=${depsHash}, Planner identity and source proof current)`,
+      );
+    } else if (vendorPacksAutoConfigured) {
       const packsStart = Date.now();
       const vendorExclude = resolveAutoVendorEntryFsPaths(rootDir, config);
 
@@ -3899,9 +5286,19 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         }
         if (depsSnapshotAlreadyFresh) {
           // prepareProductionAutoCorePack will find files already exist → alreadyReady fast path.
-        } else if (!skipGlobalRestore && restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
-          // ── T20: Global cache hit ──────────────────────────────────────────
-          try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+        } else if (
+          !skipGlobalRestore &&
+          restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION) &&
+          (await verifyRestoredDepsSnapshot({
+            rootDir,
+            depsRoot,
+            sentinelPath,
+            resolvedEntries: entries,
+            allowedRoots: workspace.allowedRoots,
+            config,
+          }))
+        ) {
+          // ── T20: Global cache hit (demand-verified) ────────────────────────
           logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
           depsMeasurementProfile.cacheMode = "global-cache-restored-cold";
         } else {
@@ -3979,7 +5376,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             const chunkedEntries = Array.from(vendorExclude).map((entryPath) =>
               withDplUsageDemand(entryPath, depsHash, dplDemand.demandByEntryPath),
             );
-            let splitHadErrors = false;
             try {
               const splitResult = (native as any).optimizeDepsParallelSplit(batchEntries, chunkedEntries, ionifyDir) as {
                 chunkGroup: string;
@@ -3989,7 +5385,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               };
               for (const err of splitResult.errors ?? []) {
                 logWarn(`[deps] WARN (parallel split): ${err}`);
-                splitHadErrors = true;
               }
             } catch (err) {
               logWarn(`[deps] WARN: Parallel split failed, falling back: ${String(err)}`);
@@ -3998,18 +5393,31 @@ export async function runBuildCommand(options: BuildOptions = {}) {
                 rootDir, ionifyDir, depsHash, depsRoot, config,
                 resolvedEntries: entries, allowedRoots: workspace.allowedRoots,
                 excludeEntryPaths: vendorExclude,
+                publishGeneration: false,
               });
             }
-            // Only write the sentinel when the parallel split had no errors. Partial failures
-            // leave manifest.json incomplete; writing .verified would cause the next warm build
-            // to skip re-optimization and silently serve stale/missing dep artifacts.
-            if (!splitHadErrors) {
-              try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
-              writeDepArtifactsToGlobalCache(depsHash, depsRoot);
-            }
+            // Optimizer diagnostics are not publication authority: package.json
+            // discovery includes tools and unused candidates outside the app
+            // runtime closure. DPL alone admits the generation after resolving
+            // current raw demand to its active publication topology and ABI.
+            await publishVerifiedDepsGeneration({
+              rootDir,
+              depsRoot,
+              depsHash,
+              resolvedEntries: entries,
+              allowedRoots: workspace.allowedRoots,
+              config,
+              runtimeDemands: dplDemand.runtimeDemands ?? undefined,
+            });
           } else {
-            try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
-            writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+            await publishVerifiedDepsGeneration({
+              rootDir,
+              depsRoot,
+              depsHash,
+              resolvedEntries: entries,
+              allowedRoots: workspace.allowedRoots,
+              config,
+            });
           }
         }
         // prepareProductionAutoCorePack will find files already exist → alreadyReady fast path
@@ -4097,12 +5505,76 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-	    const depsManifestIndex = loadDepsManifestIndex(depsRoot);
     // T19: load dep-stop set for graph_build_from_entries (cold path only).
     // Allows the native BFS to record dep entries as leaf nodes instead of crawling
     // into node_modules source trees \u2014 saves ~500-1100ms on large apps (UP-Portal scale).
-    const depStops = loadDepStopsFromManifest(depsRoot);
+    // A DPL+Planner-admitted mutation never enters graph planning, so loading
+    // the full dependency stop set here would duplicate DPL consumption.
+    const depStops = skipDepsAuthorityForCanonicalPlan ? [] : loadDepStopsFromManifest(depsRoot);
     logBuildProfile("depsAuthorityAndPacks", depsPhaseStart);
+
+    // ── C3-c Method-2 Phase C (cold path): PURE JOIN — retained Resolver boundary
+    // membership (Fact A, produced once by Phase A) × post-publication DPL depStops
+    // (Fact B: the pre-built dependency artifactHash) → dep-leaf Graph records. No
+    // re-resolution, no second Parser, no provisional dep-leaf before DPL: dep-leaf IDs
+    // come from the app records' OWN resolved edges (already correct ws:// ids), and the
+    // only join is depStop.entryPath → ws:// id → artifactHash. Pre-populating the Graph
+    // (app records + dep leaves) makes generateBuildPlan's persisted graph entry-reachable,
+    // so `rebuildGraphFromEntries` / Parser(A) never runs on the true-cold path.
+    if (coldDerivation && !skipDepsAuthorityForCanonicalPlan && native?.graphRecordBatch) {
+      const phaseCStart = Date.now();
+      // Open the SAME shared graph (path + version) generateBuildPlan will read, so the
+      // pre-populated records are the graph it validates (idempotent re-open there).
+      const phaseCGraphReady = ensureNativeGraph(
+        path.join(ionifyDir, "graph.db"),
+        computeGraphVersion(rawVersionInputs),
+        { retryMs: 1500, retryIntervalMs: 50 },
+      );
+      const depStopById = new Map<string, string>();
+      for (const s of depStops) {
+        if (!s.artifactHash) continue;
+        const depId = toWsModuleId(canonicalFsPath(s.entryPath), workspace.workspaceRoot);
+        if (depId) depStopById.set(depId, s.artifactHash);
+      }
+      const appIds = new Set(coldDerivation.appRecords.map((r) => r.id));
+      const depLeafRecords: NativeGraphRecordBatchNode[] = [];
+      const emittedLeaf = new Set<string>();
+      for (const rec of coldDerivation.appRecords) {
+        for (const edge of [...(rec.deps ?? []), ...(rec.dynamicDeps ?? [])]) {
+          if (emittedLeaf.has(edge) || appIds.has(edge)) continue;
+          const artifactHash = depStopById.get(edge);
+          if (artifactHash) {
+            // Fact A ∩ Fact B: a resolved dependency-boundary target with a published artifact.
+            emittedLeaf.add(edge);
+            depLeafRecords.push({ id: edge, hash: artifactHash, deps: [], dynamicDeps: [], runtimeLinks: [], kind: "dep" });
+            continue;
+          }
+          // App-source NON-JS asset edge (e.g. `.css`): the canonical scheduler derives only
+          // JS, so these leaves are projected here to complete the app graph. Content-hashed
+          // identically to the legacy graph (getCacheKey of the source bytes); kind by extension.
+          const edgeAbs = edge.startsWith(WS_MODULE_PREFIX) ? fromWsModuleId(edge, workspace.workspaceRoot) : null;
+          if (!edgeAbs || !fs.existsSync(edgeAbs)) continue;
+          const ext = path.extname(edgeAbs).toLowerCase();
+          const isCss = ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less";
+          emittedLeaf.add(edge);
+          depLeafRecords.push({
+            id: edge,
+            hash: getCacheKey(fs.readFileSync(edgeAbs)),
+            deps: [],
+            dynamicDeps: [],
+            runtimeLinks: [],
+            kind: isCss ? "css" : "asset",
+          });
+        }
+      }
+      const admitted = phaseCGraphReady
+        ? native.graphRecordBatch([...coldDerivation.appRecords, ...depLeafRecords])
+        : -1;
+      logBuildProfile("coldCanonicalGraphProjection", phaseCStart);
+      logInfo(
+        `[C3-c] Phase C graph projection: ready=${phaseCGraphReady} app=${coldDerivation.appRecords.length} depLeaf=${depLeafRecords.length} admitted=${admitted}`,
+      );
+    }
     logTopologyValidationProfile(depsRoot);
 
     // Phase 5-Cloud-EI-DX2 — `ionify optimize-all` short-circuit. The deps
@@ -4115,10 +5587,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       logInfo(
         `[deps] optimize-all: snapshot ready at .ionify/deps/${depsHash}/ (skipping bundler, no dist/ output).`,
       );
-      // Touch unused locals so TS/eslint don't complain about reads above.
-      void depsManifestIndex;
-      void depStops;
-      return;
+      return {
+        depsHash,
+        canonicalPlan: sourceOnlyCanonicalPlan,
+      } satisfies BuildDependencyPreparation;
     }
 
     const federationExposeEntries = collectFederationExposeEntryPaths(config, rootDir);
@@ -4129,14 +5601,36 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo("Building...");
 
     const planStart = Date.now();
-    const publishedPlan = readProductionPublicationPlan(ionifyDir, productionPublicationIdentity);
-    const plan = publishedPlan
+    // The early PRA read is the process-local authoritative snapshot for this
+    // build. Re-reading the same publication cannot strengthen identity and
+    // only repeats JSON hydration on the mutation path.
+    const publishedPlanCandidate = earlyPublishedPlan;
+    logBuildProfileDuration("publishedProductionPlanReread", 0);
+    const publishedPlan =
+      publishedPlanCandidate &&
+      !sourceOnlyCanonicalPlan &&
+      earlySourceFreshnessAudit?.current === true
+        ? publishedPlanCandidate
+        : null;
+    if (publishedPlanCandidate && !publishedPlan) {
+      logInfo("[PRA] Published Production Plan source proof is stale; refreshing graph before planning");
+    }
+    const canonicalMutationPlan = !publishedPlan ? sourceOnlyCanonicalPlan : null;
+    let plan = publishedPlan
       ? publishedPlan
+      : canonicalMutationPlan
+        ? canonicalMutationPlan
       : await generateBuildPlan(
           buildEntries.length > 0 ? buildEntries : undefined,
           rawVersionInputs,
           depStops,
           buildExternalSpecifiers,
+          skipDepsAuthorityForSourceOnlyEdit ? sourceOnlyMutationProof.changedPaths : undefined,
+          skipDepsAuthorityForSourceOnlyEdit ? sourceOnlyMutationProof.runtimeMutations : undefined,
+          skipDepsAuthorityForSourceOnlyEdit ? publishedPlanCandidate ?? undefined : undefined,
+          skipDepsAuthorityForSourceOnlyEdit ? depsRoot : undefined,
+          undefined,
+          canonicalBuildContext,
         );
     logBuildProfile("generateBuildPlan", planStart);
     if (publishedPlan) {
@@ -4146,15 +5640,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logInfo(
       `[Build] Plan ready: entries=${plan.entries.length}, chunks=${plan.chunks.length}, modules=${totalPlannedModules}`,
     );
-    const productionReadinessRecord: ProductionReadinessRecord | null = readProductionReadinessRecord(ionifyDir);
+    const readinessRecordReadStart = Date.now();
+    const productionReadinessRecord: ProductionReadinessRecord | null =
+      earlyProductionReadinessRecord;
+    logBuildProfile("productionReadinessRecordRead", readinessRecordReadStart);
     const sourceFreshnessPreflightStart = Date.now();
-    const sourceFreshnessCurrent = isProductionSourceFreshnessCurrent(
-      plan,
-      ionifyDir,
-      workspace.workspaceRoot,
-      path.join(ionifyDir, "cas"),
-      configHash,
-    );
+    const sourceFreshnessCurrent =
+      publishedPlan !== null && earlySourceFreshnessAudit?.current === true;
     logBuildProfile("praSourceFreshnessPreflight", sourceFreshnessPreflightStart);
     const verifiedPraForPublishedPlan =
       publishedPlan !== null &&
@@ -4173,9 +5665,15 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       logInfo("[PRA] Verified deploy-ready identity found, but source freshness proof is missing or stale; using normal canonical dependency probe");
     }
 
-    const federationGraph = new Graph(rawVersionInputs, { ionifyDir });
-    const federationRemoteBindings = collectFederationRemoteImportBindings(config, rootDir);
-    if (config?.federation) {
+    const federationGraphStart = Date.now();
+    const federationGraph = config?.federation
+      ? new Graph(rawVersionInputs, { ionifyDir })
+      : null;
+    const federationRemoteBindings = config?.federation
+      ? collectFederationRemoteImportBindings(config, rootDir)
+      : new Map<string, string>();
+    logBuildProfile("federationGraphSetup", federationGraphStart);
+    if (config?.federation && federationGraph) {
       syncFederationGraphNodes(federationGraph, buildFederationConfigGraphNodes(config, rootDir));
       for (const chunk of plan.chunks) {
         for (const mod of chunk.modules) {
@@ -4225,16 +5723,13 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
     }
 
-    let canonicalDepsForReadiness:
-      | Awaited<ReturnType<typeof prepareCanonicalProductionDependencyPlan>>
-      | null = null;
     let readinessPlanForIdentity: BuildPlan | null = null;
 
     // ── Production dependency authority ─────────────────────────────────────
     // Canonical order: DPL artifacts first, then buildChunks/PAP consume that
     // single artifact plan shape. PDC is frozen and is not part of the live
     // dependency value or cache-identity path.
-    if (!verifiedPraForPublishedPlan) {
+    if (!verifiedPraForPublishedPlan && !skipDepsAuthorityForCanonicalPlan) {
       const casRoot = path.join(ionifyDir, "cas");
       const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
         plan,
@@ -4247,8 +5742,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         casRoot,
         configHash,
         workspaceRoot: workspace.workspaceRoot,
+        config,
+        vendorMaxBytes: productionChunkPolicy.vendorMaxBytes,
+        skipDependencyCoverageRepair: skipDepsAuthorityForCanonicalPlan,
       });
-      canonicalDepsForReadiness = canonicalDeps;
       if (canonicalDeps.rerouted > 0 || canonicalDeps.pruned > 0) {
         logInfo(
           `[Build] Deps artifact rerouting: ${canonicalDeps.rerouted} entries rerouted (${canonicalDeps.idRewritten} ids → artifact identity), ${canonicalDeps.pruned} internal modules pruned${canonicalDeps.sharedPrewarmed > 0 ? `, ${canonicalDeps.sharedPrewarmed} shared artifacts pre-warmed` : ""}`,
@@ -4262,15 +5759,23 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     }
     const outDir = options.outDir || "dist";
     const absOutDir = path.resolve(outDir);
-
-    const defineSignature = computeDefineSignature(defineConfig as any);
-    const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
+    const readinessPlanCloneStart = Date.now();
+    readinessPlanForIdentity = plan;
+    // Planner's canonical plan becomes immutable at the DPL-reroute boundary.
+    // Build every Transform/CAS/Bundler reference index from an independent
+    // emission projection so artifact-hash replacement cannot flow backward
+    // into Planner or PRA identity.
+    plan = createEmissionPlanProjection(plan);
+    logBuildProfile("readinessPlanClone", readinessPlanCloneStart);
 
     const moduleRefsById = new Map<
       string,
       Array<{ id: string; fsPath?: string | null; hash?: string | null; kind?: string | null }>
     >();
-    const moduleMetaById = new Map<string, { fsPath: string; kind: "js" | "css"; hash: string | null }>();
+    const moduleMetaById = new Map<
+      string,
+      { fsPath: string; kind: "js" | "css"; hash: string | null; proofKind: ProofKind | null }
+    >();
     const moduleIndexStart = Date.now();
     for (const chunk of plan.chunks) {
       for (const mod of chunk.modules) {
@@ -4295,6 +5800,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             fsPath,
             kind: mod.kind,
             hash: typeof mod.hash === "string" && mod.hash.length > 0 ? mod.hash : null,
+            proofKind: (mod as any).proofKind ?? null,
           });
         }
         const bucket = moduleRefsById.get(mod.id);
@@ -4305,28 +5811,100 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     logBuildProfile("moduleIndex", moduleIndexStart);
 
     const cssDemandGraphRegisterStart = Date.now();
-    const cssDemandGraphFiles = Array.from(moduleMetaById.values())
-      .filter((meta) => {
-        if (meta.kind !== "js") return false;
-        if (meta.fsPath.includes("node_modules") || meta.fsPath.includes("/.ionify/")) return false;
-        const clean = meta.fsPath.split("?")[0]!.split("#")[0]!.toLowerCase();
-        return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
-      })
-      .map((meta) => meta.fsPath);
-    const cssDemandRegisteredFiles = registerCssDemandGraphSourceFiles(rootDir, cssDemandGraphFiles);
+    const compactCssDemandGraphContent = skipDepsAuthorityForSourceOnlyEdit
+      ? refreshCssDemandGraphContentStamp(
+          rootDir,
+          sourceOnlyMutationProof.changedPaths,
+        )
+      : null;
+    let cssDemandGraphRequired: boolean;
+    let cssDemandRegisteredFiles: string[];
+    let cssDemandGraphContent;
+    if (compactCssDemandGraphContent) {
+      cssDemandGraphRequired = true;
+      cssDemandGraphContent = compactCssDemandGraphContent;
+      cssDemandRegisteredFiles = compactCssDemandGraphContent.changed
+        ? registerCssDemandGraphSourceFiles(rootDir, [], { stableTopology: true })
+        : [];
+    } else {
+      cssDemandGraphRequired = requiresCssDemandGraphContentStamp(
+        Array.from(moduleMetaById.values())
+          .filter((meta) => meta.kind === "css")
+          .map((meta) => {
+            if (!meta.hash) return null;
+            const cssMeta = readJsonFile<CssCasMeta>(
+              path.join(getCasArtifactPath(casRoot, configHash, meta.hash), "meta.json"),
+            );
+            if (
+              !cssMeta ||
+              cssMeta.version !== CSS_CAS_META_VERSION ||
+              cssMeta.baseHash !== meta.hash ||
+              !cssMeta.tailwindGraphContent
+            ) {
+              return null;
+            }
+            return {
+              enabled: cssMeta.tailwindGraphContent.enabled === true,
+              files: Number(cssMeta.tailwindGraphContent.files ?? 0),
+            };
+          }),
+      );
+      const cssDemandGraphFiles = cssDemandGraphRequired
+        ? Array.from(moduleMetaById.values())
+            .filter((meta) => {
+              if (meta.kind !== "js") return false;
+              if (meta.fsPath.includes("node_modules") || meta.fsPath.includes("/.ionify/")) return false;
+              const clean = meta.fsPath.split("?")[0]!.split("#")[0]!.toLowerCase();
+              return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
+            })
+            .map((meta) => meta.fsPath)
+        : [];
+      cssDemandRegisteredFiles = registerCssDemandGraphSourceFiles(
+        rootDir,
+        cssDemandGraphFiles,
+        skipDepsAuthorityForSourceOnlyEdit ? { stableTopology: true } : undefined,
+      );
+      // One CSSA-owned aggregated stamp per build over the graph-admitted Tailwind
+      // content set. All CSS artifact freshness gates and css:v3 recipes consume
+      // this stamp; nothing re-derives per-artifact source dependency lists.
+      cssDemandGraphContent = computeCssDemandGraphContentStamp(
+        rootDir,
+        skipDepsAuthorityForSourceOnlyEdit
+          ? { stableTopologyChangedFiles: sourceOnlyMutationProof.changedPaths }
+          : undefined,
+      );
+    }
+    const cssDemandGraphStamp = cssDemandGraphContent?.stamp ?? null;
     if (isBuildProfileEnabled()) {
       logInfo(
-        `[BuildProfile][cssDemandGraph] register_ms=${Date.now() - cssDemandGraphRegisterStart} files=${cssDemandRegisteredFiles.length} extraction_ms=0 cacheHit=0 cacheMiss=0 tokens=0`,
+        `[BuildProfile][cssDemandGraph] register_ms=${Date.now() - cssDemandGraphRegisterStart} required=${cssDemandGraphRequired ? 1 : 0} files=${cssDemandGraphContent?.files ?? cssDemandRegisteredFiles.length} stamp=${cssDemandGraphStamp ? cssDemandGraphStamp.slice(0, 12) : "none"} extraction_ms=0 cacheHit=0 cacheMiss=0 tokens=0`,
       );
     }
 
     const moduleOutputs = new Map<string, { code: string; type: "js" | "css" | "asset" }>();
 
     const modulesInPlan = moduleMetaById.size;
-    const casRoot = path.join(ionifyDir, "cas");
     const transformCasProfile = createTransformCasProfile();
 
     let casHits = 0;
+    const sourceOnlyChangedPaths = new Set(
+      (skipDepsAuthorityForSourceOnlyEdit ? sourceOnlyMutationProof.changedPaths : [])
+        .map((filePath) => path.resolve(filePath)),
+    );
+    const incrementalHydrationModuleIds =
+      skipDepsAuthorityForSourceOnlyEdit && sourceOnlyChangedPaths.size > 0
+        ? new Set(
+            Array.from(moduleMetaById.entries())
+              .filter(([, meta]) => {
+                if (sourceOnlyChangedPaths.has(path.resolve(meta.fsPath))) return true;
+                return meta.kind === "css" && cssDemandGraphContent?.changed === true;
+              })
+              .map(([id]) => id),
+          )
+        : null;
+    if (incrementalHydrationModuleIds) {
+      casHits = Math.max(0, modulesInPlan - incrementalHydrationModuleIds.size);
+    }
 
     // ── Source freshness scan ──────────────────────────────────────────────────
     // When source files are edited while no dev server is running, graph.db
@@ -4352,7 +5930,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // Patching propagates to:
     //   - jsCasFileById / CAS hydration pass → Tier-1 miss → re-transform ✓
     //   - ref.hash on plan module objects → Rust chunkHash changes → Tier-4 miss ✓
-    {
+    if (!skipDepsAuthorityForSourceOnlyEdit) {
       const freshnessStart = Date.now();
       const freshnessCacheFile = path.join(ionifyDir, "source-freshness.v1.json");
       type FreshnessCacheEntry = {
@@ -4445,13 +6023,17 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         // Non-fatal: next build will fall back to hashing sources.
       }
       logBuildProfile("freshnessScan", freshnessStart);
+    } else {
+      // Planner's staged canonical mutation already committed the changed hash
+      // and preserved or replaced its verified edges. Re-scanning and
+      // republishing the complete source population here would introduce a
+      // second graph mutation path.
+      logBuildProfileDuration("freshnessScan", 0);
     }
-    readinessPlanForIdentity = JSON.parse(JSON.stringify(plan)) as BuildPlan;
-
     const praOutputProbeStart = Date.now();
     const verifiedPraOutputReuse =
       verifiedPraForPublishedPlan && productionReadinessRecord
-        ? tryVerifyProductionReadinessOutputReuse(absOutDir, plan, productionReadinessRecord)
+        ? tryVerifyProductionReadinessOutputReuse(absOutDir, productionReadinessRecord)
         : null;
     logBuildProfile("praOutputReadinessProbe", praOutputProbeStart);
     if (verifiedPraOutputReuse) {
@@ -4525,7 +6107,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       return;
     }
 
-    const defineJobs: Array<{ id: string; artifactHash: string; baseCode: string }> = [];
+    const defineJobs: Array<{ id: string; artifactHash: string; baseHash: string; baseCode: string }> = [];
     const cssDerivedArtifactHashById = new Map<string, string>();
     const jobs: Array<{
       id: string;
@@ -4537,16 +6119,44 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       artifactHash: string;
       cssNeedsJsWrapper?: boolean;
     }> = [];
-    const getArtifactHash = (baseHash: string, kind: "js" | "css"): string => {
+    const getArtifactHash = (baseHash: string, kind: "js" | "css", dh: string = defineHash): string => {
       if (kind !== "js") return baseHash;
-      if (!defineHash) return baseHash;
-      return getCacheKey(`${baseHash}|define:${defineHash}`);
+      if (!dh) return baseHash;
+      return getCacheKey(`${baseHash}|define:${dh}`);
     };
+
+    // G2-C2: the expected Transform-artifact contract for a consumed JS module,
+    // used by admitTransformArtifact. `variant`/`defineHash` describe the
+    // artifact the plan actually consumes (the define-variant when a define is
+    // configured, else the base). recomputeArtifactHash reuses getArtifactHash so
+    // the proof↔location check duplicates no identity math (design §11.3).
+    const jsProofExpectation = (baseHash: string, artifactHash: string): TransformArtifactExpectation => ({
+      sourceHash: baseHash,
+      recipeConfigHash: configHash,
+      defineHash,
+      artifactKind: "js",
+      variant: defineHash ? "define" : "base",
+      artifactHash,
+      recomputeArtifactHash: (sh, kind, dh) => getArtifactHash(sh, kind === "css" ? "css" : "js", dh),
+    });
+    // Expectation for the pre-define BASE artifact (its dir hash == baseHash,
+    // defineHash == ""), verified before deriving a define-variant from it so a
+    // corrupt base cannot silently produce a corrupt variant.
+    const jsBaseProofExpectation = (baseHash: string): TransformArtifactExpectation => ({
+      sourceHash: baseHash,
+      recipeConfigHash: configHash,
+      defineHash: "",
+      artifactKind: "js",
+      variant: "base",
+      artifactHash: baseHash,
+      recomputeArtifactHash: (sh, kind, dh) => getArtifactHash(sh, kind === "css" ? "css" : "js", dh),
+    });
 
     // Pre-compute casFile paths for non-CSS modules and batch-check existence in parallel
     // (Rust/Rayon stat syscalls vs N sequential TS-side fs.existsSync calls).
     const jsCasFileById = new Map<string, string>();
     for (const [id, meta] of moduleMetaById.entries()) {
+      if (incrementalHydrationModuleIds && !incrementalHydrationModuleIds.has(id)) continue;
       if (meta.kind !== "css" && meta.hash) {
         const ah = getArtifactHash(meta.hash, meta.kind);
         jsCasFileById.set(id, path.join(getCasArtifactPath(casRoot, configHash, ah), "transformed.js"));
@@ -4565,10 +6175,11 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // CAS hydration pass: skip transforms when artifacts already exist.
     const hydrationStart = Date.now();
     for (const [id, meta] of moduleMetaById.entries()) {
+      if (incrementalHydrationModuleIds && !incrementalHydrationModuleIds.has(id)) continue;
       const refs = moduleRefsById.get(id) ?? [];
       const baseHashFromPlan = meta.hash;
       const cssNeedsJsWrapper = meta.kind === "css" && isCssModuleFile(meta.fsPath);
-      let artifactHashFromPlan = baseHashFromPlan ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
+      let artifactHashFromPlan = baseHashFromPlan && meta.kind !== "css" ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
 
       if (meta.kind === "css" && baseHashFromPlan) {
         const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
@@ -4580,6 +6191,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             baseHashFromPlan,
             casRoot,
             cssNeedsJsWrapper,
+            cssDemandGraphStamp,
           );
           transformCasProfile.cssGlobalCacheRestoreMs += Date.now() - restoreStart;
           if (restored.restored) {
@@ -4591,10 +6203,12 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         }
         if (
           cssMeta &&
-          cssMeta.version === 1 &&
+          cssMeta.version === CSS_CAS_META_VERSION &&
           cssMeta.baseHash === baseHashFromPlan &&
           typeof cssMeta.pipelineHash === "string" &&
-          cssMeta.pipelineHash.length > 0
+          cssMeta.pipelineHash.length > 0 &&
+          cssDepProofIsCurrent(cssMeta) &&
+          cssMetaAdmitsCurrentTailwindGraph(cssMeta, cssDemandGraphStamp)
         ) {
           const depsAbs = Array.from(
             new Set(
@@ -4609,7 +6223,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             workspace.workspaceRoot,
           );
           artifactHashFromPlan = getCacheKey(
-            `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`,
+            `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}:${metaTailwindStampForRecipe(cssMeta)}`,
           );
         }
       }
@@ -4682,25 +6296,83 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           }
         }
       } else {
-        const casFileName = "transformed.js";
-        const casFile = casDir ? path.join(casDir, casFileName) : null;
-        if (casFile && (casExistsMap.get(casFile) ?? fs.existsSync(casFile))) {
-          casHits += 1;
-          continue;
+        // ── G2-C3 authority dispatch: SOLELY on the plan-carried `proofKind` ──
+        // The sealed plan is self-describing. Admission never infers authority
+        // from fsPath / artifactTopology / flags / any side-channel. `proofKind`
+        // identifies the REQUIRED authority-owned contract; materialization below
+        // proves or rejects satisfaction of it.
+        const proofKind = meta.proofKind;
+        if (proofKind === "DplContentHash") {
+          // DPL owns identity + integrity (artifactHash = content hash). Admit via
+          // DPL's content-hash contract; consume the DPL dir (`meta.hash`) directly
+          // (define is never applied to pre-built deps).
+          if (baseHashFromPlan) {
+            const dplDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
+            const dplFile = path.join(dplDir, "transformed.js");
+            for (const ref of refs) ref.hash = baseHashFromPlan;
+            if (fs.existsSync(dplFile) && casTextFileMatchesHash(dplFile, baseHashFromPlan)) {
+              casHits += 1;
+              continue;
+            }
+            // DPL CAS missing/corrupt → re-materialize from the DPL source-of-truth
+            // (`.ionify/deps`), fail-closed to DPL's content hash. Never a re-transform.
+            if (fs.existsSync(meta.fsPath)) {
+              const bytes = fs.readFileSync(meta.fsPath, "utf8");
+              if (getCacheKey(bytes) === baseHashFromPlan) {
+                fs.mkdirSync(dplDir, { recursive: true });
+                fs.writeFileSync(dplFile, bytes, "utf8");
+                casHits += 1;
+                continue;
+              }
+            }
+          }
+          // DPL source-of-truth unavailable/corrupt: fall through to loud failure.
+        } else if (proofKind === "TransformArtifactProof") {
+          // Transform owns source+recipe→emitted bytes. Existence is not admission:
+          // verify the Transform proof vs the current expected contract + bytes.
+          // NonAdmissible falls through to narrow reconstruction below.
+          const casFile = casDir ? path.join(casDir, "transformed.js") : null;
+          if (
+            casDir &&
+            casFile &&
+            baseHashFromPlan &&
+            artifactHashFromPlan &&
+            (casExistsMap.get(casFile) ?? fs.existsSync(casFile))
+          ) {
+            const admission = admitTransformArtifact(casDir, jsProofExpectation(baseHashFromPlan, artifactHashFromPlan));
+            if (admission.admissible) {
+              for (const ref of refs) (ref as any).admittedOutputHash = admission.proof.outputHash;
+              casHits += 1;
+              continue;
+            }
+          }
+          // NonAdmissible → fall through to reconstruction (define-derive / transform).
+        } else {
+          // Invariant (G2-C3): a consumable JS module reaching admission with no
+          // positive proofKind is unsealed / legacy / unclassified. Fail closed and
+          // report the class — NEVER silently classify as Transform. The plan is
+          // NonReusable; a full rebuild re-derives + stamps it (next run quiesces).
+          throw new Error(
+            `[G2-C3] Non-self-describing plan: JS consumable '${id}' ` +
+              `(${meta.fsPath ?? "?"}) carries no proofKind. A sealed reusable plan ` +
+              `must stamp exactly one authority-owned admission contract per ` +
+              `consumable module; rebuild to re-stamp (NonReusable).`,
+          );
         }
       }
 
       // Define variant miss: if the base (pre-define) transform exists in CAS, derive the define variant
-      // without re-running the transform worker.
-      if (meta.kind === "js" && baseHashFromPlan) {
+      // without re-running the transform worker. G2-C2: admit the BASE proof first
+      // so a corrupt base cannot silently produce a corrupt variant.
+      if (meta.kind === "js" && baseHashFromPlan && defineHash) {
         const baseDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
         const baseFile = path.join(baseDir, "transformed.js");
-        if (fs.existsSync(baseFile)) {
+        if (fs.existsSync(baseFile) && admitTransformArtifact(baseDir, jsBaseProofExpectation(baseHashFromPlan)).admissible) {
           try {
             const baseCode = fs.readFileSync(baseFile, "utf8");
             const artifactHash = getArtifactHash(baseHashFromPlan, "js");
             for (const ref of refs) ref.hash = artifactHash;
-            defineJobs.push({ id, artifactHash, baseCode });
+            defineJobs.push({ id, artifactHash, baseHash: baseHashFromPlan, baseCode });
             casHits += 1;
             continue;
           } catch {
@@ -4722,14 +6394,15 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       }
 
       // If the base transform exists for this module (even if the planner didn't provide a hash),
-      // derive the define variant without invoking the worker transform.
+      // derive the define variant without invoking the worker transform. G2-C2:
+      // admit the BASE proof first (fail-closed to full transform otherwise).
       if (meta.kind === "js" && defineHash) {
         const baseDir = getCasArtifactPath(casRoot, configHash, baseHash);
         const baseFile = path.join(baseDir, "transformed.js");
-        if (fs.existsSync(baseFile)) {
+        if (fs.existsSync(baseFile) && admitTransformArtifact(baseDir, jsBaseProofExpectation(baseHash)).admissible) {
           try {
             const baseCode = fs.readFileSync(baseFile, "utf8");
-            defineJobs.push({ id, artifactHash, baseCode });
+            defineJobs.push({ id, artifactHash, baseHash, baseCode });
             casHits += 1;
             continue;
           } catch {
@@ -4778,7 +6451,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               cssModules: job.cssNeedsJsWrapper === true,
               cssModulesOptions: cssModulesOptionsForWorker,
               cssPreprocessorOptions: cssPreprocessorOptionsForWorker,
+              // Content override input for CSSA Tailwind graph narrowing.
               cssDemandGraphFiles: cssDemandRegisteredFiles,
+              // Freshness/identity proof for that content set (main-process computed).
+              cssDemandGraphStamp,
             })),
           );
           transformCasProfile.cssCompileWallMs += Date.now() - cssStart;
@@ -4823,9 +6499,22 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     for (const job of defineJobs) {
       const cacheDir = getCasArtifactPath(casRoot, configHash, job.artifactHash);
       try {
-        fs.mkdirSync(cacheDir, { recursive: true });
-        const finalCode = applyDefineReplacements(job.baseCode, defineConfig);
-        fs.writeFileSync(path.join(cacheDir, "transformed.js"), finalCode, "utf8");
+        // G2-C2: write the derived variant + its Transform proof atomically, and
+        // pin the admitted output hash so native re-verifies the exact bytes.
+        // The derived variant carries no source map (authoritative absence).
+        const proof = writeTransformArtifact({
+          dir: cacheDir,
+          bytes: applyDefineReplacements(job.baseCode, defineConfig),
+          map: null,
+          identity: {
+            sourceHash: job.baseHash,
+            recipeConfigHash: configHash,
+            defineHash,
+            artifactKind: "js",
+            variant: "define",
+          },
+        });
+        for (const ref of moduleRefsById.get(job.id) ?? []) (ref as any).admittedOutputHash = proof.outputHash;
       } catch {
         // ignore CAS write errors
       }
@@ -4842,11 +6531,41 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       const jsJobs = jobs.filter((job) => job.kind === "js");
       const nativeTransformBatch = native?.nativeTransformBatch;
 
-      if (typeof nativeTransformBatch === "function" && jsJobs.length > 0) {
+      const reusableMutationByPath = new Map(
+        // F3-A: reuse the canonical producer's bytes whenever THIS build's
+        // mutation proof produced them (`.ok`), not only on the source-only fast
+        // path. A topology/demand change requires Graph + DPL re-admission but
+        // does NOT invalidate Transform bytes already produced for the same
+        // current source and within-build recipe context. Tier-1 stays a
+        // materializer; the sourceHash guard + error check below keep it
+        // fail-closed to `nativeTransformBatch`.
+        (sourceOnlyMutationProof.ok ? sourceOnlyMutationProof.runtimeMutations : []).flatMap((mutation) => {
+          const filePath = mutation.filePath ?? mutation.file_path;
+          const sourceHash = mutation.sourceHash ?? mutation.source_hash;
+          if (!filePath || !sourceHash || mutation.error || typeof mutation.code !== "string") return [];
+          return [[canonicalFsPath(filePath), { ...mutation, sourceHash }] as const];
+        }),
+      );
+      for (const job of jsJobs) {
+        const reusable = reusableMutationByPath.get(canonicalFsPath(job.filePath));
+        if (!reusable || reusable.sourceHash !== getCacheKey(job.code)) continue;
+        nativeHandledIds.add(job.id);
+        transformResultsById.set(job.id, {
+          id: job.id,
+          filePath: reusable.filePath ?? reusable.file_path ?? job.filePath,
+          code: reusable.code,
+          map: reusable.map ?? undefined,
+          type: "js",
+        });
+        transformCasProfile.nativeJsTransformReuseJobs += 1;
+      }
+
+      const nativeTransformJobs = jsJobs.filter((job) => !nativeHandledIds.has(job.id));
+      if (typeof nativeTransformBatch === "function" && nativeTransformJobs.length > 0) {
         try {
           const nativeResults = profileElapsed(transformCasProfile, "nativeJsTransformMs", () =>
             nativeTransformBatch(
-              jsJobs.map((job) => ({
+              nativeTransformJobs.map((job) => ({
                 id: job.id,
                 filePath: job.filePath,
                 ext: job.ext,
@@ -4855,7 +6574,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
               parserMode,
             ),
           );
-          transformCasProfile.nativeJsTransformJobs += jsJobs.length;
+          transformCasProfile.nativeJsTransformJobs += nativeTransformJobs.length;
 
           for (const result of nativeResults) {
             const job = jobById.get(result.id);
@@ -4875,7 +6594,6 @@ export async function runBuildCommand(options: BuildOptions = {}) {
             logInfo(`[Build] Native transform batch handled ${nativeHandledIds.size} JS module(s)`);
           }
         } catch (err) {
-          nativeHandledIds.clear();
           logWarn(
             `[Build] Native transform batch unavailable; falling back to worker transforms (${
               err instanceof Error ? err.message : String(err)
@@ -4925,29 +6643,42 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
         const isJs = (result.type ?? "js") === "js";
         if (isJs) {
-          const baseDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
-            getCasArtifactPath(casRoot, configHash, job.baseHash),
-          );
-          transformCasProfile.artifactHashBookkeepingCalls += 1;
-          const artifactDir = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
-            getCasArtifactPath(casRoot, configHash, job.artifactHash),
-          );
-          transformCasProfile.artifactHashBookkeepingCalls += 1;
-          profileCasMkdir(transformCasProfile, baseDir);
-          profileCasWrite(transformCasProfile, path.join(baseDir, "transformed.js"), result.code, "base");
-          if (result.map) {
-            profileCasWrite(transformCasProfile, path.join(baseDir, "transformed.js.map"), result.map, "base");
-          }
-
-          profileCasMkdir(transformCasProfile, artifactDir);
+          // G2-C2: write base + define-variant artifacts each with their own
+          // Transform proof (atomic, marker-last), and pin the consumed variant's
+          // output hash onto the plan refs for native re-verification.
+          const baseProof = writeTransformArtifact({
+            dir: getCasArtifactPath(casRoot, configHash, job.baseHash),
+            bytes: result.code,
+            map: result.map ?? null,
+            identity: {
+              sourceHash: job.baseHash,
+              recipeConfigHash: configHash,
+              defineHash: "",
+              artifactKind: "js",
+              variant: "base",
+            },
+          });
           const finalCode = profileElapsed(transformCasProfile, "defineReplacementMs", () =>
             applyDefineReplacements(result.code, defineConfig),
           );
           transformCasProfile.defineReplacementCalls += 1;
-          profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.js"), finalCode, "variant");
-          if (result.map && finalCode === result.code) {
-            profileCasWrite(transformCasProfile, path.join(artifactDir, "transformed.js.map"), result.map, "variant");
+          let consumedOutputHash = baseProof.outputHash;
+          if (job.artifactHash !== job.baseHash) {
+            const variantProof = writeTransformArtifact({
+              dir: getCasArtifactPath(casRoot, configHash, job.artifactHash),
+              bytes: finalCode,
+              map: result.map && finalCode === result.code ? result.map : null,
+              identity: {
+                sourceHash: job.baseHash,
+                recipeConfigHash: configHash,
+                defineHash,
+                artifactKind: "js",
+                variant: "define",
+              },
+            });
+            consumedOutputHash = variantProof.outputHash;
           }
+          for (const ref of moduleRefsById.get(job.id) ?? []) (ref as any).admittedOutputHash = consumedOutputHash;
         } else {
           const deps = Array.isArray(result.deps)
             ? result.deps.filter((p): p is string => typeof p === "string" && p.length > 0)
@@ -4998,7 +6729,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           const cssNeedsJsWrapper = job.cssNeedsJsWrapper === true;
           const artifactHash = profileElapsed(transformCasProfile, "artifactHashBookkeepingMs", () =>
             getCacheKey(
-              `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`,
+              `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}:${metaTailwindStampForRecipe({ tailwindGraphContent })}`,
             ),
           );
           transformCasProfile.artifactHashBookkeepingCalls += 1;
@@ -5015,7 +6746,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
           transformCasProfile.artifactHashBookkeepingCalls += 1;
           profileCasMkdir(transformCasProfile, baseDir);
           const meta: CssCasMeta = {
-            version: 1,
+            version: CSS_CAS_META_VERSION,
             baseHash: job.baseHash,
             artifactHash,
             artifactBytesHash,
@@ -5049,6 +6780,10 @@ export async function runBuildCommand(options: BuildOptions = {}) {
                   fallbackReason:
                     typeof tailwindGraphContent.fallbackReason === "string"
                       ? tailwindGraphContent.fallbackReason
+                      : null,
+                  stamp:
+                    typeof tailwindGraphContent.stamp === "string" && tailwindGraphContent.stamp.length > 0
+                      ? tailwindGraphContent.stamp
                       : null,
                 }
               : null,
@@ -5141,6 +6876,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     // No raw node_modules bridge, virtual re-export shims, or PDC-owned cache
     // identity are introduced here.
 
+    const emitPreparationStart = Date.now();
     const buildMinifyRaw = (config as any)?.build?.minify;
     const buildMinifyEnabled = buildMinifyRaw === false ? false : true;
     const minifyEnabled = optLevel !== null ? optLevel !== 0 : buildMinifyEnabled;
@@ -5155,42 +6891,87 @@ export async function runBuildCommand(options: BuildOptions = {}) {
       .map((entry) => toWsModuleId(entry, workspace.workspaceRoot))
       .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0);
 
-    const emitStart = Date.now();
-    const distReuseProbeStart = Date.now();
-    const reusedOutputs =
-      transformsNeeded === 0 && defineJobs.length === 0 && !config?.federation
-        ? tryReusePreviousBuildOutputs(absOutDir, plan)
+    const incrementalChunkIdSet =
+      skipDepsAuthorityForSourceOnlyEdit &&
+      sourceMutationOutputBase &&
+      sourceMutationPlannerChunkIds &&
+      !config?.federation
+        ? new Set(sourceMutationPlannerChunkIds)
         : null;
-    logBuildProfile("distReuseProbe", distReuseProbeStart);
+    if (incrementalChunkIdSet && cssJobs.length > 0) {
+      const changedCssIds = new Set(cssJobs.map((job) => job.id));
+      for (const chunk of plan.chunks) {
+        if (chunk.css.some((cssId) => changedCssIds.has(cssId))) {
+          incrementalChunkIdSet.add(chunk.id);
+        }
+      }
+    }
+    const incrementalChunkIds = incrementalChunkIdSet
+      ? Array.from(incrementalChunkIdSet).sort()
+      : null;
+    const changedCssModuleIds = new Set(
+      incrementalHydrationModuleIds
+        ? Array.from(incrementalHydrationModuleIds).filter(
+            (moduleId) => moduleMetaById.get(moduleId)?.kind === "css",
+          )
+        : [],
+    );
+    const verifiedResourceStableChunkIds =
+      incrementalChunkIdSet && sourceMutationOutputBase
+        ? plan.chunks
+            .filter(
+              (chunk) =>
+                incrementalChunkIdSet.has(chunk.id) &&
+                chunk.css.every((cssId) => !changedCssModuleIds.has(cssId)),
+            )
+            .map((chunk) => chunk.id)
+            .sort()
+        : [];
+    logBuildProfileText(
+      "incrementalChunkPublication",
+      incrementalChunkIds
+        ? `admitted:${incrementalChunkIds.length},resources-stable:${verifiedResourceStableChunkIds.length}`
+        : "full-emission",
+    );
+    logBuildProfile("emitPreparation", emitPreparationStart);
+
+    const emitStart = Date.now();
+    // Only PRA may admit reuse of an existing dist publication. Tier-4 remains
+    // the fallback authority for unchanged chunks when no deploy-ready proof
+    // exists; the routing manifest never re-derives plan identity.
+    logBuildProfileDuration("distReuseProbe", 0);
 
     let emittedPlan = plan;
-    let artifacts: Array<{ id: string; files: ReusedChunkFiles }>;
-    let combinedStats: Record<string, any>;
-
-    if (reusedOutputs) {
-      artifacts = reusedOutputs.artifacts;
-      combinedStats = { ...reusedOutputs.stats };
-      logInfo(`[Build] Reused previous dist outputs (${artifacts.length} chunk(s), manifest+stats verified)`);
-      logBuildProfile("emitChunksAndFiles", emitStart);
-    } else {
-      logInfo(`[Build] Emitting chunks via native bundler`);
-      const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
-        casRoot,
-        versionHash: configHash,
-        nativeOptions: {
-          minifier,
-          minify: minifyEnabled,
-          mangle: mangleEnabled,
-          treeshake,
-          scopeHoist,
-            externalModules: nativeExternalModules,
-            federationExposeEntries: federationExposeEntryIds,
-        },
-      });
-      artifacts = baseArtifacts;
-      combinedStats = { ...baseStats };
-      logBuildProfile("emitChunksAndFiles", emitStart);
-    }
+    logInfo(`[Build] Emitting chunks via native bundler`);
+    const { artifacts: baseArtifacts, stats: baseStats } = await emitChunks(absOutDir, plan, moduleOutputs, {
+      casRoot,
+      versionHash: configHash,
+      nativePublicationContext:
+        incrementalChunkIds && sourceMutationPublicationContext
+          ? sourceMutationPublicationContext
+          : undefined,
+      nativeOptions: {
+        minifier,
+        minify: minifyEnabled,
+        mangle: mangleEnabled,
+        treeshake,
+        scopeHoist,
+        externalModules: nativeExternalModules,
+        federationExposeEntries: federationExposeEntryIds,
+        incrementalChunkIds: incrementalChunkIds ?? undefined,
+        incrementalOnly: incrementalChunkIds ? true : undefined,
+      },
+      incrementalBase:
+        incrementalChunkIds && sourceMutationOutputBase
+          ? {
+              ...sourceMutationOutputBase,
+              verifiedResourceStableChunkIds,
+            }
+          : undefined,
+    });
+    let artifacts: Array<{ id: string; files: ReusedChunkFiles }> = baseArtifacts;
+    let combinedStats: Record<string, any> = { ...baseStats };
+    logBuildProfile("emitChunksAndFiles", emitStart);
 
     let federationManifest = buildFederationBuildManifest({
       config,
@@ -5263,7 +7044,7 @@ export async function runBuildCommand(options: BuildOptions = {}) {
         });
       }
     }
-    if (config?.federation) {
+    if (config?.federation && federationGraph) {
       syncFederationGraphNodes(
         federationGraph,
         mergeFederationGraphNodes(
@@ -5276,9 +7057,17 @@ export async function runBuildCommand(options: BuildOptions = {}) {
     const manifestStart = Date.now();
     const outputHashHints = collectOutputHashHints(combinedStats);
     const buildManifestStart = Date.now();
-    const buildManifestInfo = await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
-      federation: federationManifest,
-    });
+    const reusableRoutingManifest =
+      incrementalChunkIds &&
+      sourceMutationOutputBase &&
+      !federationManifest
+        ? sourceMutationOutputBase.routingManifest
+        : null;
+    const buildManifestInfo =
+      reusableRoutingManifest ??
+      await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
+        federation: federationManifest,
+      });
     logBuildProfile("writeBuildManifest", buildManifestStart);
     recordOutputHashHint(
       outputHashHints,
@@ -5306,8 +7095,11 @@ export async function runBuildCommand(options: BuildOptions = {}) {
 
     // Copy publicDir assets BEFORE writing build.stats.json so they are included in the
     // publicAssets section and eligible for precompressBuildOutputs via outputHashHints.
-    const previousPublicAssets = Array.isArray(combinedStats.publicAssets)
-      ? combinedStats.publicAssets.filter(
+    const previousPublicAssetSource = Array.isArray(combinedStats.publicAssets)
+      ? combinedStats.publicAssets
+      : productionReadinessRecord?.proofs.publicAssets.assets;
+    const previousPublicAssets = Array.isArray(previousPublicAssetSource)
+      ? previousPublicAssetSource.filter(
           (asset: any): asset is CopiedAssetEntry =>
             asset &&
             typeof asset === "object" &&
@@ -5443,8 +7235,9 @@ async function runPostBuildCompression(options: {
   const concurrency = resolvePrecompressConcurrency(precompressConfig?.concurrency);
   const emitManifest = precompressConfig?.manifest === false ? false : true;
 
-  // Phase 18C: plug in the Rust-native batch compressor when available.
-  // The compressor is used only for JS chunk files (chunks/**/*.js) on CAS miss.
+  // Compression owns every eligible text output uniformly. The Rust backend
+  // accepts bytes rather than JavaScript syntax, so restricting it to chunk JS
+  // would leave manifests/CSS/HTML on a second, slower codec path.
   type NativeCompressorFn = NonNullable<Parameters<typeof precompressBuildOutputs>[1]["nativeCompressor"]>;
   const nativeCompressBatchFn = native?.compressBatch?.bind(native);
   const nativeCompressor: NativeCompressorFn | undefined = nativeCompressBatchFn
@@ -5475,7 +7268,7 @@ async function runPostBuildCompression(options: {
     compressionState = compressionManifestHash ? "verified" : "missing";
   }
   const elapsed = Date.now() - compressStart;
-  const backendNote = native?.compressBatch ? " [js-chunks=rust]" : "";
+  const backendNote = native?.compressBatch ? " [text=rust]" : "";
   logInfo(
     `[Build][compress]${backendNote} ${report.totals.filesWithSidecars}/${report.totals.filesEligible} files precompressed in ${elapsed}ms (parallel=${report.concurrency}, current=${report.totals.filesAlreadyCurrent}, touched=${report.totals.filesTouched}, cas ${report.totals.casHits} hit/${report.totals.casMisses} miss, copied=${report.totals.sidecarsCopiedFromCas}, compressed=${report.totals.sidecarsCompressed}, br ${formatByteDelta(
       report.totals.brotliOriginalBytes,
@@ -5591,8 +7384,15 @@ async function ensureOptimizedDeps(options: {
    * discovered entries are processed (legacy sequential behaviour).
    */
   excludeEntryPaths?: Set<string>;
+  /**
+   * Internal split fallback may defer generation admission until both optimizer
+   * arms have settled. This controls transaction timing only; DPL remains the
+   * sole authority that can publish the generation.
+   */
+  publishGeneration?: boolean;
 }) {
   const { rootDir, ionifyDir, depsHash, depsRoot, config, resolvedEntries, allowedRoots, excludeEntryPaths } = options;
+  const shouldPublishGeneration = options.publishGeneration !== false;
 
   // ── Bottleneck #3 sentinel fast-path ──────────────────────────────────────
   // depsHash is derived from configHash + lockfile + outputVersion + NODE_ENV +
@@ -5632,8 +7432,20 @@ async function ensureOptimizedDeps(options: {
   // ── T20: Global Tier-5 restore ────────────────────────────────────────────
   // If the global cache has a completed build for this depsHash, restore it to
   // the local depsRoot (hardlinks, ~5ms) and skip the full optimizer (~133ms).
-  if (!skipGlobalRestore && restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION)) {
-    try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
+  // The restored snapshot must pass the same demand-coverage proof as a local
+  // sentinel before it is accepted; otherwise fall through to the repair path.
+  if (
+    !skipGlobalRestore &&
+    restoreDepArtifactsFromGlobalCache(depsHash, depsRoot, DEPS_OPTIMIZER_OUTPUT_VERSION) &&
+    (await verifyRestoredDepsSnapshot({
+      rootDir,
+      depsRoot,
+      sentinelPath,
+      resolvedEntries,
+      allowedRoots,
+      config,
+    }))
+  ) {
     logInfo(`[deps] Restored from global cache (depsHash=${depsHash})`);
     depsMeasurementProfile.cacheMode = "global-cache-restored-cold";
     return;
@@ -5732,7 +7544,19 @@ async function ensureOptimizedDeps(options: {
     }
   }
 
-  if (entryPaths.size === 0) return;
+  if (entryPaths.size === 0) {
+    if (shouldPublishGeneration) {
+      await publishVerifiedDepsGeneration({
+        rootDir,
+        depsRoot,
+        depsHash,
+        resolvedEntries,
+        allowedRoots,
+        config,
+      });
+    }
+    return;
+  }
 
   // T8: Remove entries owned exclusively by the vendor-pack parallel arm so that
   // P1 (batch) and P2 (chunked) write to disjoint artifact file sets. When
@@ -5743,7 +7567,19 @@ async function ensureOptimizedDeps(options: {
     for (const p of excludeEntryPaths) entryPaths.delete(p);
   }
 
-  if (entryPaths.size === 0) return;
+  if (entryPaths.size === 0) {
+    if (shouldPublishGeneration) {
+      await publishVerifiedDepsGeneration({
+        rootDir,
+        depsRoot,
+        depsHash,
+        resolvedEntries,
+        allowedRoots,
+        config,
+      });
+    }
+    return;
+  }
   fs.mkdirSync(depsRoot, { recursive: true });
 
   const dplDemand = await scanDplUsageDemand({
@@ -5776,24 +7612,50 @@ async function ensureOptimizedDeps(options: {
   // Prefer chunked optimization when available (enables shared chunk groups), but avoid chunking the
   // entire dependency set when vendor packs v2 are enabled — pack chunk groups must remain stable.
   if (depsSharedChunksEnabled && !avoidGlobalChunked && native?.optimizeDependenciesChunked) {
+    let optimized = false;
     try {
       native.optimizeDependenciesChunked(entries, ionifyDir);
-      try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
-      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
-      return;
+      optimized = true;
     } catch {
       // fall through to batch/single
+    }
+    if (optimized) {
+      if (shouldPublishGeneration) {
+        await publishVerifiedDepsGeneration({
+          rootDir,
+          depsRoot,
+          depsHash,
+          resolvedEntries,
+          allowedRoots,
+          config,
+          runtimeDemands: dplDemand.runtimeDemands ?? undefined,
+        });
+      }
+      return;
     }
   }
 
   if (native?.optimizeDependenciesBatch) {
+    let optimized = false;
     try {
       native.optimizeDependenciesBatch(entries, ionifyDir);
-      try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
-      writeDepArtifactsToGlobalCache(depsHash, depsRoot);
-      return;
+      optimized = true;
     } catch {
       // fall through to single
+    }
+    if (optimized) {
+      if (shouldPublishGeneration) {
+        await publishVerifiedDepsGeneration({
+          rootDir,
+          depsRoot,
+          depsHash,
+          resolvedEntries,
+          allowedRoots,
+          config,
+          runtimeDemands: dplDemand.runtimeDemands ?? undefined,
+        });
+      }
+      return;
     }
   }
 
@@ -5806,8 +7668,17 @@ async function ensureOptimizedDeps(options: {
       }
     }
   }
-  try { fs.writeFileSync(sentinelPath, String(Date.now())); } catch {}
-  writeDepArtifactsToGlobalCache(depsHash, depsRoot);
+  if (shouldPublishGeneration) {
+    await publishVerifiedDepsGeneration({
+      rootDir,
+      depsRoot,
+      depsHash,
+      resolvedEntries,
+      allowedRoots,
+      config,
+      runtimeDemands: dplDemand.runtimeDemands ?? undefined,
+    });
+  }
 }
 
 function toPosixPath(value: string): string {
@@ -5832,6 +7703,7 @@ function toPosixPath(value: string): string {
 
 const GLOBAL_DEP_CACHE_VERSION = "v1";
 const GLOBAL_CSS_ARTIFACT_CACHE_VERSION = "v1";
+let globalDepSnapshotSequence = 0;
 
 function getGlobalDepCacheDir(depsHash: string): string {
   return path.join(os.homedir(), ".ionify", "global", "dep-artifacts", GLOBAL_DEP_CACHE_VERSION, depsHash);
@@ -5868,13 +7740,14 @@ function restoreCssArtifactFromGlobalCache(
   baseHash: string,
   casRoot: string,
   modules: boolean,
+  currentGraphStamp: string | null,
 ): { restored: boolean; artifactHash: string | null } {
   const globalBaseDir = getGlobalCssBaseDir(configHash, baseHash);
   const globalMetaFile = path.join(globalBaseDir, "meta.json");
   const cssMeta = readJsonFile<CssCasMeta>(globalMetaFile);
   if (
     !cssMeta ||
-    cssMeta.version !== 1 ||
+    cssMeta.version !== CSS_CAS_META_VERSION ||
     cssMeta.baseHash !== baseHash ||
     cssMeta.modules !== modules ||
     typeof cssMeta.artifactHash !== "string" ||
@@ -5883,7 +7756,8 @@ function restoreCssArtifactFromGlobalCache(
     cssMeta.pipelineHash.length === 0 ||
     typeof cssMeta.depsStampHash !== "string" ||
     cssMeta.depsStampHash.length === 0 ||
-    !cssDepProofIsCurrent(cssMeta)
+    !cssDepProofIsCurrent(cssMeta) ||
+    !cssMetaAdmitsCurrentTailwindGraph(cssMeta, currentGraphStamp)
   ) {
     return { restored: false, artifactHash: null };
   }
@@ -5962,81 +7836,185 @@ function writeCssArtifactToGlobalCache(
  * Uses hardlinks for zero-copy performance (falls back to copy on EXDEV).
  * Returns true if restore succeeded.
  */
-function manifestEntryHasPdcC1Facts(entry: any, depsRoot: string, outputVersion: number): boolean {
-  if (!entry || typeof entry !== "object") return false;
-  if (entry.outputVersion !== outputVersion) return false;
-  if (typeof entry.outFile !== "string" || entry.outFile.length === 0) return false;
-  if (typeof entry.entryPath !== "string" || entry.entryPath.length === 0) return false;
-  if (typeof entry.packageName !== "string" || entry.packageName.length === 0) return false;
-  if (typeof entry.packageVersion !== "string" || entry.packageVersion.length === 0) return false;
-  if (typeof entry.packageSubpath !== "string" || entry.packageSubpath.length === 0) return false;
-  if (typeof entry.packageRoot !== "string") return false;
-  if (entry.runtimeFormat !== "esm" && entry.runtimeFormat !== "cjs" && entry.runtimeFormat !== "unknown") return false;
-  if (entry.sideEffects !== "none" && entry.sideEffects !== "present" && entry.sideEffects !== "unknown") return false;
-  if (typeof entry.artifactHash !== "string" || entry.artifactHash.length === 0) return false;
-  if (!validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok) return false;
-  return true;
+function dplSnapshotSatisfiesPublicationContract(depsRoot: string, outputVersion: number): boolean {
+  // DPL owns route selection, dependency identity, topology, artifact closure,
+  // output version, and export ABI. Tier-5 only transports a snapshot after
+  // the native authority has accepted its active immutable publication closure.
+  const publications = readDplSnapshotPublicationFacts(depsRoot, outputVersion);
+  if (publications === null || publications.length === 0) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(depsRoot, "manifest.json"), "utf8"));
+    const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
+    if (entries.length === 0) return false;
+    // These are portable snapshot-shape checks only. TS does not select an
+    // active recipe or recompute any dependency fact; the native closure above
+    // remains the authority for identity, topology, artifacts, and ABI.
+    return entries.every((entry: any) => {
+      if (!entry || typeof entry !== "object") return false;
+      if (entry.outputVersion !== outputVersion) return false;
+      if (typeof entry.outFile !== "string" || entry.outFile.length === 0) return false;
+      if (typeof entry.entryPath !== "string" || entry.entryPath.length === 0) return false;
+      if (typeof entry.packageName !== "string" || entry.packageName.length === 0) return false;
+      if (typeof entry.packageVersion !== "string" || entry.packageVersion.length === 0) return false;
+      if (typeof entry.packageSubpath !== "string" || entry.packageSubpath.length === 0) return false;
+      if (typeof entry.packageRoot !== "string") return false;
+      if (entry.runtimeFormat !== "esm" && entry.runtimeFormat !== "cjs" && entry.runtimeFormat !== "unknown") return false;
+      if (entry.sideEffects !== "none" && entry.sideEffects !== "present" && entry.sideEffects !== "unknown") return false;
+      if (typeof entry.artifactHash !== "string" || entry.artifactHash.length === 0) return false;
+      return validateDepsManifestEntryTopology(entry, depsRoot, outputVersion).ok;
+    });
+  } catch {
+    return false;
+  }
 }
 
-function depsManifestSatisfiesPdcC1Contract(manifestPath: string, depsRoot: string, outputVersion: number): boolean {
+function removeSnapshotMarker(markerPath: string): boolean {
   try {
-    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    const entries = parsed?.entries && typeof parsed.entries === "object" ? Object.values(parsed.entries) : [];
-    if (!entries.length) return false;
-    return entries.every((entry) => manifestEntryHasPdcC1Facts(entry, depsRoot, outputVersion));
+    fs.unlinkSync(markerPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+    return !fs.existsSync(markerPath);
+  }
+}
+
+function replaceSnapshotFileAtomic(src: string, dst: string, copyOnly = false): void {
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  const sequence = globalDepSnapshotSequence++;
+  const tempPath = path.join(
+    path.dirname(dst),
+    `.${path.basename(dst)}.tmp-${process.pid}-${sequence}`,
+  );
+  try {
+    if (copyOnly) {
+      fs.copyFileSync(src, tempPath);
+    } else {
+      try {
+        fs.linkSync(src, tempPath);
+      } catch {
+        fs.copyFileSync(src, tempPath);
+      }
+    }
+    try {
+      fs.renameSync(tempPath, dst);
+    } catch {
+      // Windows cannot atomically replace an existing file. The global marker
+      // is absent while publication is in progress, so remove+rename remains
+      // fail-closed for concurrent readers.
+      if (!removeSnapshotMarker(dst)) throw new Error(`Cannot replace snapshot file: ${dst}`);
+      fs.renameSync(tempPath, dst);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Renamed or already absent.
+    }
+  }
+}
+
+function writeTextMarkerAtomic(markerPath: string, value: string): void {
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+  const sequence = globalDepSnapshotSequence++;
+  const tempPath = path.join(
+    path.dirname(markerPath),
+    `.${path.basename(markerPath)}.tmp-${process.pid}-${sequence}`,
+  );
+  try {
+    fs.writeFileSync(tempPath, value);
+    try {
+      fs.renameSync(tempPath, markerPath);
+    } catch {
+      if (!removeSnapshotMarker(markerPath)) throw new Error(`Cannot replace snapshot marker: ${markerPath}`);
+      fs.renameSync(tempPath, markerPath);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Renamed or already absent.
+    }
+  }
+}
+
+function snapshotEntryIsMutableControl(entry: string): boolean {
+  return entry === ".verified" || entry.endsWith(".json");
+}
+
+export function restoreDepArtifactsSnapshot(
+  globalDir: string,
+  localDepsRoot: string,
+  outputVersion: number,
+): boolean {
+  const globalSentinel = path.join(globalDir, ".verified");
+  if (!fs.existsSync(globalSentinel)) return false;
+  if (!dplSnapshotSatisfiesPublicationContract(globalDir, outputVersion)) {
+    removeSnapshotMarker(globalSentinel);
+    return false;
+  }
+  try {
+    fs.mkdirSync(localDepsRoot, { recursive: true });
+    if (!removeSnapshotMarker(path.join(localDepsRoot, ".verified"))) return false;
+    const entries = fs.readdirSync(globalDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".verified") continue;
+      if (!entry.isFile()) return false;
+      const src = path.join(globalDir, entry.name);
+      const dst = path.join(localDepsRoot, entry.name);
+      replaceSnapshotFileAtomic(src, dst, snapshotEntryIsMutableControl(entry.name));
+    }
+    return true;
   } catch {
+    removeSnapshotMarker(path.join(localDepsRoot, ".verified"));
     return false;
   }
 }
 
 function restoreDepArtifactsFromGlobalCache(depsHash: string, localDepsRoot: string, outputVersion: number): boolean {
-  const globalDir = getGlobalDepCacheDir(depsHash);
-  const globalSentinel = path.join(globalDir, ".verified");
-  if (!fs.existsSync(globalSentinel)) return false;
-  if (!depsManifestSatisfiesPdcC1Contract(path.join(globalDir, "manifest.json"), globalDir, outputVersion)) {
-    try { fs.rmSync(globalDir, { recursive: true, force: true }); } catch {}
-    return false;
-  }
-  try {
-    const entries = fs.readdirSync(globalDir);
-    for (const entry of entries) {
-      const src = path.join(globalDir, entry);
-      const dst = path.join(localDepsRoot, entry);
-      if (fs.existsSync(dst)) continue;
-      try {
-        fs.linkSync(src, dst);           // hardlink — instant, zero-copy
-      } catch {
-        fs.copyFileSync(src, dst);       // fallback: cross-device or unsupported
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
+  return restoreDepArtifactsSnapshot(getGlobalDepCacheDir(depsHash), localDepsRoot, outputVersion);
 }
 
 /**
  * Mirror a completed local depsRoot into the global Tier-5 cache.
  * Called fire-and-forget (errors are non-fatal).
  */
-function writeDepArtifactsToGlobalCache(depsHash: string, localDepsRoot: string): void {
-  try {
-    const globalDir = getGlobalDepCacheDir(depsHash);
-    fs.mkdirSync(globalDir, { recursive: true });
-    const entries = fs.readdirSync(localDepsRoot);
-    for (const entry of entries) {
-      const src = path.join(localDepsRoot, entry);
-      const dst = path.join(globalDir, entry);
-      if (fs.existsSync(dst)) continue;
-      try {
-        fs.linkSync(src, dst);
-      } catch {
-        fs.copyFileSync(src, dst);
-      }
-    }
-  } catch {
-    // Non-fatal: global cache write failure never blocks the build.
+export function publishDepArtifactsSnapshot(
+  localDepsRoot: string,
+  globalDir: string,
+  outputVersion: number,
+): boolean {
+  const localSentinel = path.join(localDepsRoot, ".verified");
+  const globalSentinel = path.join(globalDir, ".verified");
+  if (!fs.existsSync(localSentinel)) return false;
+  if (!dplSnapshotSatisfiesPublicationContract(localDepsRoot, outputVersion)) {
+    return false;
   }
+  try {
+    fs.mkdirSync(globalDir, { recursive: true });
+    // Manifest-last publication: no reader may accept the global directory
+    // while any artifact/control file is being refreshed.
+    if (!removeSnapshotMarker(globalSentinel)) return false;
+    const entries = fs.readdirSync(localDepsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".verified") continue;
+      if (!entry.isFile()) throw new Error(`Unsupported dependency snapshot entry: ${entry.name}`);
+      const src = path.join(localDepsRoot, entry.name);
+      const dst = path.join(globalDir, entry.name);
+      replaceSnapshotFileAtomic(src, dst, snapshotEntryIsMutableControl(entry.name));
+    }
+    if (!dplSnapshotSatisfiesPublicationContract(globalDir, outputVersion)) {
+      return false;
+    }
+    replaceSnapshotFileAtomic(localSentinel, globalSentinel, true);
+    return true;
+  } catch {
+    removeSnapshotMarker(globalSentinel);
+    return false;
+  }
+}
+
+function writeDepArtifactsToGlobalCache(depsHash: string, localDepsRoot: string, outputVersion: number): void {
+  publishDepArtifactsSnapshot(localDepsRoot, getGlobalDepCacheDir(depsHash), outputVersion);
 }
 
 function findPreviousDepsRoot(ionifyDir: string, currentDepsRoot: string): string | null {
@@ -6147,32 +8125,51 @@ type CompressionEntryResult = {
 };
 
 type ReusedChunkFiles = { js: string[]; css: string[]; assets: string[] };
+type PraVerifiedBuildOutputs = {
+  artifacts: Array<{ id: string; files: ReusedChunkFiles }>;
+  stats: Record<string, any>;
+  routingManifest: EmittedOutputInfo;
+};
 
-function normalizePlanChunkForReuse(chunk: BuildPlan["chunks"][number]) {
+/**
+ * Create the build-local Transform/Bundler projection of a Planner-owned
+ * canonical plan. Array payloads are copied so downstream emission cannot
+ * mutate Planner topology through shared references.
+ */
+function createEmissionPlanProjection(plan: BuildPlan): BuildPlan {
   return {
-    id: chunk.id,
-    entry: chunk.entry,
-    shared: chunk.shared,
-    consumers: [...(chunk.consumers ?? [])],
-    modules: chunk.modules.map((mod) => ({
-      id: mod.id,
-      kind: mod.kind,
-      deps: [...(mod.deps ?? [])],
-      dynamicDeps: [...(mod.dynamicDeps ?? [])],
-      dependencyFormat: mod.dependencyFormat ?? undefined,
-      usedExports: mod.usedExports ?? undefined,
-      dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
-      sideEffects: mod.sideEffects ?? undefined,
-      artifactTopology: mod.artifactTopology ?? undefined,
-      artifactHash: mod.hash ?? undefined,
+    entries: [...plan.entries],
+    chunks: plan.chunks.map((chunk) => ({
+      ...chunk,
+      consumers: [...(chunk.consumers ?? [])],
+      css: [...(chunk.css ?? [])],
+      assets: [...(chunk.assets ?? [])],
+      modules: chunk.modules.map((mod) => ({
+        ...mod,
+        deps: [...(mod.deps ?? [])],
+        dynamicDeps: [...(mod.dynamicDeps ?? [])],
+        usedExports: mod.usedExports ? [...mod.usedExports] : mod.usedExports,
+        dependencyAbi: mod.dependencyAbi
+          ? {
+              ...mod.dependencyAbi,
+              names: [...mod.dependencyAbi.names],
+              imports: mod.dependencyAbi.imports.map((item) => ({
+                ...item,
+                names: [...item.names],
+              })),
+            }
+          : mod.dependencyAbi,
+        runtimeLinks: mod.runtimeLinks
+          ? mod.runtimeLinks.map((link) => ({ ...link }))
+          : mod.runtimeLinks,
+      })),
     })),
   };
 }
 
-function tryReusePreviousBuildOutputs(
+function readPraVerifiedBuildOutputs(
   outDir: string,
-  plan: BuildPlan,
-): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+): PraVerifiedBuildOutputs | null {
   const manifestPath = path.join(outDir, "manifest.json");
   const statsPath = path.join(outDir, "build.stats.json");
   let manifestStat: fs.Stats;
@@ -6189,36 +8186,15 @@ function tryReusePreviousBuildOutputs(
     return null;
   }
 
-  if (JSON.stringify(manifest?.entries ?? []) !== JSON.stringify(plan.entries)) return null;
+  if (manifest?.version !== 3) return null;
   const previousChunks: any[] = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
-  if (previousChunks.length !== plan.chunks.length) return null;
+  if (previousChunks.length === 0) return null;
 
-  const currentById = new Map(plan.chunks.map((chunk) => [chunk.id, normalizePlanChunkForReuse(chunk)]));
   const artifacts: Array<{ id: string; files: ReusedChunkFiles }> = [];
   const allFiles = new Set<string>();
 
   for (const previous of previousChunks) {
-    const current = currentById.get(previous?.id);
-    if (!current) return null;
-    const comparablePrevious = {
-      id: previous.id,
-      entry: previous.entry,
-      shared: previous.shared,
-      consumers: previous.consumers ?? [],
-      modules: (previous.modules ?? []).map((mod: any) => ({
-        id: mod.id,
-        kind: mod.kind,
-        deps: mod.deps ?? [],
-        dynamicDeps: mod.dynamicDeps ?? [],
-        dependencyFormat: mod.dependencyFormat ?? undefined,
-        usedExports: mod.usedExports ?? undefined,
-        dependencyAbiHash: mod.dependencyAbiHash ?? undefined,
-        sideEffects: mod.sideEffects ?? undefined,
-        artifactTopology: mod.artifactTopology ?? undefined,
-        artifactHash: mod.artifactHash,
-      })),
-    };
-    if (JSON.stringify(comparablePrevious) !== JSON.stringify(current)) return null;
+    if (!previous || typeof previous.id !== "string") return null;
 
     const files: ReusedChunkFiles = {
       js: Array.isArray(previous.files?.js) ? previous.files.js : [],
@@ -6248,14 +8224,21 @@ function tryReusePreviousBuildOutputs(
     }
   }
 
-  return { artifacts, stats };
+  return {
+    artifacts,
+    stats,
+    routingManifest: {
+      file: "manifest.json",
+      bytes: manifestStat.size,
+      hash: getCacheKey(fs.readFileSync(manifestPath)),
+    },
+  };
 }
 
 function tryVerifyProductionReadinessOutputReuse(
   outDir: string,
-  plan: BuildPlan,
   record: ProductionReadinessRecord,
-): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+): PraVerifiedBuildOutputs | null {
   if (record.state !== "verified") return null;
   const distProof = record.proofs.dist;
   if (!distProof.manifestHash || !distProof.buildStatsHash) return null;
@@ -6274,13 +8257,13 @@ function tryVerifyProductionReadinessOutputReuse(
     if (indexHtmlHash !== distProof.indexHtmlHash) return null;
   }
 
-  return tryReusePreviousBuildOutputs(outDir, plan);
+  return readPraVerifiedBuildOutputs(outDir);
 }
 
 function tryVerifyProductionReadinessMaterializedOutputs(
   outDir: string,
   record: ProductionReadinessRecord,
-): { artifacts: Array<{ id: string; files: ReusedChunkFiles }>; stats: Record<string, any> } | null {
+): PraVerifiedBuildOutputs | null {
   if (record.state !== "verified") return null;
   const distProof = record.proofs.dist;
   if (!distProof.manifestHash || !distProof.buildStatsHash) return null;
@@ -6303,6 +8286,7 @@ function tryVerifyProductionReadinessMaterializedOutputs(
   } catch {
     return null;
   }
+  if (manifest?.version !== 3) return null;
 
   if (distProof.assetsManifestHash) {
     const assetsManifestHash = hashFileIfExists(path.join(outDir, "manifest.assets.json"));
@@ -6315,6 +8299,13 @@ function tryVerifyProductionReadinessMaterializedOutputs(
 
   const artifacts: Array<{ id: string; files: ReusedChunkFiles }> = [];
   const allFiles = new Set<string>();
+  const explicitOutputHashes = new Map<string, string>();
+  if (distProof.assetsManifestHash) {
+    explicitOutputHashes.set("manifest.assets.json", distProof.assetsManifestHash);
+  }
+  if (distProof.indexHtmlHash) {
+    explicitOutputHashes.set("index.html", distProof.indexHtmlHash);
+  }
   const chunks: any[] = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
   for (const chunk of chunks) {
     if (!chunk || typeof chunk.id !== "string") return null;
@@ -6329,7 +8320,11 @@ function tryVerifyProductionReadinessMaterializedOutputs(
     }
   }
   for (const asset of record.proofs.publicAssets.assets) {
-    if (typeof asset.file === "string" && asset.file.length > 0) allFiles.add(toPosixPath(asset.file));
+    if (typeof asset.file === "string" && asset.file.length > 0) {
+      const file = toPosixPath(asset.file);
+      allFiles.add(file);
+      explicitOutputHashes.set(file, asset.hash);
+    }
   }
   if (distProof.assetsManifestHash) allFiles.add("manifest.assets.json");
   if (distProof.indexHtmlHash) allFiles.add("index.html");
@@ -6337,8 +8332,12 @@ function tryVerifyProductionReadinessMaterializedOutputs(
   for (const rel of allFiles) {
     const meta = stats?.[rel];
     let expectedBytes: number | null = null;
+    let expectedHash: string | null = explicitOutputHashes.get(rel) ?? null;
     if (meta && typeof meta === "object" && typeof meta.bytes === "number" && Number.isFinite(meta.bytes)) {
       expectedBytes = meta.bytes;
+      if (!expectedHash && typeof meta.hash === "string" && meta.hash.length > 0) {
+        expectedHash = meta.hash;
+      }
     } else {
       const publicAsset = record.proofs.publicAssets.assets.find((asset) => toPosixPath(asset.file) === rel);
       if (publicAsset) expectedBytes = publicAsset.bytes;
@@ -6347,13 +8346,23 @@ function tryVerifyProductionReadinessMaterializedOutputs(
       const fileStat = fs.statSync(path.join(outDir, rel));
       if (!fileStat.isFile()) return null;
       if (expectedBytes !== null && fileStat.size !== expectedBytes) return null;
-      if (fileStat.mtimeMs > statsStat.mtimeMs + 1) return null;
+      if (fileStat.mtimeMs > statsStat.mtimeMs + 1) {
+        if (!expectedHash || hashFileIfExists(path.join(outDir, rel)) !== expectedHash) return null;
+      }
     } catch {
       return null;
     }
   }
 
-  return { artifacts, stats };
+  return {
+    artifacts,
+    stats,
+    routingManifest: {
+      file: "manifest.json",
+      bytes: manifestStat.size,
+      hash: distProof.manifestHash,
+    },
+  };
 }
 
 function collectOutputHashHints(stats: Record<string, any>): Map<string, string> {
@@ -6492,18 +8501,6 @@ function shouldPrecompressPath(filePath: string): boolean {
   );
 }
 
-/**
- * Phase 18C: returns `true` for JS chunk files emitted by the native bundler
- * (relative path starts with `chunks/` and has a `.js` / `.mjs` extension).
- * These files are candidates for the Rust-native compression backend.
- */
-function isJsChunkFile(relPosixPath: string): boolean {
-  return (
-    relPosixPath.startsWith("chunks/") &&
-    (relPosixPath.endsWith(".js") || relPosixPath.endsWith(".mjs"))
-  );
-}
-
 export async function precompressBuildOutputs(
   outDir: string,
   opts: {
@@ -6515,9 +8512,8 @@ export async function precompressBuildOutputs(
   concurrency: number;
     outputHashHints: Map<string, string>;
     /**
-     * Phase 18C: optional Rust-native compressor for JS chunk files.
-     * When provided, JS chunk CAS misses are compressed via Rust (Rayon-parallel Brotli+gzip)
-     * instead of Node.js zlib, eliminating the Node.js compression bottleneck for JS chunks.
+     * Optional Rust-native compressor for every text-like output admitted by
+     * `shouldPrecompressPath`.
      * Contract: same codec settings (br:quality / gz:level) and size-gating apply.
      */
     nativeCompressor?: (
@@ -6732,13 +8728,13 @@ export async function precompressBuildOutputs(
 
       const loadedBody = needsBrCompression || needsGzCompression ? await ensureBody() : null;
 
-      // Phase 18C: for JS chunk files use the Rust-native compressor on CAS miss (no Node zlib).
-      // For all other files (CSS, HTML, JSON, …) fall back to the Node.js zlib path.
+      // The native compressor is format-agnostic: all admitted files are byte
+      // streams under the same compression CAS identity.
       let br: Buffer | null = null;
       let gz: Buffer | null = null;
 
       if ((needsBrCompression || needsGzCompression) && loadedBody) {
-        const useNative = !!opts.nativeCompressor && isJsChunkFile(rel);
+        const useNative = !!opts.nativeCompressor;
         if (useNative && opts.nativeCompressor) {
           const results = opts.nativeCompressor([
             { id: rel, bytes: loadedBody, brotliQuality: opts.brotliQuality, gzipLevel: opts.gzipLevel },
@@ -6990,6 +8986,7 @@ async function emitIndexHtml(options: {
   envValues: Record<string, string>;
   envPrefix: string | string[];
 }): Promise<EmittedOutputInfo | null> {
+  const profileStart = isBuildProfileEnabled() ? process.hrtime.bigint() : 0n;
   const { rootDir, outDir, entries, hostEntryIds, plan, artifacts, envValues, envPrefix } = options;
 
   const htmlInput = path.join(rootDir, "index.html");
@@ -6998,9 +8995,15 @@ async function emitIndexHtml(options: {
   }
 
   const hostEntryIdSet = new Set(hostEntryIds);
-  const entryChunks = plan.chunks.filter(
-    (chunk) => chunk.entry && chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer)),
-  );
+  const isHostEntryChunk = (chunk: (typeof plan.chunks)[number]): boolean =>
+    chunk.entry && chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer));
+  const isHostSharedChunk = (chunk: (typeof plan.chunks)[number]): boolean =>
+    !chunk.entry &&
+    chunk.shared &&
+    Array.isArray(chunk.consumers) &&
+    chunk.consumers.some((consumer) => hostEntryIdSet.has(consumer));
+  const entryChunks = plan.chunks.filter(isHostEntryChunk);
+  const eagerCssChunks = plan.chunks.filter((chunk) => isHostEntryChunk(chunk) || isHostSharedChunk(chunk));
 
   const entryScripts = entryChunks
     .map((chunk) => {
@@ -7009,12 +9012,13 @@ async function emitIndexHtml(options: {
     })
     .filter((x): x is string => typeof x === "string" && x.length > 0);
 
-  const entryCss = entryChunks
+  const entryCss = eagerCssChunks
     .flatMap((chunk) => {
       const artifact = artifacts.find((a) => a.id === chunk.id);
       return pickPrimaryEntryCss(artifact?.files?.css);
     })
     .filter((x): x is string => typeof x === "string" && x.length > 0);
+  const profilePlanEnd = profileStart ? process.hrtime.bigint() : 0n;
 
   if (!entryScripts.length) {
     return null;
@@ -7031,6 +9035,7 @@ async function emitIndexHtml(options: {
   }
 
   let html = await fs.promises.readFile(htmlInput, "utf8");
+  const profileReadEnd = profileStart ? process.hrtime.bigint() : 0n;
 
   // Vite-compatible `%ENV%` substitution — identical to the dev server's serve-time
   // pass (shared `substituteEnvPlaceholders`), so a `<script src="%VITE_X%">` in
@@ -7071,7 +9076,10 @@ async function emitIndexHtml(options: {
       return pickPrimaryJs(artifact?.files?.js);
     })
     .filter((x): x is string => typeof x === "string" && x.length > 0)
-    .sort((a, b) => a.localeCompare(b));
+    // Artifact paths are canonical POSIX/ASCII identities. Code-unit ordering
+    // is deterministic across hosts and avoids locale initialization in the
+    // changed-file publication path.
+    .sort();
 
   if (sharedPreloads.length) {
     const unique: string[] = [];
@@ -7121,10 +9129,18 @@ async function emitIndexHtml(options: {
       html = `${html}\n${injected}\n`;
     }
   }
+  const profileRenderEnd = profileStart ? process.hrtime.bigint() : 0n;
 
   await fs.promises.mkdir(outDir, { recursive: true });
   const outputFile = path.join(outDir, "index.html");
   await writeTextFileIfChanged(outputFile, html);
+  if (profileStart) {
+    const profileWriteEnd = process.hrtime.bigint();
+    const toMs = (value: bigint): string => (Number(value) / 1_000_000).toFixed(2);
+    console.error(
+      `[BuildProfile][indexHtml] total_ms=${toMs(profileWriteEnd - profileStart)} plan_ms=${toMs(profilePlanEnd - profileStart)} read_ms=${toMs(profileReadEnd - profilePlanEnd)} render_ms=${toMs(profileRenderEnd - profileReadEnd)} write_ms=${toMs(profileWriteEnd - profileRenderEnd)}`,
+    );
+  }
   return {
     file: "index.html",
     bytes: Buffer.byteLength(html, "utf8"),

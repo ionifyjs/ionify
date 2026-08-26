@@ -23,7 +23,7 @@ import { getCacheKey } from "@core/cache";
 import type { IonifyCSSConfig } from "@core/types/config";
 import {
   buildCssDemandAnalysis,
-  getCssDemandGraphSourceFiles,
+  computeCssDemandGraphContentStamp,
   type CssDemandAnalysis,
 } from "./css-demand";
 
@@ -34,6 +34,24 @@ export type CssDependency = {
   kind: "dependency";
 };
 
+/**
+ * Completeness authority for the Tailwind content set (Completeness law, R1).
+ *
+ * Tailwind utility generation is a correctness decision (authority A8): a
+ * missing utility renders the document wrong. The content set that drives it
+ * MUST come from a source whose completeness is proven for the document.
+ *
+ * - `config-globs` — the caller CANNOT prove content completeness (e.g. dev's
+ *   live, request-shaped graph, which is only warm-complete). Fail closed to
+ *   Tailwind's own config `content` globs — the original, Node-complete
+ *   authority. The graph is an optimization input, not a correctness authority.
+ * - `graph` — the caller HAS a reachability-complete file set (the build plan).
+ *   Narrowing to it is a proven-safe optimization.
+ */
+export type TailwindContentAuthority =
+  | { mode: "config-globs" }
+  | { mode: "graph"; files: string[] };
+
 interface CompileCssOptions {
   code: string;
   filePath: string;
@@ -41,6 +59,12 @@ interface CompileCssOptions {
   modules?: boolean;
   modulesOptions?: IonifyCSSConfig["modules"];
   preprocessorOptions?: IonifyCSSConfig["preprocessorOptions"];
+  /**
+   * R1: explicit completeness authority for Tailwind content. Absent → fail
+   * closed to config globs (completeness unproven). Dev passes `config-globs`;
+   * a caller with a proven-complete plan passes `graph`.
+   */
+  tailwindContentAuthority?: TailwindContentAuthority;
 }
 
 type PreprocessorLang = "scss" | "sass" | "less" | "styl";
@@ -162,6 +186,13 @@ export type CssTailwindGraphContentProfile = {
   plugins: number;
   configPath: string | null;
   fallbackReason: string | null;
+  /**
+   * CSSA-owned aggregated content stamp over the graph-admitted Tailwind
+   * content set. Tailwind graph narrowing makes CSS output depend on these
+   * sources; freshness is proven by this one stamp, never by admitting the
+   * source files as per-artifact CSS dependencies.
+   */
+  stamp?: string | null;
 };
 
 export type CompileCssProfile = {
@@ -461,6 +492,7 @@ function createTailwindGraphContentPipeline(
   rootDir: string,
   css: string,
   plugins: AcceptedPlugin[],
+  contentAuthority: TailwindContentAuthority,
 ): { plugins: AcceptedPlugin[]; profile: CssTailwindGraphContentProfile } {
   const started = Date.now();
   const tailwindIndexes = plugins
@@ -481,7 +513,15 @@ function createTailwindGraphContentPipeline(
     };
   }
 
-  const graphFiles = getCssDemandGraphSourceFiles(rootDir);
+  // R1 — Completeness law (authority A8). Narrow the Tailwind content set ONLY
+  // when the caller proved completeness (`graph` mode with the reachability-
+  // complete plan files). Otherwise fail closed to Tailwind's config globs (the
+  // original plugins, unchanged): dev cannot prove its live graph is complete
+  // for the first document, so it must NOT narrow (Finding #1).
+  if (contentAuthority.mode === "config-globs") {
+    return { plugins, profile: emptyTailwindGraphContentProfile("content-authority-config-globs") };
+  }
+  const graphFiles = contentAuthority.files;
   if (graphFiles.length === 0) return { plugins, profile: emptyTailwindGraphContentProfile("no-graph-source-files") };
 
   const configPath = findTailwindConfigPath(rootDir);
@@ -677,12 +717,18 @@ function expandDirectoryDependency(dir: string, glob: string | null): string[] {
   return deps;
 }
 
-function collectPostcssMessageDeps(messages: readonly unknown[], rootDir: string, filePath: string): string[] {
+function collectPostcssMessageDeps(
+  messages: readonly unknown[],
+  rootDir: string,
+  filePath: string,
+  tailwindGraphFiles: ReadonlySet<string> | null = null,
+): string[] {
   const deps: string[] = [];
   const seen = new Set<string>();
-  const add = (depPath: string | null) => {
+  const add = (depPath: string | null, plugin: unknown) => {
     if (!depPath) return;
-    const normalized = depPath.replace(/\\+/g, "/");
+    const normalized = path.resolve(depPath).replace(/\\+/g, "/");
+    if (plugin === "tailwindcss" && tailwindGraphFiles?.has(normalized)) return;
     if (seen.has(normalized)) return;
     seen.add(normalized);
     deps.push(depPath);
@@ -695,14 +741,14 @@ function collectPostcssMessageDeps(messages: readonly unknown[], rootDir: string
       (msg.type === "dependency" || msg.type === "build-dependency" || msg.type === "missing-dependency") &&
       typeof msg.file === "string"
     ) {
-      add(normalizeDependencyPath(msg.file, rootDir, filePath));
+      add(normalizeDependencyPath(msg.file, rootDir, filePath), msg.plugin);
       continue;
     }
     if (msg.type === "dir-dependency" && typeof msg.dir === "string") {
       const baseDir = normalizeDependencyPath(msg.dir, rootDir, filePath);
       if (!baseDir) continue;
       for (const dep of expandDirectoryDependency(baseDir, typeof msg.glob === "string" ? msg.glob : null)) {
-        add(dep);
+        add(dep, msg.plugin);
       }
       continue;
     }
@@ -712,10 +758,10 @@ function collectPostcssMessageDeps(messages: readonly unknown[], rootDir: string
       if (!dep) continue;
       if (fs.existsSync(dep) && fs.statSync(dep).isDirectory()) {
         for (const child of expandDirectoryDependency(dep, typeof msg.glob === "string" ? msg.glob : null)) {
-          add(child);
+          add(child, msg.plugin);
         }
       } else {
-        add(dep);
+        add(dep, msg.plugin);
       }
     }
   }
@@ -882,6 +928,8 @@ export async function compileCss({
   modules = false,
   modulesOptions,
   preprocessorOptions,
+  // R1: fail closed. Absent authority = completeness unproven → config globs.
+  tailwindContentAuthority = { mode: "config-globs" },
 }: CompileCssOptions): Promise<CompileCssResult> {
   const totalStart = cssProfileNow();
   let preprocessorMs = 0;
@@ -918,7 +966,12 @@ export async function compileCss({
   postcssConfigWaitMs += configProfile.waitMs;
   postcssConfigCacheHit = configProfile.cacheHit;
   const tailwindStart = cssProfileNow();
-  const tailwindGraphContent = createTailwindGraphContentPipeline(rootDir, sourceCss, plugins);
+  const tailwindGraphContent = createTailwindGraphContentPipeline(
+    rootDir,
+    sourceCss,
+    plugins,
+    tailwindContentAuthority,
+  );
   tailwindGraphContentMs += cssProfileNow() - tailwindStart;
   const pipeline = [...tailwindGraphContent.plugins];
   let tokens: CssTokens | undefined;
@@ -970,7 +1023,11 @@ export async function compileCss({
   for (const dep of preprocessorDeps) addDep(dep);
 
   // PostCSS plugin dependency messages (postcss-import, Tailwind content globs, etc.).
-  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, filePath)) {
+  const tailwindGraphFiles =
+    tailwindGraphContent.profile.enabled && tailwindContentAuthority.mode === "graph"
+      ? new Set(tailwindContentAuthority.files.map((item) => path.resolve(item).replace(/\\+/g, "/")))
+      : null;
+  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, filePath, tailwindGraphFiles)) {
     addDep(dep);
   }
   dependencyCollectionMs += cssProfileNow() - depStart;
@@ -1017,6 +1074,12 @@ export async function compileCss({
       .map(([label, ms]) => [label, Number(ms.toFixed(2))]),
   );
   const pluginClassifications = classifyPostcssPluginTimings(postcssPluginTimings);
+
+  // Attach the CSSA graph-content stamp when narrowing shaped this output.
+  tailwindGraphContent.profile.stamp =
+    tailwindGraphContent.profile.enabled && tailwindGraphContent.profile.files > 0
+      ? computeCssDemandGraphContentStamp(rootDir)?.stamp ?? null
+      : null;
 
   const compiled: CompileCssResult = {
     css: result.css,

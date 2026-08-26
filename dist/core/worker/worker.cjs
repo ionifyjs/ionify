@@ -332,12 +332,13 @@ function expandDirectoryDependency(dir, glob) {
   return deps;
 }
 
-function collectPostcssMessageDeps(messages, rootDir, filePath) {
+function collectPostcssMessageDeps(messages, rootDir, filePath, tailwindGraphFiles = null) {
   const deps = [];
   const seen = new Set();
-  const add = (depPath) => {
+  const add = (depPath, plugin) => {
     if (!depPath) return;
-    const normalized = depPath.replace(/\\+/g, "/");
+    const normalized = path.resolve(depPath).replace(/\\+/g, "/");
+    if (plugin === "tailwindcss" && tailwindGraphFiles && tailwindGraphFiles.has(normalized)) return;
     if (seen.has(normalized)) return;
     seen.add(normalized);
     deps.push(depPath);
@@ -350,14 +351,14 @@ function collectPostcssMessageDeps(messages, rootDir, filePath) {
       (msg.type === "dependency" || msg.type === "build-dependency" || msg.type === "missing-dependency") &&
       typeof msg.file === "string"
     ) {
-      add(normalizeDependencyPath(msg.file, rootDir, filePath));
+      add(normalizeDependencyPath(msg.file, rootDir, filePath), msg.plugin);
       continue;
     }
     if (msg.type === "dir-dependency" && typeof msg.dir === "string") {
       const baseDir = normalizeDependencyPath(msg.dir, rootDir, filePath);
       if (!baseDir) continue;
       for (const dep of expandDirectoryDependency(baseDir, typeof msg.glob === "string" ? msg.glob : null)) {
-        add(dep);
+        add(dep, msg.plugin);
       }
       continue;
     }
@@ -367,10 +368,10 @@ function collectPostcssMessageDeps(messages, rootDir, filePath) {
       if (!dep) continue;
       if (fs.existsSync(dep) && fs.statSync(dep).isDirectory()) {
         for (const child of expandDirectoryDependency(dep, typeof msg.glob === "string" ? msg.glob : null)) {
-          add(child);
+          add(child, msg.plugin);
         }
       } else {
-        add(dep);
+        add(dep, msg.plugin);
       }
     }
   }
@@ -811,6 +812,15 @@ async function runCssTransform(job) {
 
   if (configFile) addDep(configFile);
   for (const d of preprocessorDeps) addDep(d);
+  // Tailwind graph-content freshness is proven by the CSSA-owned aggregated
+  // stamp (computed once in the main process and passed on the job), never by
+  // admitting graph source files as per-artifact CSS dependencies.
+  tailwindGraphContent.profile.stamp =
+    tailwindGraphContent.profile.enabled && tailwindGraphContent.profile.files > 0
+      ? (typeof job.cssDemandGraphStamp === "string" && job.cssDemandGraphStamp.length > 0
+          ? job.cssDemandGraphStamp
+          : null)
+      : null;
 
   let tokens = null;
   if (isModule) {
@@ -838,7 +848,14 @@ async function runCssTransform(job) {
 
   // PostCSS plugin dependency messages (postcss-import, Tailwind content globs, etc.).
   const depStart = nowMs();
-  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, job.filePath)) {
+  const tailwindGraphFiles = tailwindGraphContent.profile.enabled
+    ? new Set(
+        (Array.isArray(job.cssDemandGraphFiles) ? job.cssDemandGraphFiles : []).map((item) =>
+          path.resolve(item).replace(/\\+/g, "/")
+        )
+      )
+    : null;
+  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, job.filePath, tailwindGraphFiles)) {
     addDep(dep);
   }
   dependencyCollectionMs += nowMs() - depStart;
