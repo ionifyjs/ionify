@@ -30,7 +30,7 @@ Ionify has been pressure-tested on a large React codebase containing more than:
 - **15,000 React components**
 - **25,000 dependencies**
 
-On that workload, a conventional build path took approximately:
+On that workload, Vite 8 Maximum optimization build path took approximately:
 
 **2.7 seconds**
 
