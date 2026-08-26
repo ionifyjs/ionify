@@ -2,49 +2,83 @@
 
 **The build engine that doesn't start over.**
 
-One Graph. One CAS. One Authority.
+**One Graph. One CAS. One Authority.**
+
+Most build tools are designed to execute a build quickly.
+
+Ionify is designed around a different question:
+
+> **Why should the next build rediscover work the previous build already verified?**
+
+Ionify is a Rust-powered build engine that preserves verified build knowledge
+across runs.
+
+It maintains a persistent project graph, stores reusable work in a
+content-addressable store, and gives build facts a single authority shared
+across development and production.
+
+The result is not just caching.
+
+It is a build system designed to **remember**.
 
 ---
 
-Every layer of computing learned to stop redoing work it had already done —
-CPUs got caches, databases got indexes, compilers got incremental compilation.
+## Tested at scale
 
-The build never learned it.
+Ionify has been pressure-tested on a large React codebase containing more than:
 
-Every run rediscovers dependencies, re-transforms modules, and reconstructs
-work the previous run already knew.
+- **15,000 React components**
+- **25,000 dependencies**
 
-Ionify is a build engine that **remembers**.
+On that workload, a conventional build path took approximately:
 
-It maintains a persistent dependency graph, a content-addressable store, and
-one published authority over dependency identity and artifacts — shared across
-dev and production so the build does not have to rediscover the same truth
-every time it runs.
+**2.7 seconds**
 
-But remembering work is only half the problem.
+Once Ionify had established and verified the project's build knowledge,
+the same no-change build completed in approximately:
 
-Ionify also has to prove that remembered work is still valid before it can be
-reused.
+**30 milliseconds**
 
-That is the idea behind **Build Authority**:
+**That result begins with the second build.**
 
-> Produce build knowledge once. Give every fact one owner. Reuse it only while
-> the evidence that made it valid still holds.
+The first build still has real work to do: discover the project, establish
+identities, transform source, construct the graph, and verify what can safely
+be reused.
+
+Ionify does not pretend that work disappears.
+
+It is designed so that verified work does not need to be rediscovered on every
+build afterward.
+
+> These numbers come from a private pressure-test project. Project identity and
+> source cannot be disclosed, but the workload characteristics and measurements
+> are reported here without identifying the codebase.
+
+---
 
 ## Quick Start
 
+Create a new project:
+
+```bash
+pnpm create ionify
+````
+
+Or add Ionify to an existing project:
+
 ```bash
 pnpm add -D @ionify/ionify
-````
+```
 
 Create `ionify.config.ts`:
 
 ```typescript
-export default {
+import { defineConfig } from "@ionify/ionify";
+
+export default defineConfig({
   entry: "/src/main.ts",
   outDir: "dist",
-  productionArtifactPublishing: "auto",
-};
+});
 ```
 
 Then:
@@ -54,376 +88,191 @@ pnpm ionify dev
 pnpm ionify build
 ```
 
-Or start a new project:
+---
 
-```bash
-pnpm create ionify
-```
+## Why Ionify exists
 
-## Tested at scale
+Traditional build pipelines are remarkably good at doing work quickly.
 
-We pressure-test Ionify on a large React application containing more than:
+But they still tend to reconstruct knowledge that was already established:
 
-* **15,000 React components**
-* **25,000 dependencies**
+* rediscover the dependency graph;
+* reconsider unchanged modules;
+* reconstruct dependency state;
+* reproduce artifacts that were already verified;
+* allow development and production paths to establish overlapping answers.
 
-On the same machine, with both tools configured for their maximum practical
-production optimization:
+Ionify treats that as an architectural problem.
 
-| Build state                |     Vite 8 |        Ionify |
-| -------------------------- | ---------: | ------------: |
-| True cold production build | **~2.7 s** |  **~11–12 s** |
-| Warm no-edit build         |          — | **~35–40 ms** |
-| One-file mutation          |          — |   **~100 ms** |
+Instead of asking only:
 
-The warm number begins with the **second build**.
+> How fast can we rebuild this?
 
-The first Ionify build still has to discover the graph, resolve dependency
-boundaries, transform source, establish artifact identities, and publish the
-proofs that make later reuse trustworthy.
+Ionify also asks:
 
-After that, Ionify does not simply ask whether cached bytes exist.
+> What has actually changed — and which previously verified facts are still valid?
 
-It asks whether previously produced work is still **admissible** under the
-current source, configuration, dependency, and artifact identities.
+That distinction is the foundation of the engine.
 
-If nothing changed, the build can collapse to tens of milliseconds.
+---
 
-If one source file changed, Ionify can reconstruct the affected work instead
-of treating the entire project as new.
+## One Graph
 
-Today, Vite is substantially faster on the first build.
+Ionify maintains a persistent dependency graph rather than treating every run
+as a new world.
 
-That matters. Cold build performance is part of the real developer and CI
-experience, and it remains an active optimization target for Ionify.
+When the project changes, the engine can reason about the affected part of the
+graph instead of assuming the entire project has become unknown again.
 
-But Ionify is also optimizing another dimension:
+---
 
-**the lifetime cost of a project after verified build knowledge exists.**
+## One CAS
 
-The goal is to make the second build fundamentally different from the first.
+Verified artifacts are stored in a version-isolated content-addressable store.
 
-## What Ionify Is
+Unchanged content can therefore refer back to already-established work instead
+of reproducing it simply because another build command was started.
 
-Ionify is not just another faster bundler.
+The cache is not treated as the source of truth.
 
-It is a persistent build engine built around three ideas:
+Reuse is admitted only when the engine can establish that the artifact belongs
+to the current build state.
 
-### One Graph
+---
 
-A long-lived dependency graph survives across builds and process restarts.
+## One Authority
 
-The engine does not need to rediscover the entire application merely because
-another build started.
+A build fact should have one owner.
 
-### One CAS
+Ionify is built around that principle.
 
-Build artifacts are stored by identity in a version-isolated,
-content-addressable store:
+Dependency identity, transformed source, reusable artifacts, and production
+state should not acquire different meanings simply because the developer moved
+from `dev` to `build`.
 
-```text
-.ionify/cas/versionHash/moduleHash/...
-```
+Development and production consume the same underlying build knowledge.
 
-An artifact can be reused when its identity and supporting proof still match
-the current build state.
+This is the idea behind **Build Authority**:
 
-A CAS hit alone is not authority to reuse work.
+> **derive a build fact once, verify it, give it one owner, and reuse it wherever
+> that fact remains valid.**
 
-### One Authority
+---
 
-Every build fact should have one canonical owner.
+## Unified development and production
 
-Dependency identity, topology, publication, transforms, and other derived
-facts should not be independently rediscovered by competing parts of the
-pipeline.
+Ionify does not treat the development server and production build as unrelated
+systems that happen to understand the same source files.
 
-Dev and production consume the same authorities rather than constructing
-different answers to the same question.
+They share the same underlying authorities and persistent build knowledge.
 
-This removes an entire class of lifecycle drift:
+That reduces an important source of build-system drift:
 
-* works in dev, breaks in production
-* duplicate dependency ownership
-* phantom exports
-* unnecessary reconstruction
-* cached work reused under the wrong assumptions
+**the development pipeline believing one thing while the production pipeline
+believes another.**
 
-The goal is not to detect those inconsistencies later.
+---
 
-It is to make them structurally difficult to create.
+## Transformation
 
-## Architecture
+Ionify uses **OXC as its primary transformation engine**.
 
-At a high level:
+SWC is available automatically as a compatibility fallback for source that
+requires it.
 
-```text
-                         Source
-                           │
-                           ▼
-                    Resolve / Classify
-                           │
-                           ▼
-                Canonical Transform
-                  OXC primary
-                  SWC fallback
-                           │
-                           ▼
-                        Define
-                           │
-                           ▼
-                  Final source bytes
-                           │
-                           ▼
-                      Parser(B)
-                           │
-                    ┌──────┴──────┐
-                    ▼             ▼
-               Resolver facts   Import facts
-                    │             │
-                    └──────┬──────┘
-                           ▼
-                 Persistent Graph
-                           │
-                           ▼
-             Dependency Publication Layer
-                           │
-                           ▼
-                Verified artifact identity
-                           │
-                           ▼
-             Content-Addressable Store
-                           │
-                   ┌───────┴───────┐
-                   ▼               ▼
-              Dev lifecycle   Production build
-```
+Both remain behind the same canonical transformation authority, so fallback
+does not create a second competing build pipeline.
 
-The important property is not the exact sequence of implementation stages.
+---
 
-It is ownership:
+## What happens after the first build?
 
-**one canonical derivation, one owner for each fact, and verified reuse across
-lifecycles.**
+The first build establishes knowledge.
 
-### Hybrid Transformation Engine
+Later builds can reuse it.
 
-Ionify uses a hybrid transformation strategy by design.
+For a no-change build, Ionify can return to an already verified state without
+re-transforming the application simply because another build command was run.
 
-**OXC is the primary transform and import-analysis engine.**
+For a source mutation, the goal is different:
 
-**SWC is selected automatically as a compatibility fallback when the canonical
-transform requires it.**
+**do the work affected by that mutation — not project-sized work by default.**
 
-They are not separate build authorities.
+And once that change has been incorporated, the next no-change build should
+return to quiescence.
 
-Both operate underneath the same canonical Transform authority, so choosing a
-fallback does not create a second independent interpretation of the module.
+That lifecycle is more important to Ionify than optimizing a single isolated
+benchmark.
 
-The application does not need to choose between OXC and SWC.
+---
 
-### Canonical derivation
+## Environment modes
 
-For changed source, Ionify's production lifecycle derives the canonical source
-state once.
-
-Conceptually:
+Ionify supports:
 
 ```text
-source
-  ↓
-canonical Transform
-  ↓
-A
-  ↓
-Define
-  ↓
-B
-  ↓
-Parser(B)
-  ↓
-Resolver + dependency demand
-  ↓
-published build knowledge
+.env
+.env.local
+.env.<mode>
+.env.<mode>.local
 ```
 
-Parser(B) observes the final post-Define bytes rather than reconstructing a
-separate interpretation of the source.
-
-Verified transform artifacts can then be admitted by later stages instead of
-being transformed again.
-
-### Dependency Publication Layer
-
-Dependencies are not treated as an anonymous tree that every lifecycle is free
-to rediscover.
-
-Ionify's Dependency Publication Layer (DPL) owns the published dependency
-identity and topology consumed by the rest of the build.
-
-That gives dev and production one answer to questions such as:
-
-```text
-Which dependency is this?
-
-What does it expose?
-
-Which artifact represents it?
-
-Which published dependency boundary does this module belong to?
-```
-
-The dependency tree remains provenance.
-
-The published dependency artifact is the build contract.
-
-### Verified reuse
-
-Ionify distinguishes between:
-
-```text
-artifact exists
-```
-
-and:
-
-```text
-artifact is admissible for this build
-```
-
-A cached artifact is reused only when its identity and supporting proof match
-the current build state.
-
-When proof is missing or invalid, Ionify reconstructs the affected work rather
-than silently trusting stale bytes.
-
-This is the difference between caching work and remembering **verified** work.
-
-### Storage
-
-* **Graph persistence** — native Rust implementation
-* **Transformed outputs** — version-isolated CAS
-* **Dependency artifacts** — published through DPL
-* **Artifact admission** — proof-backed rather than existence-backed
-* **Automatic invalidation** — identity/configuration-aware
-
-### Unified Dev + Production
-
-Development and production consume the same resolver semantics, dependency
-authority, transform contracts, and persistent build knowledge.
-
-They may perform different work for their lifecycle, but they do not get
-independent authority to redefine the same facts.
-
-That distinction is central to Ionify:
-
-**shared authority does not require identical execution.**
-
-## Environment Modes
-
-Ionify loads `.env`, `.env.local`, `.env.<mode>`, and `.env.<mode>.local`.
-
-Use `--mode` to select the application mode while keeping production build
-semantics:
+Select a mode independently of the build command:
 
 ```bash
 pnpm ionify dev --mode staging
 pnpm ionify build --mode staging
 ```
 
-Config functions receive the selected mode and loaded environment values:
+Configuration can consume the selected mode and environment:
 
 ```typescript
 import { defineConfig } from "@ionify/ionify";
 
 export default defineConfig(({ mode, env }) => ({
-  cloud: {
-    apiUrl: env.IONIFY_CLOUD_API_URL,
-    namespace: mode,
-  },
+  entry: "/src/main.ts",
+  outDir: "dist",
+  productionArtifactPublishing: "auto",
 }));
 ```
 
-## Project Status
+---
 
-| Capability                                      | Status         |
-| ----------------------------------------------- | -------------- |
-| Persistent Graph                                | ✅ Stable       |
-| Content Addressable Storage                     | ✅ Stable       |
-| Native Dependency Resolver                      | ✅ Stable       |
-| Unified Dev + Build Authority                   | ✅ Stable       |
-| Dependency Publication Layer (DPL)              | ✅ Stable       |
-| One Dependency Authority (ODA)                  | ✅ Stable       |
-| Production Artifact Publishing (PAP)            | ✅ Stable       |
-| One CSS Authority (CSSA)                        | ✅ Stable       |
-| Canonical Transform / Define / Parser lifecycle | ✅ Stable       |
-| Proof-backed Transform admission                | ✅ Stable       |
-| Owner-scoped mutation reconstruction            | ✅ Stable       |
-| Federation Foundation                           | ✅ Stable       |
-| Workspace Engine                                | ✅ Stable       |
-| Ionify Analyze                                  | ✅ Stable       |
-| Cloud CAS                                       | 🚧 In Progress |
+## What Ionify is not
 
-## Current build behavior
+Ionify is not trying to be another thin wrapper around a faster transformer.
 
-The current production lifecycle has been validated against four projects,
-including a large React pressure test.
+OXC, SWC, Rust, caching, and incremental work all matter.
 
-The architecture currently enforces:
+But none of them is the thesis.
 
-* one canonical Transform / Define / Parser observation for changed source
-* zero duplicate app-source Transform work on the validated true-cold path
-* verified TransformArtifactProof admission
-* DPL-owned dependency publication
-* affected-owner reconstruction for source mutation
-* zero derivation on the following no-edit build
-* shared build authorities across lifecycle reuse
+The thesis is:
 
-These are architectural invariants, not benchmark targets.
+> **A build system should not repeatedly rediscover facts it has already
+> established and can still prove valid.**
 
-## What's next
+That is the problem Ionify is built to explore.
 
-Cold build performance is now one of the major remaining optimization targets.
+---
 
-Current profiling shows that the first build still pays substantial cost in
-dependency processing, canonical derivation/materialization, bundling, and
-post-build compression.
+## Build Authority
 
-Those costs will be optimized without weakening the authority model that makes
-warm reuse possible.
+Ionify is also the reference implementation behind ongoing work on
+**Build Authority** — a model for reasoning about ownership, identity, reuse,
+and lifecycle consistency inside build systems.
 
-Another upcoming area is **invalidation explainability**.
+The implementation is evolving, but the central principles are simple:
 
-When Ionify decides that previously verified work can no longer be reused, the
-engine should be able to explain why:
+**One Graph. One CAS. One Authority.**
 
-```text
-module invalidated
-    because source identity changed
-
-artifact rejected
-    because configuration identity changed
-
-dependency contract rebuilt
-    because dependency topology changed
-```
-
-The goal is for invalidation to become inspectable rather than mysterious:
-not only **what rebuilt**, but **which declared input or authority fact caused
-that decision**.
-
-This also creates a path toward detecting build rules that depend on inputs
-outside their declared authority — for example environment state, time, or
-external data — rather than allowing an apparently valid warm hit to hide an
-undeclared dependency.
+---
 
 ## Links
 
 Website: [https://ionify.cloud](https://ionify.cloud)
+
 GitHub: [https://github.com/ionifyjs/ionify](https://github.com/ionifyjs/ionify)
+
 Issues: [https://github.com/ionifyjs/ionify/issues](https://github.com/ionifyjs/ionify/issues)
+
 Contact: [khaledsalem@ionify.cloud](mailto:khaledsalem@ionify.cloud)
-
-## License
-
-MIT © Khaled Salem
