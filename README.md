@@ -70,6 +70,13 @@ Or add Ionify to an existing project:
 pnpm add -D @ionify/ionify
 ```
 
+Ionify `0.1.36` uses OS/CPU-gated native packages. The release-candidate matrix
+covers macOS on Apple silicon (`darwin-arm64`) and Intel (`darwin-x64`); a target
+is listed as supported only after its native build, clean install, import, dev,
+and production-build jobs are green. Other targets fail immediately with the
+detected platform and architecture instead of continuing with a misleading
+dependency-store error.
+
 Create `ionify.config.ts`:
 
 ```typescript

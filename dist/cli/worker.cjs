@@ -56,11 +56,25 @@ function parseMode() {
 }
 
 function resolveNativeBinding() {
-  // Minimal loader to avoid importing TS helpers in worker context.
-  const cwd = process.cwd();
-  const candidates = [];
+  // Keep this CJS worker selector in lockstep with src/native/native-loader.ts.
+  // Selection is exact; it never probes a binary built for another target.
+  const packageByTarget = {
+    "darwin-arm64": "@ionify/ionify-darwin-arm64",
+    "darwin-x64": "@ionify/ionify-darwin-x64",
+  };
+  const target = `${process.platform}-${process.arch}`;
+  const packageName = packageByTarget[target];
+  if (!packageName) {
+    const error = new Error([
+      `[Ionify] Unsupported native platform: ${target}.`,
+      `Supported platforms: ${Object.keys(packageByTarget).join(", ")}.`,
+      "Ionify did not attempt to load a binary for another platform.",
+    ].join("\n"));
+    error.name = "IonifyNativeBindingError";
+    error.code = "IONIFY_UNSUPPORTED_NATIVE_PLATFORM";
+    throw error;
+  }
 
-  // 1) Installed package / linked workspace: resolve relative to this file's location.
   const findPackageRoot = (startDir) => {
     let dir = startDir;
     for (let i = 0; i < 8; i++) {
@@ -78,28 +92,57 @@ function resolveNativeBinding() {
   };
 
   const packageRoot = findPackageRoot(__dirname);
+  let privateBinding = null;
   if (packageRoot) {
-    candidates.push(path.join(packageRoot, "native", "ionify_core.node"));
-    candidates.push(path.join(packageRoot, "dist", "ionify_core.node"));
-    candidates.push(path.join(packageRoot, "ionify_core.node"));
-  }
-
-  // 2) Development layouts (when running from repo root).
-  candidates.push(path.join(cwd, "native", "ionify_core.node"));
-  candidates.push(path.join(cwd, "target", "release", "ionify_core.node"));
-  candidates.push(path.join(cwd, "target", "debug", "ionify_core.node"));
-
-  for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate)) {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        return require(candidate);
+      const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+      if (packageJson.name === "ionify" && packageJson.private === true) {
+        const candidate = path.join(packageRoot, "native", "ionify_core.node");
+        if (fs.statSync(candidate).isFile()) privateBinding = candidate;
       }
     } catch {
-      // ignore and try next
+      // A public installation has no private source-checkout fallback.
     }
   }
-  return null;
+
+  try {
+    return require(packageName);
+  } catch (selectedError) {
+    const selectedMissing = selectedError?.code === "MODULE_NOT_FOUND"
+      && String(selectedError?.message ?? selectedError).includes(packageName);
+    if (privateBinding && selectedMissing) {
+      try {
+        return require(privateBinding);
+      } catch (privateError) {
+        const error = new Error([
+          `[Ionify] Failed to load the native binding for ${target}.`,
+          `Selected package: ${privateBinding}`,
+          `Original Node error: ${privateError?.name ?? "Error"}: ${privateError?.message ?? privateError}`,
+        ].join("\n"));
+        error.name = "IonifyNativeBindingError";
+        error.code = "IONIFY_NATIVE_DLOPEN_FAILED";
+        error.cause = privateError;
+        throw error;
+      }
+    }
+
+    const guidance = selectedMissing
+      ? [
+        "The platform package was not installed. Optional dependencies may have been omitted or the install may be incomplete.",
+        "Reinstall @ionify/ionify without --omit=optional / --no-optional.",
+      ]
+      : ["The selected package exists, but Node could not load its native addon."];
+    const error = new Error([
+      `[Ionify] Failed to load the native binding for ${target}.`,
+      `Selected package: ${packageName}`,
+      ...guidance,
+      `Original Node error: ${selectedError?.name ?? "Error"}: ${selectedError?.message ?? selectedError}`,
+    ].join("\n"));
+    error.name = "IonifyNativeBindingError";
+    error.code = selectedMissing ? "IONIFY_NATIVE_PACKAGE_MISSING" : "IONIFY_NATIVE_DLOPEN_FAILED";
+    error.cause = selectedError;
+    throw error;
+  }
 }
 
 const native = resolveNativeBinding();

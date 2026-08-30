@@ -1,10 +1,7 @@
-import fs from "fs";
-import path from "path";
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
 import type { BuildPlan } from "../types/plan";
 import type { IonModule } from "../core/ir";
 import { computeVersionHash, computeCanonicalVersionInputs } from "../core/version";
+import { loadNativeBinding } from "./native-loader";
 
 export interface NativeGraphNode {
   id: string;
@@ -659,87 +656,7 @@ export interface NativeBinding {
   depsOptimizerTopologyProfileReset?(): void;
 }
 
-function resolveCandidates(): string[] {
-  const cwd = process.cwd();
-  const releaseDir = path.resolve(cwd, "target", "release");
-  const debugDir = path.resolve(cwd, "target", "debug");
-  const nativeDir = path.resolve(cwd, "native");
-  
-  // Also check relative to this module's location (for installed packages).
-  // NOTE: use fileURLToPath for correct path decoding on all platforms.
-  const modulePath = fileURLToPath(import.meta.url);
-  const moduleDir = path.dirname(modulePath);
-
-  const findPackageRoot = (startDir: string): string | null => {
-    let dir = startDir;
-    for (let i = 0; i < 6; i++) {
-      const pkgPath = path.join(dir, "package.json");
-      try {
-        if (fs.existsSync(pkgPath) && fs.statSync(pkgPath).isFile()) {
-          return dir;
-        }
-      } catch {
-        // ignore
-      }
-      const parent = path.dirname(dir);
-      if (!parent || parent === dir) break;
-      dir = parent;
-    }
-    return null;
-  };
-
-  const packageRoot = findPackageRoot(moduleDir);
-  const packageNativeDir = packageRoot ? path.join(packageRoot, "native") : null;
-  const packageDistDir = packageRoot ? path.join(packageRoot, "dist") : null;
-
-  const platformFile = process.platform === "win32"
-    ? "ionify_core.dll"
-    : process.platform === "darwin"
-      ? "libionify_core.dylib"
-      : "libionify_core.so";
-
-  const candidates = [
-    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
-    path.join(moduleDir, "ionify_core.node"),
-    // Alternative installed layouts (fallback):
-    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
-    ...(packageNativeDir ? [path.join(packageNativeDir, "ionify_core.node")] : []),
-    ...(packageDistDir ? [path.join(packageDistDir, "ionify_core.node")] : []),
-    ...(packageRoot ? [path.join(packageRoot, "ionify_core.node")] : []),
-    // Development locations
-    path.join(nativeDir, "ionify_core.node"),
-    path.join(releaseDir, "ionify_core.node"),
-    path.join(releaseDir, platformFile),
-    path.join(debugDir, "ionify_core.node"),
-    path.join(debugDir, platformFile),
-  ];
-
-  return candidates.filter((candidate) => {
-    try {
-      return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
-    } catch {
-      return false;
-    }
-  });
-}
-
-let nativeBinding: NativeBinding | null = null;
-
-(() => {
-  const require = createRequire(import.meta.url);
-  for (const candidate of resolveCandidates()) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require(candidate) as NativeBinding;
-      if (mod) {
-        nativeBinding = mod;
-        break;
-      }
-    } catch {
-      // try next candidate
-    }
-  }
-})();
+const nativeBinding: NativeBinding | null = loadNativeBinding<NativeBinding>();
 
 export const native = nativeBinding;
 

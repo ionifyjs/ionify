@@ -1,9 +1,11 @@
 # Node & build artifacts
 node_modules/
 dist/
+!dist/
+!dist/**
 .cargo/
 target/
-native/
+/native/
 .env
 npm-debug.log*
 yarn-debug.log*

@@ -209,57 +209,131 @@ var init_version = __esm({
   }
 });
 
-// src/native/index.ts
-function resolveCandidates() {
-  const cwd = process.cwd();
-  const releaseDir = import_path.default.resolve(cwd, "target", "release");
-  const debugDir = import_path.default.resolve(cwd, "target", "debug");
-  const nativeDir = import_path.default.resolve(cwd, "native");
-  const modulePath = (0, import_url.fileURLToPath)(importMetaUrl);
-  const moduleDir = import_path.default.dirname(modulePath);
-  const findPackageRoot2 = (startDir) => {
-    let dir = startDir;
-    for (let i = 0; i < 6; i++) {
-      const pkgPath = import_path.default.join(dir, "package.json");
-      try {
-        if (import_fs.default.existsSync(pkgPath) && import_fs.default.statSync(pkgPath).isFile()) {
-          return dir;
-        }
-      } catch {
-      }
-      const parent = import_path.default.dirname(dir);
-      if (!parent || parent === dir) break;
-      dir = parent;
-    }
-    return null;
-  };
-  const packageRoot = findPackageRoot2(moduleDir);
-  const packageNativeDir = packageRoot ? import_path.default.join(packageRoot, "native") : null;
-  const packageDistDir = packageRoot ? import_path.default.join(packageRoot, "dist") : null;
-  const platformFile = process.platform === "win32" ? "ionify_core.dll" : process.platform === "darwin" ? "libionify_core.dylib" : "libionify_core.so";
-  const candidates = [
-    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
-    import_path.default.join(moduleDir, "ionify_core.node"),
-    // Alternative installed layouts (fallback):
-    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
-    ...packageNativeDir ? [import_path.default.join(packageNativeDir, "ionify_core.node")] : [],
-    ...packageDistDir ? [import_path.default.join(packageDistDir, "ionify_core.node")] : [],
-    ...packageRoot ? [import_path.default.join(packageRoot, "ionify_core.node")] : [],
-    // Development locations
-    import_path.default.join(nativeDir, "ionify_core.node"),
-    import_path.default.join(releaseDir, "ionify_core.node"),
-    import_path.default.join(releaseDir, platformFile),
-    import_path.default.join(debugDir, "ionify_core.node"),
-    import_path.default.join(debugDir, platformFile)
-  ];
-  return candidates.filter((candidate) => {
-    try {
-      return import_fs.default.existsSync(candidate) && import_fs.default.statSync(candidate).isFile();
-    } catch {
-      return false;
-    }
-  });
+// src/native/native-loader.ts
+function targetKey(platform, arch) {
+  return `${platform}-${arch}`;
 }
+function describeOriginalError(error) {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+function errorCode(error) {
+  return error && typeof error === "object" && "code" in error ? String(error.code ?? "") : void 0;
+}
+function makeError(message, code, cause) {
+  const error = new Error(message);
+  error.name = "IonifyNativeBindingError";
+  error.code = code;
+  if (cause !== void 0) error.cause = cause;
+  return error;
+}
+function selectNativePackage(platform, arch) {
+  const key = targetKey(platform, arch);
+  const selected = NATIVE_PACKAGE_BY_TARGET[key];
+  if (selected) return selected;
+  throw makeError(
+    [
+      `[Ionify] Unsupported native platform: ${key}.`,
+      `Supported platforms: ${Object.keys(NATIVE_PACKAGE_BY_TARGET).join(", ")}.`,
+      "Ionify did not attempt to load a binary for another platform."
+    ].join("\n"),
+    "IONIFY_UNSUPPORTED_NATIVE_PLATFORM"
+  );
+}
+function findPackageRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const packagePath = import_path.default.join(dir, "package.json");
+    try {
+      if (import_fs.default.statSync(packagePath).isFile()) return dir;
+    } catch {
+    }
+    const parent = import_path.default.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+function privateCheckoutBinding(moduleUrl) {
+  const packageRoot = findPackageRoot(import_path.default.dirname((0, import_url.fileURLToPath)(moduleUrl)));
+  if (!packageRoot) return null;
+  try {
+    const packageJson = JSON.parse(
+      import_fs.default.readFileSync(import_path.default.join(packageRoot, "package.json"), "utf8")
+    );
+    if (packageJson.name !== "ionify" || packageJson.private !== true) return null;
+  } catch {
+    return null;
+  }
+  const candidate = import_path.default.join(packageRoot, "native", "ionify_core.node");
+  try {
+    return import_fs.default.statSync(candidate).isFile() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+function selectedPackageIsMissing(error, packageName) {
+  return errorCode(error) === "MODULE_NOT_FOUND" && describeOriginalError(error).includes(packageName);
+}
+function loadFailure(platform, arch, packageName, error) {
+  const key = targetKey(platform, arch);
+  const missing = selectedPackageIsMissing(error, packageName);
+  const guidance = missing ? [
+    "The platform package was not installed. Optional dependencies may have been omitted or the install may be incomplete.",
+    "Reinstall the main package without --omit=optional / --no-optional:",
+    "  npm install @ionify/ionify",
+    "  pnpm add @ionify/ionify"
+  ] : [
+    "The selected package exists, but Node could not load its native addon.",
+    "Check that the package was not copied from a different OS/CPU and that the downloaded binary is intact."
+  ];
+  return makeError(
+    [
+      `[Ionify] Failed to load the native binding for ${key}.`,
+      `Selected package: ${packageName}`,
+      ...guidance,
+      `Original Node error: ${describeOriginalError(error)}`
+    ].join("\n"),
+    missing ? "IONIFY_NATIVE_PACKAGE_MISSING" : "IONIFY_NATIVE_DLOPEN_FAILED",
+    error
+  );
+}
+function loadNativeBinding(options = {}) {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const packageName = selectNativePackage(platform, arch);
+  const requireFn = options.requireFn ?? (0, import_module.createRequire)(options.moduleUrl ?? importMetaUrl);
+  try {
+    return requireFn(packageName);
+  } catch (selectedError) {
+    const checkoutPath = options.privateCheckoutBindingPath === void 0 ? privateCheckoutBinding(options.moduleUrl ?? importMetaUrl) : options.privateCheckoutBindingPath;
+    if (checkoutPath && selectedPackageIsMissing(selectedError, packageName)) {
+      try {
+        return requireFn(checkoutPath);
+      } catch (checkoutError) {
+        throw loadFailure(platform, arch, checkoutPath, checkoutError);
+      }
+    }
+    throw loadFailure(platform, arch, packageName, selectedError);
+  }
+}
+var import_fs, import_path, import_module, import_url, NATIVE_PACKAGE_BY_TARGET;
+var init_native_loader = __esm({
+  "src/native/native-loader.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_fs = __toESM(require("fs"), 1);
+    import_path = __toESM(require("path"), 1);
+    import_module = require("module");
+    import_url = require("url");
+    NATIVE_PACKAGE_BY_TARGET = Object.freeze({
+      "darwin-arm64": "@ionify/ionify-darwin-arm64",
+      "darwin-x64": "@ionify/ionify-darwin-x64"
+    });
+  }
+});
+
+// src/native/index.ts
 function getDepsOptimizerOutputVersion() {
   return nativeBinding?.depsOptimizerOutputVersion?.() ?? 0;
 }
@@ -368,30 +442,14 @@ function tryBundleNodeModule(filePath, code) {
   }
   return null;
 }
-var import_fs, import_path, import_module, import_url, nativeBinding, native;
+var nativeBinding, native;
 var init_native = __esm({
   "src/native/index.ts"() {
     "use strict";
     init_cjs_shims();
-    import_fs = __toESM(require("fs"), 1);
-    import_path = __toESM(require("path"), 1);
-    import_module = require("module");
-    import_url = require("url");
     init_version();
-    nativeBinding = null;
-    (() => {
-      const require3 = (0, import_module.createRequire)(importMetaUrl);
-      for (const candidate of resolveCandidates()) {
-        try {
-          const mod = require3(candidate);
-          if (mod) {
-            nativeBinding = mod;
-            break;
-          }
-        } catch {
-        }
-      }
-    })();
+    init_native_loader();
+    nativeBinding = loadNativeBinding();
     native = nativeBinding;
   }
 });
@@ -3528,7 +3586,7 @@ function isCoreSingletonDepFileName(fileName) {
   return normalized.startsWith("react@") || normalized.startsWith("react-dom@") || normalized.startsWith("scheduler@") || normalized.startsWith("react-refresh@");
 }
 function computeSubpathFromEntryPath(entryPath) {
-  const packageRoot = findPackageRoot(entryPath);
+  const packageRoot = findPackageRoot2(entryPath);
   if (!packageRoot) {
     if (process.env.DEBUG_DEPS) {
       console.log(`[computeSubpathFromEntryPath] No package root for: ${entryPath}`);
@@ -3552,7 +3610,7 @@ function computeSubpathFromEntryPath(entryPath) {
   }
   return rel || "";
 }
-function findPackageRoot(entryPath) {
+function findPackageRoot2(entryPath) {
   let currentDir = import_path14.default.dirname(entryPath);
   let previousDir = entryPath;
   while (currentDir && currentDir !== previousDir) {
