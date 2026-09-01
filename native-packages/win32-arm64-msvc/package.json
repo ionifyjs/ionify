@@ -1,0 +1,14 @@
+{
+  "name": "@ionify/ionify-win32-arm64-msvc",
+  "version": "0.1.36",
+  "description": "Ionify native binding for Windows ARM64 (MSVC)",
+  "license": "MIT",
+  "main": "./ionify_core.node",
+  "scripts": {
+    "prepack": "node -e \"if(!require('fs').existsSync('ionify_core.node')){console.error('Missing ionify_core.node');process.exit(1)}\""
+  },
+  "files": ["ionify_core.node", "README.md", "LICENSE"],
+  "os": ["win32"],
+  "cpu": ["arm64"],
+  "engines": { "node": ">=18.0.0" }
+}

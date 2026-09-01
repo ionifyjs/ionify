@@ -1,0 +1,15 @@
+{
+  "name": "@ionify/ionify-linux-x64-gnu",
+  "version": "0.1.36",
+  "description": "Ionify native binding for Linux x64 (glibc)",
+  "license": "MIT",
+  "main": "./ionify_core.node",
+  "scripts": {
+    "prepack": "node -e \"if(!require('fs').existsSync('ionify_core.node')){console.error('Missing ionify_core.node');process.exit(1)}\""
+  },
+  "files": ["ionify_core.node", "README.md", "LICENSE"],
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "engines": { "node": ">=18.0.0" }
+}

@@ -1,20 +1,19 @@
-import fs from "fs";
-import path from "path";
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
 import type { BuildPlan } from "../types/plan";
 import type { IonModule } from "../core/ir";
 import { computeVersionHash, computeCanonicalVersionInputs } from "../core/version";
+import { loadNativeBinding } from "./native-loader";
 
 export interface NativeGraphNode {
   id: string;
   hash: string | null;
   deps: string[];
   dynamicDeps: string[];
+  runtimeLinks?: Array<{ specifier: string; targetId: string; isDynamic: boolean }>;
   kind: string;
   config_hash?: string | null;
   origin?: "app" | "dep";
   format?: "esm" | "cjs";
+  runtimeDemandHash?: string | null;
 }
 
 export interface NativeGraphRecordBatchNode {
@@ -22,8 +21,10 @@ export interface NativeGraphRecordBatchNode {
   hash: string | null;
   deps: string[];
   dynamicDeps?: string[];
+  runtimeLinks?: Array<{ specifier: string; targetId: string; isDynamic: boolean }>;
   kind?: string;
   configHash?: string | null;
+  runtimeDemandHash?: string | null;
 }
 
 export interface NativeBuildChunksTreeshakeOptions {
@@ -50,7 +51,175 @@ export interface NativeBuildChunksOptions {
   federationExposeEntries?: string[];
   virtualModuleIds?: string[];
   virtualModuleSources?: string[];
+  incrementalChunkIds?: string[];
+  incrementalOnly?: boolean;
+  /** Opaque consume-once context issued by native Planner. */
+  plannerPublicationContext?: number;
 }
+
+export type NativeRuntimeDemandFact = {
+  importerPath: string;
+  specifier: string;
+  usedExports: string[];
+  hasNamespace: boolean;
+  hasExportStar: boolean;
+  isDynamic: boolean;
+};
+
+/**
+ * C2: Parser-owned runtime demand observed in emitted bytes B. Distinct from
+ * NativeRuntimeDemandFact — no `importerPath` (that is caller context / a graph
+ * edge-framing, not a parse fact).
+ */
+export type NativeEmittedRuntimeDemand = {
+  specifier: string;
+  usedExports: string[];
+  hasNamespace: boolean;
+  hasExportStar: boolean;
+  isDynamic: boolean;
+};
+
+/** C2: Parser-owned runtime syntax facts derived from already-final emitted bytes B. */
+export type NativeEmittedRuntimeFacts = {
+  staticSpecifiers: string[];
+  dynamicSpecifiers: string[];
+  demands: NativeEmittedRuntimeDemand[];
+};
+
+/**
+ * C3-a: the canonical derivation node output — final emitted bytes B, the guard-3
+ * source map (present only when Define left the bytes unchanged), and the Parser(B)
+ * runtime facts. Composition of the three frozen authorities (Transform → Define →
+ * Parser); no graph/DPL/CAS/materialization.
+ */
+export type NativeCanonicalObservation = {
+  code: string;
+  map?: string | null;
+  staticSpecifiers: string[];
+  dynamicSpecifiers: string[];
+  demands: NativeEmittedRuntimeDemand[];
+};
+
+/**
+ * C3-b: the minimum generation transport to publish BOTH frozen Transform material
+ * projections without a second Transform — base (sourceHash, codeA, mapA) + define
+ * (codeB) — plus Parser(B) facts. `configHash`/`defineHash` are supplied by the
+ * wave/build context, not duplicated here.
+ */
+export type NativeCanonicalGeneration = {
+  sourceHash: string;
+  codeA: string;
+  mapA?: string | null;
+  codeB: string;
+  staticSpecifiers: string[];
+  dynamicSpecifiers: string[];
+  demands: NativeEmittedRuntimeDemand[];
+};
+
+/** C3-b: one per-module generation emitted by a scheduler wave. */
+export type NativeWaveGeneration = {
+  id: string;
+  filePath: string;
+  sourceHash: string;
+  codeA: string;
+  mapA?: string | null;
+  codeB: string;
+  staticSpecifiers: string[];
+  dynamicSpecifiers: string[];
+  /**
+   * Complete Parser(B) demand facts (importerPath = filePath). Graph consumes the
+   * specifier-edge projection; DPL consumes this demand projection — one observation.
+   */
+  demands: NativeEmittedRuntimeDemand[];
+  /**
+   * A per-wave PROJECTION of the authoritative resolver's classification (not a new
+   * authority fact, never persisted): specifiers classified as non-app dependency
+   * targets eligible for DPL admission (do not resolve to an app-source path).
+   * Alias/relative → local app edges, excluded. DPL demand = `demands[]` filtered to
+   * these; no bare-syntax inference; the scheduler never owns DPL authority.
+   */
+  depSpecifiers: string[];
+  /**
+   * C3-c Phase A: resolved canonical target paths of this module's dependency boundaries
+   * (Resolver Fact A). Phase C joins these with DPL depStops identity to build dep-leaf
+   * records — no re-resolution. Empty for a bare dep not yet resolvable (absent until DPL).
+   */
+  depBoundaryTargets: string[];
+  /**
+   * C3-c: the exact Graph node record for this module (Parser(B) observation), built
+   * natively by the same classification the legacy `parse_graph_build_file` uses. TS
+   * records it via `graphRecordBatch`; Graph admits. Empty recipe (B==A) ⇒ identical
+   * to the legacy record.
+   */
+  record: NativeGraphRecordBatchNode;
+  /**
+   * Dep-leaf stop nodes (`kind:"dep"`) reached on this module's frontier — the exact
+   * `depStops` artifact identity (id + pre-built DPL artifact hash). Dedup by id across
+   * the wave before recording; each record for a given id is identical.
+   */
+  depLeafRecords: NativeGraphRecordBatchNode[];
+};
+
+export type NativeRuntimeMutationResult = {
+  id: string;
+  filePath?: string;
+  file_path?: string;
+  sourceHash?: string;
+  source_hash?: string;
+  code: string;
+  map?: string | null;
+  staticSpecifiers?: string[];
+  static_specifiers?: string[];
+  dynamicSpecifiers?: string[];
+  dynamic_specifiers?: string[];
+  runtimeDemands?: NativeRuntimeDemandFact[];
+  runtime_demands?: NativeRuntimeDemandFact[];
+  error?: string | null;
+};
+
+export type NativeDplPublicationEdge = {
+  importerPath: string;
+  specifier: string;
+  entryPath: string;
+  outFile: string;
+  artifactPath: string;
+  artifactHash: string;
+  isDynamic: boolean;
+};
+
+export type NativeGraphStagedMutationRecord = {
+  id: string;
+  filePath: string;
+  previousHash: string;
+  hash: string;
+  deps: string[];
+  dynamicDeps: string[];
+  kind: string;
+  preserveEdges: boolean;
+  runtimeDemandHash?: string | null;
+};
+
+export type NativePlannerCanonicalRefreshResult = {
+  plan: BuildPlan;
+  graphRecords: NativeGraphStagedMutationRecord[];
+  affectedChunkIds: string[];
+};
+
+export type NativePlannerCanonicalModuleUpdate = {
+  id: string;
+  hash?: string | null;
+  runtimeDemandHash?: string | null;
+  runtimeMutationVerified: boolean;
+  runtimeLinks?: BuildPlan["chunks"][number]["modules"][number]["runtimeLinks"];
+};
+
+export type NativePlannerCanonicalRefreshDeltaResult = {
+  moduleUpdates: NativePlannerCanonicalModuleUpdate[];
+  graphRecords: NativeGraphStagedMutationRecord[];
+  affectedChunkIds: string[];
+  /** Opaque consume-once native Planner publication context. */
+  publicationContext: number;
+};
 
 export interface NativeBinding {
   parseImports(source: string, filename?: string): string[];
@@ -59,6 +228,26 @@ export interface NativeBinding {
   parserCacheStats?(): { hits: number; misses: number };
   cacheHash?(data: Buffer | Uint8Array): string;
   cacheHashPath?(path: string): string;
+  /**
+   * Canonical Define code-rewrite (the single authoritative implementation).
+   * `replacements` are pre-sorted longest-first and value-formatted by the TS
+   * config layer; `importMetaEnvLiteral` is the `import.meta.env` object literal
+   * when defined. Returns the rewritten code.
+   */
+  applyDefineReplacements?(
+    code: string,
+    replacements: Array<{ key: string; replacement: string; isMember: boolean }>,
+    importMetaEnvLiteral?: string,
+  ): string;
+  depsStoreHash(
+    configHash: string,
+    lockfileContents: Buffer | null,
+    nodeEnv: string | null,
+    sourcemap: boolean,
+    bundleEsm: boolean,
+    sharedChunks: string,
+    outputVersion: number,
+  ): string;
   parseAndTransformOxc?(source: string, options: { filename: string; jsx?: boolean; typescript?: boolean; react_refresh?: boolean }): { code: string; map?: string | null };
   parseAndTransformSwc?(source: string, options: { filename: string; jsx?: boolean; typescript?: boolean; react_refresh?: boolean }): { code: string; map?: string | null };
   nativeTransformBatch?(
@@ -74,6 +263,59 @@ export interface NativeBinding {
     kind?: "js" | "css" | "asset" | string;
     error?: string | null;
   }>;
+  nativeRuntimeMutationBatch?(
+    jobs: Array<{ id: string; filePath: string; ext: string; code: string }>,
+    parserMode?: "oxc" | "swc" | "hybrid" | string | null,
+  ): NativeRuntimeMutationResult[];
+  /**
+   * C2: authoritative Parser primitive over ALREADY-FINAL emitted bytes B.
+   * `bytes` is the sole observed material; `parserContext.filePath` is context
+   * only (dialect + error label), never re-read. No Transform / Define / graph
+   * mutation / resolution / CAS / DPL. Fails closed on invalid syntax.
+   */
+  parseEmittedRuntimeFacts?(
+    bytes: string,
+    parserContext?: { filePath?: string | null } | null,
+  ): NativeEmittedRuntimeFacts;
+  /**
+   * C3-a: canonical derivation node — source → Transform(A) → Define(B) →
+   * Parser(B). `replacements` is the C1 Define recipe (`[]` = no Define);
+   * `parserMode` defaults to env / hybrid. Returns final bytes B, the guard-3 map,
+   * and Parser(B) facts. Composition only — no graph/DPL/CAS/materialization.
+   */
+  canonicalModuleObservation?(
+    source: string,
+    filePath: string,
+    parserMode?: string | null,
+    replacements?: Array<{ key: string; replacement: string; isMember: boolean }>,
+    importMetaEnvLiteral?: string | null,
+  ): NativeCanonicalObservation;
+  /** C3-b: full generation transport (A/mapA + B + Parser(B) + sourceHash) for one module. */
+  canonicalGeneration?(
+    source: string,
+    filePath: string,
+    parserMode?: string | null,
+    replacements?: Array<{ key: string; replacement: string; isMember: boolean }>,
+    importMetaEnvLiteral?: string | null,
+  ): NativeCanonicalGeneration;
+  /**
+   * C3-b: native per-wave canonical closure scheduler (dormant; C3-c activates).
+   * Orchestration only — not a Graph/DPL authority. Bounded outstanding = 1 wave:
+   * `nextWave` requires the prior wave `ack`-ed.
+   */
+  canonicalSchedulerBegin?(
+    entryPaths: string[],
+    workspaceRoot: string,
+    externalSpecifiers?: string[] | null,
+    replacements?: Array<{ key: string; replacement: string; isMember: boolean }>,
+    importMetaEnvLiteral?: string | null,
+    parserMode?: string | null,
+    /** C3-c passes production's pre-built dep-leaf boundary; empty in C3-b. */
+    depStops?: Array<{ entryPath: string; artifactHash: string }> | null,
+  ): number;
+  canonicalSchedulerNextWave?(id: number): NativeWaveGeneration[];
+  canonicalSchedulerAck?(id: number, ok: boolean): void;
+  canonicalSchedulerEnd?(id: number): void;
   graphInit(path?: string, version?: string): void;
   graphRecord(id: string, hash: string | null, deps: string[], dynamicDeps?: string[], kind?: string, configHash?: string | null): boolean;
   graphRecordBatch?(nodes: NativeGraphRecordBatchNode[]): number;
@@ -89,6 +331,37 @@ export interface NativeBinding {
     moduleCount: number;
     fingerprint: string;
   };
+  graphRefreshFromEntries?(
+    entryPaths: string[],
+    workspaceRoot: string,
+    ionifyDir?: string | null,
+    depStops?: Array<{ entryPath: string; artifactHash: string }> | null,
+    externalSpecifiers?: string[] | null,
+  ): {
+    moduleCount: number;
+    fingerprint: string;
+  };
+  graphRefreshFromRuntimeFacts?(
+    facts: Array<{
+      filePath: string;
+      sourceHash: string;
+      staticSpecifiers: string[];
+      dynamicSpecifiers: string[];
+      runtimeDemands: NativeRuntimeDemandFact[];
+    }>,
+    workspaceRoot: string,
+    ionifyDir?: string | null,
+    depStops?: Array<{ entryPath: string; artifactHash: string }> | null,
+    externalSpecifiers?: string[] | null,
+  ): {
+    moduleCount: number;
+    fingerprint: string;
+  };
+  graphStageCanonicalMutations?(
+    graphPath: string,
+    graphVersion: string,
+    records: NativeGraphStagedMutationRecord[],
+  ): number;
   graphGet(id: string): NativeGraphNode | undefined | null;
   graphRemove(id: string): void;
   graphLoad(): NativeGraphNode[];
@@ -96,7 +369,39 @@ export interface NativeBinding {
   graphFlush?(): void;
   graphDependents?(target: string): string[];
   graphCollectAffected?(targets: string[]): string[];
+  graphStateFingerprint?(): string;
+  planCacheFingerprint?(): string;
+  planCacheTopologyFingerprint?(): string;
   plannerPlanBuild?(entries: string[]): BuildPlan;
+  plannerRefreshPlanHashes?(plan: BuildPlan, expectedTopologyFingerprint: string): BuildPlan;
+  plannerRefreshCanonicalPlan?(
+    plan: BuildPlan,
+    facts: Array<{
+      filePath: string;
+      sourceHash: string;
+      staticSpecifiers: string[];
+      dynamicSpecifiers: string[];
+      runtimeDemands: NativeRuntimeDemandFact[];
+    }>,
+    publicationEdges: NativeDplPublicationEdge[],
+    workspaceRoot: string,
+    depsRoot: string,
+    externalSpecifiers?: string[] | null,
+  ): NativePlannerCanonicalRefreshResult;
+  plannerRefreshCanonicalPlanDelta?(
+    plan: BuildPlan,
+    facts: Array<{
+      filePath: string;
+      sourceHash: string;
+      staticSpecifiers: string[];
+      dynamicSpecifiers: string[];
+      runtimeDemands: NativeRuntimeDemandFact[];
+    }>,
+    publicationEdges: NativeDplPublicationEdge[],
+    workspaceRoot: string,
+    depsRoot: string,
+    externalSpecifiers?: string[] | null,
+  ): NativePlannerCanonicalRefreshDeltaResult;
   resolveModule?(specifier: string, fromPath: string): {
     kind: string;
     fsPath?: string | null;
@@ -108,7 +413,24 @@ export interface NativeBinding {
       subpath?: string | null;
     };
   };
-  
+  /**
+   * A1/B.1 authority: the canonical local-source extension list + order (dotted,
+   * e.g. ".ts"). The single source of truth every TS local-source resolver
+   * consumes instead of defining its own array.
+   */
+  localSourceExtensions?(): string[];
+  /**
+   * G1-c (F13) authority: the logical:v2 stable dependency artifact file name
+   * computed from resolver-supplied coordinates. The TS dev registry consumes
+   * this instead of deriving names with its own fingerprint mirror.
+   */
+  stableDepArtifactFileName(
+    entryPath: string,
+    packageName: string,
+    packageVersion?: string,
+    subpath?: string,
+  ): string;
+
   // Wave 3 & 7: AST Cache functions
   getCachedAst?(id: string, source: string): string | null;
   initAstCache?(versionHash: string): void;
@@ -124,7 +446,7 @@ export interface NativeBinding {
   astCacheClear?(): void;
   astCacheWarmup?(): number;
   buildChunks?(
-    plan: BuildPlan,
+    plan: BuildPlan | null,
     casRoot?: string | null,
     versionHash?: string | null,
     options?: NativeBuildChunksOptions | null,
@@ -219,6 +541,108 @@ export interface NativeBinding {
     gz?: Buffer | null;
   }>;
   depsOptimizerOutputVersion?(): number;
+  depsActivePublications?(depsRoot: string): Array<{
+    routeActive: boolean;
+    entryPath: string;
+    outFile: string;
+    artifactHash: string;
+    artifactTopology: "wrapper" | "esm-native" | "esm-native-slim" | string;
+    artifactTopologyReason?: string | null;
+    chunkGroup?: string | null;
+    chunkFiles: string[];
+    sharedImports: string[];
+    publicationMembers: Array<{
+      outFile: string;
+      artifactHash: string;
+      artifactTopology: "wrapper" | "esm-native" | "esm-native-slim" | string;
+      exportAbi: {
+        version: number;
+        names: string[];
+        hasDefault: boolean;
+        uncertain: boolean;
+        abiHash: string;
+      };
+      dependencyImportAbi: Array<{
+        outFile: string;
+        mode: string;
+        names: string[];
+        hasDefault: boolean;
+        hasNamespace: boolean;
+        hasSideEffect: boolean;
+        hasExportStar: boolean;
+        uncertain: boolean;
+      }>;
+    }>;
+    dependencyImports: string[];
+    packageGraphFiles: string[];
+    nodeEnv: string;
+    outputVersion: number;
+    exportDemand: string[];
+    exportAbi: {
+      version: number;
+      names: string[];
+      hasDefault: boolean;
+      uncertain: boolean;
+      abiHash: string;
+    };
+    dependencyImportAbi: Array<{
+      outFile: string;
+      mode: string;
+      names: string[];
+      hasDefault: boolean;
+      hasNamespace: boolean;
+      hasSideEffect: boolean;
+      hasExportStar: boolean;
+      uncertain: boolean;
+    }>;
+    packageGraphFileAbi: Array<{
+      outFile: string;
+      exports: string[];
+    }>;
+  }>;
+  depsRuntimeDemandCovered?(
+    depsRoot: string,
+    demands: Array<{
+      importerPath: string;
+      specifier: string;
+      usedExports: string[];
+      hasNamespace: boolean;
+      hasExportStar: boolean;
+      isDynamic: boolean;
+    }>,
+  ): {
+    covered: boolean;
+    checked: number;
+    deferredDemands: number;
+    activePublications: number;
+    publicationEdges: NativeDplPublicationEdge[];
+    reason?: string | null;
+  };
+  depsPublishVerifiedGeneration?(
+    depsRoot: string,
+    demands: Array<{
+      importerPath: string;
+      specifier: string;
+      usedExports: string[];
+      hasNamespace: boolean;
+      hasExportStar: boolean;
+      isDynamic: boolean;
+    }>,
+  ): {
+    covered: boolean;
+    checked: number;
+    deferredDemands: number;
+    activePublications: number;
+    publicationEdges: NativeDplPublicationEdge[];
+    reason?: string | null;
+  };
+  depsVerifiedGenerationCurrent?(depsRoot: string): boolean;
+  depsPromoteArtifacts?(
+    oldRoot: string,
+    newRoot: string,
+    newDepsHash: string,
+    currentOutputVersion: number,
+  ): { promoted: number; skipped: number };
   depsOptimizerTopologyProfile?(): {
     topologyDecisionTimeMs?: number;
     topologyProofValidationTimeMs?: number;
@@ -232,87 +656,7 @@ export interface NativeBinding {
   depsOptimizerTopologyProfileReset?(): void;
 }
 
-function resolveCandidates(): string[] {
-  const cwd = process.cwd();
-  const releaseDir = path.resolve(cwd, "target", "release");
-  const debugDir = path.resolve(cwd, "target", "debug");
-  const nativeDir = path.resolve(cwd, "native");
-  
-  // Also check relative to this module's location (for installed packages).
-  // NOTE: use fileURLToPath for correct path decoding on all platforms.
-  const modulePath = fileURLToPath(import.meta.url);
-  const moduleDir = path.dirname(modulePath);
-
-  const findPackageRoot = (startDir: string): string | null => {
-    let dir = startDir;
-    for (let i = 0; i < 6; i++) {
-      const pkgPath = path.join(dir, "package.json");
-      try {
-        if (fs.existsSync(pkgPath) && fs.statSync(pkgPath).isFile()) {
-          return dir;
-        }
-      } catch {
-        // ignore
-      }
-      const parent = path.dirname(dir);
-      if (!parent || parent === dir) break;
-      dir = parent;
-    }
-    return null;
-  };
-
-  const packageRoot = findPackageRoot(moduleDir);
-  const packageNativeDir = packageRoot ? path.join(packageRoot, "native") : null;
-  const packageDistDir = packageRoot ? path.join(packageRoot, "dist") : null;
-
-  const platformFile = process.platform === "win32"
-    ? "ionify_core.dll"
-    : process.platform === "darwin"
-      ? "libionify_core.dylib"
-      : "libionify_core.so";
-
-  const candidates = [
-    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
-    path.join(moduleDir, "ionify_core.node"),
-    // Alternative installed layouts (fallback):
-    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
-    ...(packageNativeDir ? [path.join(packageNativeDir, "ionify_core.node")] : []),
-    ...(packageDistDir ? [path.join(packageDistDir, "ionify_core.node")] : []),
-    ...(packageRoot ? [path.join(packageRoot, "ionify_core.node")] : []),
-    // Development locations
-    path.join(nativeDir, "ionify_core.node"),
-    path.join(releaseDir, "ionify_core.node"),
-    path.join(releaseDir, platformFile),
-    path.join(debugDir, "ionify_core.node"),
-    path.join(debugDir, platformFile),
-  ];
-
-  return candidates.filter((candidate) => {
-    try {
-      return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
-    } catch {
-      return false;
-    }
-  });
-}
-
-let nativeBinding: NativeBinding | null = null;
-
-(() => {
-  const require = createRequire(import.meta.url);
-  for (const candidate of resolveCandidates()) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require(candidate) as NativeBinding;
-      if (mod) {
-        nativeBinding = mod;
-        break;
-      }
-    } catch {
-      // try next candidate
-    }
-  }
-})();
+const nativeBinding: NativeBinding | null = loadNativeBinding<NativeBinding>();
 
 export const native = nativeBinding;
 

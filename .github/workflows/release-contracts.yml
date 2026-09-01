@@ -1,0 +1,31 @@
+name: Release contracts
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-surface:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: npm run build
+      - run: npm run verify:release
+      - run: pnpm exec vitest run tests/native-distribution.test.ts
+      - run: node --check scripts/publish-all.mjs
+      - run: node --check scripts/real-registry-smoke.mjs
+      - run: node --check scripts/release-local-registry.mjs

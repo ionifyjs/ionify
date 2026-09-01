@@ -12,6 +12,9 @@ if (!process.env.NODE_COMPILE_CACHE) {
   if (home) process.env.NODE_COMPILE_CACHE = home + "/.ionify/global/compile-cache";
 }
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { Command, Option } from "commander";
 import { logInfo, logError } from "./utils/logger.js";
 import { startDevServer } from "./commands/dev.js";
@@ -27,6 +30,21 @@ import { runStatusCommand } from "./commands/status.js";
 import { runMigrateCommand } from "./commands/migrate.js";
 import { CloudApiError } from "./utils/cloud-client.js";
 import { formatCloudAuthError, formatCloudQuotaError } from "./utils/cloud-errors.js";
+
+// Release Surface Consistency: the CLI version must equal the version of the package
+// it actually ships in — the PUBLIC `@ionify/ionify@X` when installed — never a
+// hard-coded constant and never coupled to the private core repo's internal version.
+// The bin (dist/cli/index.js) sits two levels below the package root, so read that
+// package's own package.json at runtime; fail-open to a neutral value.
+function resolveCliVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/dist/cli
+    const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf8"));
+    return typeof pkg?.version === "string" && pkg.version.length > 0 ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 const program = new Command();
 
@@ -63,7 +81,7 @@ function logHydrateCommandError(err: unknown): void {
 program
   .name("ionify")
   .description("Ionify – Instant, Intelligent, Unified Build Engine")
-  .version("0.0.1");
+  .version(resolveCliVersion());
 
 program
   .command("dev")

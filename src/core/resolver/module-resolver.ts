@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { native } from '@native/index';
+import { localSourceExtensions } from '@core/resolver/local-source-extensions';
 
 export interface ResolveOptions {
   baseUrl?: string;
@@ -11,7 +12,10 @@ export interface ResolveOptions {
   mainFields?: string[];
 }
 
-const DEFAULT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.mjs'];
+// A1/B.1 single authority: the default local-source extension list + order come
+// from the native resolver via the shared `localSourceExtensions()` (this file
+// previously shipped `.json` before `.mjs` and lacked .mts/.cts/.css). A user
+// `resolve.extensions` override still wins via options.
 const DEFAULT_CONDITIONS = ['import', 'default'];
 const DEFAULT_MAIN_FIELDS = ['module', 'main'];
 
@@ -25,7 +29,7 @@ export class ModuleResolver {
     this.options = {
       baseUrl: options.baseUrl || '.',
       paths: options.paths || {},
-      extensions: options.extensions || DEFAULT_EXTENSIONS,
+      extensions: options.extensions || localSourceExtensions(),
       alias: options.alias || {},
       conditions: options.conditions || DEFAULT_CONDITIONS,
       mainFields: options.mainFields || DEFAULT_MAIN_FIELDS

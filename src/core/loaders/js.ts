@@ -22,8 +22,10 @@ import { isTypeDeclarationPath } from "@core/utils/declaration-file";
 import { native, tryBundleNodeModule, tryNativeTransform } from "@native/index";
 import {
   registerDepEntry,
+  cacheDepRegistration,
   computeSubpathFromEntryPath,
   isCoreSingletonDepFileName,
+  type DepEntry,
 } from "@core/deps/registry";
 import { instrumentReactRefresh } from "@core/refresh/reactRefreshInstrumentation";
 import { isEntryModule } from "@core/refresh/entryDetection";
@@ -518,20 +520,27 @@ function findNearestPackageJson(filePath: string): string | null {
   return null;
 }
 
-function makeDepsProxyForFile(filePath: string, code: string, rootDir: string): string | null {
+function makeDepsProxyForFile(
+  filePath: string,
+  code: string,
+  rootDir: string,
+  recordDepEntry: (entry: DepEntry) => void,
+): string | null {
   if (!looksLikeCjsWrapperSource(code)) return null;
   const pkgJsonPath = findNearestPackageJson(filePath);
   if (!pkgJsonPath) return null;
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
-    const fileName = registerDepEntry({
+    const depEntry = registerDepEntry({
       entryPath: filePath,
       packageName: pkg?.name ?? "dep",
       packageVersion: pkg?.version ?? "0.0.0",
       // Important: include the physical subpath so stable dep ids remain correct across restarts
       // and match the optimizer's stable id (e.g. react-refresh/runtime must include `__runtime`).
       subpath: computeSubpathForDep(filePath, pkg),
-    }).fileName;
+    });
+    recordDepEntry(depEntry);
+    const fileName = depEntry.fileName;
 
     // Phase 6.4: No-duplication policy.
     // If this dep wrapper is routed through a vendor-pack-v2 module, prefer re-exporting from the pack
@@ -664,6 +673,10 @@ export const jsLoader: Loader = {
     const isNodeModules = filePath.includes("node_modules");
     const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
     const rootDir = config?.root ? path.resolve(config.root) : process.cwd();
+    const dependencyEntries = new Map<string, ReturnType<typeof cacheDepRegistration>>();
+    const recordDepEntry = (entry: DepEntry) => {
+      dependencyEntries.set(entry.fileName, cacheDepRegistration(entry, rootDir));
+    };
     const stateDir =
       process.env.IONIFY_STATE_DIR && path.isAbsolute(process.env.IONIFY_STATE_DIR)
         ? process.env.IONIFY_STATE_DIR
@@ -675,7 +688,7 @@ export const jsLoader: Loader = {
     
     // Try native bundler for node_modules files (handles CommonJS, tree-shaking, etc.)
     if (isNodeModules) {
-      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir);
+      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir, recordDepEntry);
       if (depsProxy) {
         // Avoid serving obvious CJS wrappers to the browser (even if the extension is .mjs).
         // Route through /@deps/ so the CJS optimizer produces valid browser ESM.
@@ -773,6 +786,27 @@ export const jsLoader: Loader = {
     // This applies to ALL files (user code, node_modules ESM, and converted CommonJS)
     await init; // Ensure es-module-lexer is initialized before parsing
     const [imports] = parse(output);
+    // Runtime-edge facts are captured from the canonical transformed module
+    // before URL/DPL serving rewrites. The persistent graph and production
+    // planner consume these facts so compiler-injected imports (automatic JSX
+    // runtimes, helpers, future transforms) cannot diverge from emitted code.
+    const runtimeDependencies = Array.from(
+      new Map(
+        imports
+          .filter((record) => typeof record.n === "string" && record.n.length > 0)
+          .map((record) => {
+            const dependency = {
+              specifier: record.n!,
+              kind: record.t === 2 ? ("dynamic" as const) : ("static" as const),
+            };
+            return [`${dependency.kind}:${dependency.specifier}`, dependency] as const;
+          }),
+      ).values(),
+    ).sort((a, b) =>
+      a.kind === b.kind
+        ? a.specifier.localeCompare(b.specifier)
+        : a.kind.localeCompare(b.kind),
+    );
     if (rewriteDebug && ext === ".mjs" && isNodeModules) {
       console.warn(`[Ionify][rewrite] scanning ${imports.length} import(s) in ${filePath}`);
     }
@@ -818,16 +852,40 @@ export const jsLoader: Loader = {
             (resolvedNative as any)?.fsPath ??
             (resolvedNative as any)?.fs_path ??
             null;
+
+          // Package format describes the package boundary, not necessarily the
+          // resolved export's artifact kind. A package may validly export CSS
+          // (for example `./styles.css`) while the resolver reports `PkgEsm`.
+          // Keep that resource on the shared CSSA path instead of registering it
+          // as a JavaScript dependency artifact in DPL.
+          if (fsPath && isCssLikeExt(path.extname(fsPath))) {
+            const replacement =
+              publicPathForFile(rootDir, fsPath) + (suffix || "?inline");
+            mutated = true;
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement;
+              lastIndex = record.e;
+            }
+            continue;
+          }
           
           // CJS deps must go through /@deps/ so they become valid browser ESM.
 	          if (kind === "PkgCjs" && fsPath) {
 	            const pkg = resolvedNative?.pkg;
-	            const fileName = registerDepEntry({
+	            const depEntry = registerDepEntry({
 	              entryPath: fsPath,
 	              packageName: pkg?.name ?? pathPart,
 	              packageVersion: pkg?.version ?? "0.0.0",
 	              subpath: computeSubpathForDep(fsPath, pkg),
-	            }).fileName;
+	            });
+	            recordDepEntry(depEntry);
+	            const fileName = depEntry.fileName;
 	            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
 	            const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
 	            if (!mutated) {
@@ -854,12 +912,14 @@ export const jsLoader: Loader = {
               const resolvedCode = fs.readFileSync(fsPath, "utf8");
 	              if (looksLikeCjsWrapperSource(resolvedCode)) {
 	                const pkg = resolvedNative?.pkg;
-	                const fileName = registerDepEntry({
+	                const depEntry = registerDepEntry({
 	                  entryPath: fsPath,
 	                  packageName: pkg?.name ?? pathPart,
 	                  packageVersion: pkg?.version ?? "0.0.0",
 	                  subpath: computeSubpathForDep(fsPath, pkg),
-	                }).fileName;
+	                });
+	                recordDepEntry(depEntry);
+	                const fileName = depEntry.fileName;
 	                const cg = getFeaturePackChunkGroupId(rootDir, fileName);
 	                const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
 	                if (!mutated) mutated = true;
@@ -881,12 +941,14 @@ export const jsLoader: Loader = {
 
             // Route all ESM through optimizer for nested dependency resolution
             const pkg = resolvedNative?.pkg;
-	            const fileName = registerDepEntry({
+	            const depEntry = registerDepEntry({
 	              entryPath: fsPath,
 	              packageName: pkg?.name ?? pathPart,
 	              packageVersion: pkg?.version ?? "0.0.0",
 	              subpath: computeSubpathForDep(fsPath, pkg),
-	            }).fileName;
+	            });
+	            recordDepEntry(depEntry);
+	            const fileName = depEntry.fileName;
 	            const cg = getFeaturePackChunkGroupId(rootDir, fileName);
 	            const replacement = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
 	            if (!mutated) mutated = true;
@@ -988,6 +1050,12 @@ export const jsLoader: Loader = {
       output = rewriteVendorPackV2Imports(output, rootDir);
     }
 
-    return { code: output };
+    return {
+      code: output,
+      dependencyEntries: Array.from(dependencyEntries.values()).sort((a, b) =>
+        a.fileName.localeCompare(b.fileName),
+      ),
+      runtimeDependencies,
+    };
   },
 };
