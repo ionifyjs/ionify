@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify",
-  "version": "0.1.27",
+  "version": "0.1.37",
   "type": "module",
   "description": "Ionify — Instant, Intelligent, Unified Build Engine",
   "bin": {
@@ -23,8 +23,11 @@
   },
   "scripts": {
     "dev": "pnpm build && node dist/cli/index.js dev",
-    "build": "node -e \"const fs=require('fs');const required=['dist/cli/index.js','dist/cli/index.cjs','dist/index.js','dist/index.cjs','dist/index.d.ts','dist/ionify_core.node'];const missing=required.filter((f)=>!fs.existsSync(f));if(missing.length){console.error('Missing publish artifacts:\\n'+missing.join('\\n'));process.exit(1)}console.log('✅ Publish artifacts verified.');\"",
+    "build": "node -e \"const fs=require('fs');const required=['dist/cli/index.js','dist/cli/index.cjs','dist/index.js','dist/index.cjs','dist/index.d.ts'];const missing=required.filter((f)=>!fs.existsSync(f));if(missing.length){console.error('Missing publish artifacts:\\n'+missing.join('\\n'));process.exit(1)}if(fs.existsSync('dist/ionify_core.node')){console.error('Main package must not contain a host-specific native binary.');process.exit(1)}console.log('✅ Publish artifacts verified.');\"",
     "build:link": "pnpm build && pnpm link --global",
+    "publish:all": "node scripts/publish-all.mjs",
+    "smoke:registry": "node scripts/real-registry-smoke.mjs",
+    "verify:release": "node scripts/verify-release-surface.mjs",
     "prepublishOnly": "pnpm build",
     "test": "vitest run",
     "bench:minifier": "node scripts/bench-minifier.mjs",
@@ -65,6 +68,16 @@
     "postcss-modules": "^4.3.1",
     "react-refresh": "^0.14.2",
     "selfsigned": "^3.0.1"
+  },
+  "optionalDependencies": {
+    "@ionify/ionify-darwin-arm64": "0.1.37",
+    "@ionify/ionify-darwin-x64": "0.1.37",
+    "@ionify/ionify-linux-arm64-gnu": "0.1.37",
+    "@ionify/ionify-linux-arm64-musl": "0.1.37",
+    "@ionify/ionify-linux-x64-gnu": "0.1.37",
+    "@ionify/ionify-linux-x64-musl": "0.1.37",
+    "@ionify/ionify-win32-arm64-msvc": "0.1.37",
+    "@ionify/ionify-win32-x64-msvc": "0.1.37"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

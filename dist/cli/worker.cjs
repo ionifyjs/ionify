@@ -56,11 +56,40 @@ function parseMode() {
 }
 
 function resolveNativeBinding() {
-  // Minimal loader to avoid importing TS helpers in worker context.
-  const cwd = process.cwd();
-  const candidates = [];
+  // Keep this CJS worker selector in lockstep with src/native/native-loader.ts.
+  // Selection is exact; it never probes a binary built for another target.
+  const packageByTarget = {
+    "darwin-arm64": "@ionify/ionify-darwin-arm64",
+    "darwin-x64": "@ionify/ionify-darwin-x64",
+    "win32-arm64-msvc": "@ionify/ionify-win32-arm64-msvc",
+    "win32-x64-msvc": "@ionify/ionify-win32-x64-msvc",
+    "linux-arm64-gnu": "@ionify/ionify-linux-arm64-gnu",
+    "linux-x64-gnu": "@ionify/ionify-linux-x64-gnu",
+    "linux-arm64-musl": "@ionify/ionify-linux-arm64-musl",
+    "linux-x64-musl": "@ionify/ionify-linux-x64-musl",
+  };
+  let target = `${process.platform}-${process.arch}`;
+  if (process.platform === "win32") {
+    target += "-msvc";
+  } else if (process.platform === "linux") {
+    const report = typeof process.report?.getReport === "function"
+      ? process.report.getReport()
+      : undefined;
+    const glibc = report?.header?.glibcVersionRuntime;
+    target += typeof glibc === "string" && glibc.length > 0 ? "-gnu" : "-musl";
+  }
+  const packageName = packageByTarget[target];
+  if (!packageName) {
+    const error = new Error([
+      `[Ionify] Unsupported native platform: ${target}.`,
+      `Supported platforms: ${Object.keys(packageByTarget).join(", ")}.`,
+      "Ionify did not attempt to load a binary for another platform.",
+    ].join("\n"));
+    error.name = "IonifyNativeBindingError";
+    error.code = "IONIFY_UNSUPPORTED_NATIVE_PLATFORM";
+    throw error;
+  }
 
-  // 1) Installed package / linked workspace: resolve relative to this file's location.
   const findPackageRoot = (startDir) => {
     let dir = startDir;
     for (let i = 0; i < 8; i++) {
@@ -78,28 +107,57 @@ function resolveNativeBinding() {
   };
 
   const packageRoot = findPackageRoot(__dirname);
+  let privateBinding = null;
   if (packageRoot) {
-    candidates.push(path.join(packageRoot, "native", "ionify_core.node"));
-    candidates.push(path.join(packageRoot, "dist", "ionify_core.node"));
-    candidates.push(path.join(packageRoot, "ionify_core.node"));
-  }
-
-  // 2) Development layouts (when running from repo root).
-  candidates.push(path.join(cwd, "native", "ionify_core.node"));
-  candidates.push(path.join(cwd, "target", "release", "ionify_core.node"));
-  candidates.push(path.join(cwd, "target", "debug", "ionify_core.node"));
-
-  for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate)) {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        return require(candidate);
+      const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+      if (packageJson.name === "ionify" && packageJson.private === true) {
+        const candidate = path.join(packageRoot, "native", "ionify_core.node");
+        if (fs.statSync(candidate).isFile()) privateBinding = candidate;
       }
     } catch {
-      // ignore and try next
+      // A public installation has no private source-checkout fallback.
     }
   }
-  return null;
+
+  try {
+    return require(packageName);
+  } catch (selectedError) {
+    const selectedMissing = selectedError?.code === "MODULE_NOT_FOUND"
+      && String(selectedError?.message ?? selectedError).includes(packageName);
+    if (privateBinding && selectedMissing) {
+      try {
+        return require(privateBinding);
+      } catch (privateError) {
+        const error = new Error([
+          `[Ionify] Failed to load the native binding for ${target}.`,
+          `Selected package: ${privateBinding}`,
+          `Original Node error: ${privateError?.name ?? "Error"}: ${privateError?.message ?? privateError}`,
+        ].join("\n"));
+        error.name = "IonifyNativeBindingError";
+        error.code = "IONIFY_NATIVE_DLOPEN_FAILED";
+        error.cause = privateError;
+        throw error;
+      }
+    }
+
+    const guidance = selectedMissing
+      ? [
+        "The platform package was not installed. Optional dependencies may have been omitted or the install may be incomplete.",
+        "Reinstall @ionify/ionify without --omit=optional / --no-optional.",
+      ]
+      : ["The selected package exists, but Node could not load its native addon."];
+    const error = new Error([
+      `[Ionify] Failed to load the native binding for ${target}.`,
+      `Selected package: ${packageName}`,
+      ...guidance,
+      `Original Node error: ${selectedError?.name ?? "Error"}: ${selectedError?.message ?? selectedError}`,
+    ].join("\n"));
+    error.name = "IonifyNativeBindingError";
+    error.code = selectedMissing ? "IONIFY_NATIVE_PACKAGE_MISSING" : "IONIFY_NATIVE_DLOPEN_FAILED";
+    error.cause = selectedError;
+    throw error;
+  }
 }
 
 const native = resolveNativeBinding();
@@ -332,12 +390,13 @@ function expandDirectoryDependency(dir, glob) {
   return deps;
 }
 
-function collectPostcssMessageDeps(messages, rootDir, filePath) {
+function collectPostcssMessageDeps(messages, rootDir, filePath, tailwindGraphFiles = null) {
   const deps = [];
   const seen = new Set();
-  const add = (depPath) => {
+  const add = (depPath, plugin) => {
     if (!depPath) return;
-    const normalized = depPath.replace(/\\+/g, "/");
+    const normalized = path.resolve(depPath).replace(/\\+/g, "/");
+    if (plugin === "tailwindcss" && tailwindGraphFiles && tailwindGraphFiles.has(normalized)) return;
     if (seen.has(normalized)) return;
     seen.add(normalized);
     deps.push(depPath);
@@ -350,14 +409,14 @@ function collectPostcssMessageDeps(messages, rootDir, filePath) {
       (msg.type === "dependency" || msg.type === "build-dependency" || msg.type === "missing-dependency") &&
       typeof msg.file === "string"
     ) {
-      add(normalizeDependencyPath(msg.file, rootDir, filePath));
+      add(normalizeDependencyPath(msg.file, rootDir, filePath), msg.plugin);
       continue;
     }
     if (msg.type === "dir-dependency" && typeof msg.dir === "string") {
       const baseDir = normalizeDependencyPath(msg.dir, rootDir, filePath);
       if (!baseDir) continue;
       for (const dep of expandDirectoryDependency(baseDir, typeof msg.glob === "string" ? msg.glob : null)) {
-        add(dep);
+        add(dep, msg.plugin);
       }
       continue;
     }
@@ -367,10 +426,10 @@ function collectPostcssMessageDeps(messages, rootDir, filePath) {
       if (!dep) continue;
       if (fs.existsSync(dep) && fs.statSync(dep).isDirectory()) {
         for (const child of expandDirectoryDependency(dep, typeof msg.glob === "string" ? msg.glob : null)) {
-          add(child);
+          add(child, msg.plugin);
         }
       } else {
-        add(dep);
+        add(dep, msg.plugin);
       }
     }
   }
@@ -811,6 +870,15 @@ async function runCssTransform(job) {
 
   if (configFile) addDep(configFile);
   for (const d of preprocessorDeps) addDep(d);
+  // Tailwind graph-content freshness is proven by the CSSA-owned aggregated
+  // stamp (computed once in the main process and passed on the job), never by
+  // admitting graph source files as per-artifact CSS dependencies.
+  tailwindGraphContent.profile.stamp =
+    tailwindGraphContent.profile.enabled && tailwindGraphContent.profile.files > 0
+      ? (typeof job.cssDemandGraphStamp === "string" && job.cssDemandGraphStamp.length > 0
+          ? job.cssDemandGraphStamp
+          : null)
+      : null;
 
   let tokens = null;
   if (isModule) {
@@ -838,7 +906,14 @@ async function runCssTransform(job) {
 
   // PostCSS plugin dependency messages (postcss-import, Tailwind content globs, etc.).
   const depStart = nowMs();
-  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, job.filePath)) {
+  const tailwindGraphFiles = tailwindGraphContent.profile.enabled
+    ? new Set(
+        (Array.isArray(job.cssDemandGraphFiles) ? job.cssDemandGraphFiles : []).map((item) =>
+          path.resolve(item).replace(/\\+/g, "/")
+        )
+      )
+    : null;
+  for (const dep of collectPostcssMessageDeps(result.messages || [], rootDir, job.filePath, tailwindGraphFiles)) {
     addDep(dep);
   }
   dependencyCollectionMs += nowMs() - depStart;

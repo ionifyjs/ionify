@@ -62,11 +62,16 @@ import { extractImports } from "@core/resolver";
 import { ModuleResolver } from "@core/resolver/module-resolver";
 import { classifyImportSpecifiersForGraph, collectConfiguredExternalSpecifiers } from "@core/external-policy";
 import { IonifyWatcher } from "@core/watcher";
-import { TransformEngine, transformCache } from "@core/transform";
+import {
+  TransformEngine,
+  transformCache,
+  type RuntimeDependencyFact,
+  type TransformResult,
+} from "@core/transform";
 import { TransformWorkerPool } from "@core/worker/pool";
 import { HMRServer, injectHMRClient, PendingHMRModule } from "@core/hmr";
 import { compileCss, renderCssModule, renderCssRawStringModule, renderCssUrlModule, renderCssTokensModule, rewriteCssUrls } from "@core/loaders/css";
-import { registerCssDemandGraphSourceFiles } from "@core/loaders/css-demand";
+import { computeCssDemandGraphContentStamp, registerCssDemandGraphSourceFiles } from "@core/loaders/css-demand";
 import { isCssLikeExt, isCssLikePath, isCssModuleLikePath } from "@core/utils/css-ext";
 import { isAssetExt, contentTypeForAsset, assetAsModule, normalizeUrlFromFs } from "@core/loaders/asset";
 import { isEntryModule } from "@core/refresh/entryDetection";
@@ -89,6 +94,7 @@ import {
   computeSubpathFromEntryPath,
   isCoreSingletonDepFileName,
 } from "@core/deps/registry";
+import { depsFileNameFromRuntimeUrl, formatDepsRuntimeUrl } from "@core/deps/runtime-url";
 import {
   buildCanonicalDepFileNameIndex,
   canonicalizeDepFileName,
@@ -106,6 +112,11 @@ import { isNotModified, weakEtagFromContent, weakEtagFromStat } from "@core/http
 import crypto from "crypto";
 import zlib from "zlib";
 import { computeDepsHash } from "@cli/utils/deps-hash";
+import {
+  DependencyEnvironmentSettler,
+  dependencyEnvironmentWatchPaths,
+  type DependencyEnvironmentSnapshot,
+} from "@core/deps/dependency-environment";
 import {
   FEDERATION_GRAPH_PREFIX,
   buildFederationConfigGraphNodes,
@@ -476,8 +487,7 @@ function computeDepsStampHash(depsAbs: string[]): string {
   for (const dep of depsAbs) {
     const abs = path.resolve(dep);
     try {
-      const stat = fs.statSync(abs);
-      entries.push(`${abs}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+      entries.push(`${abs}:${getCacheKey(fs.readFileSync(abs))}`);
     } catch {
       entries.push(`${abs}:missing`);
     }
@@ -856,12 +866,6 @@ type VendorPackPlan = {
   members: VendorPackMember[];
 };
 
-type ParsedStableDepFileName = {
-  sanitizedName: string;
-  version: string;
-  subpath: string | null;
-};
-
 function readJsonFile<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -877,6 +881,97 @@ function writeJsonFile(filePath: string, data: unknown): void {
   } catch {
     // ignore write errors; vendor packs are best-effort
   }
+}
+
+function normalizeAbsList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((value) => path.resolve(value)),
+    ),
+  ).sort();
+}
+
+// Tailwind graph-content freshness is proven by the CSSA-owned aggregated
+// stamp (one stamp over graph-admitted source content identity), never by
+// admitting source files as per-artifact CSS dependencies. meta.json v2 keeps
+// deps/urlDeps for the real CSS dependency surface only (configs, partials,
+// @imports, url() assets).
+const DEV_CSS_META_VERSION = 2;
+
+function metaTailwindStampForRecipe(meta: any): string {
+  return meta?.tailwindGraphContent?.enabled === true &&
+    typeof meta.tailwindGraphContent.stamp === "string" &&
+    meta.tailwindGraphContent.stamp.length > 0
+    ? meta.tailwindGraphContent.stamp
+    : "none";
+}
+
+function compileTailwindStampForRecipe(tailwindGraphContent: any): string {
+  return tailwindGraphContent?.enabled === true &&
+    typeof tailwindGraphContent.stamp === "string" &&
+    tailwindGraphContent.stamp.length > 0
+    ? tailwindGraphContent.stamp
+    : "none";
+}
+
+function devCssMetaIsCurrent(
+  meta: any,
+  contentHash: string,
+  modules: boolean,
+  rootDir: string,
+): boolean {
+  if (!meta || typeof meta !== "object") return false;
+  if (meta.version !== DEV_CSS_META_VERSION || meta.baseHash !== contentHash || meta.modules !== modules) return false;
+  if (typeof meta.depsStampHash !== "string" || meta.depsStampHash.length === 0) return false;
+  const deps = normalizeAbsList([...(Array.isArray(meta.deps) ? meta.deps : []), ...(Array.isArray(meta.urlDeps) ? meta.urlDeps : [])]);
+  const currentStamp = computeDepsStampHash(deps);
+  if (currentStamp !== meta.depsStampHash) return false;
+
+  if (meta.tailwindGraphContent?.enabled === true && Number(meta.tailwindGraphContent?.files ?? 0) > 0) {
+    if (typeof meta.tailwindGraphContent.stamp !== "string" || meta.tailwindGraphContent.stamp.length === 0) {
+      return false;
+    }
+    const current = computeCssDemandGraphContentStamp(rootDir);
+    if (!current || current.stamp !== meta.tailwindGraphContent.stamp) return false;
+  }
+  return true;
+}
+
+function buildDevCssMeta(options: {
+  contentHash: string;
+  pipelineHash: string;
+  depsAbs: string[];
+  urlDepsAbs: string[];
+  modules: boolean;
+  tailwindGraphContent: any;
+}) {
+  const deps = normalizeAbsList(options.depsAbs);
+  const urlDeps = normalizeAbsList(options.urlDepsAbs);
+  const tw = options.tailwindGraphContent;
+  const twEnabled = tw?.enabled === true && Number(tw?.files ?? 0) > 0;
+  return {
+    version: DEV_CSS_META_VERSION,
+    baseHash: options.contentHash,
+    pipelineHash: options.pipelineHash,
+    depsStampHash: computeDepsStampHash([...deps, ...urlDeps]),
+    deps,
+    urlDeps,
+    modules: options.modules,
+    generatedAt: new Date().toISOString(),
+    tailwindGraphContent: tw
+      ? {
+          enabled: tw.enabled === true,
+          files: Number(tw.files ?? 0),
+          plugins: Number(tw.plugins ?? 0),
+          configPath: typeof tw.configPath === "string" ? tw.configPath : null,
+          fallbackReason: typeof tw.fallbackReason === "string" ? tw.fallbackReason : null,
+          stamp: twEnabled && typeof tw.stamp === "string" && tw.stamp.length > 0 ? tw.stamp : null,
+        }
+      : null,
+  };
 }
 
 function loadDepRequestCounts(filePath: string): Map<string, number> {
@@ -899,66 +994,6 @@ function saveDepRequestCounts(filePath: string, counts: Map<string, number>): vo
     if (value > 0) obj[key] = value;
   }
   writeJsonFile(filePath, obj);
-}
-
-function parseStableDepFileName(fileName: string): ParsedStableDepFileName | null {
-  if (typeof fileName !== "string" || !fileName.endsWith(".js")) return null;
-  const base = fileName.slice(0, -".js".length);
-  const at = base.indexOf("@");
-  if (at <= 0) return null;
-  const sanitizedName = base.slice(0, at);
-  const rest = base.slice(at + 1);
-  const underscore = rest.lastIndexOf("_");
-  if (underscore <= 0) return null;
-  const versionAndSubpath = rest.slice(0, underscore);
-  const subSep = versionAndSubpath.indexOf("__");
-  const version = subSep === -1 ? versionAndSubpath : versionAndSubpath.slice(0, subSep);
-  const subpathNorm = subSep === -1 ? "" : versionAndSubpath.slice(subSep + 2);
-  const subpath = subpathNorm ? subpathNorm.split("__").join("/") : null;
-  if (!sanitizedName || !version) return null;
-  return { sanitizedName, version, subpath };
-}
-
-function recoverDepEntryFromStableFileName(fileName: string, rootDir: string): ReturnType<typeof getDepEntry> | null {
-  if (!native?.resolveModule) return null;
-  const parsed = parseStableDepFileName(fileName);
-  if (!parsed) return null;
-
-  const suffix = parsed.subpath ? `/${parsed.subpath}` : "";
-  const bases: string[] = [parsed.sanitizedName];
-  if (parsed.sanitizedName.includes("__")) {
-    bases.push(`@${parsed.sanitizedName.replace("__", "/")}`);
-    bases.push(`@${parsed.sanitizedName.split("__").join("/")}`);
-  }
-
-  const seen = new Set<string>();
-  for (const base of bases) {
-    const spec = `${base}${suffix}`;
-    if (seen.has(spec)) continue;
-    seen.add(spec);
-    try {
-      const r = native.resolveModule(spec, rootDir);
-      const fsPath = (r as any)?.fsPath ?? (r as any)?.fs_path ?? null;
-      if (!fsPath || typeof fsPath !== "string") continue;
-      const pkg = (r as any)?.pkg ?? null;
-      const packageName = typeof pkg?.name === "string" ? pkg.name : base.replace(/^@/, "");
-      const packageVersion = typeof pkg?.version === "string" ? pkg.version : parsed.version;
-
-      const entry = registerDepEntry({
-        entryPath: fsPath,
-        packageName,
-        packageVersion,
-        subpath: computeSubpathForDep(fsPath, pkg),
-      });
-      if (entry.fileName === fileName) {
-        return entry;
-      }
-    } catch {
-      // ignore resolution failures; try next candidate
-    }
-  }
-
-  return null;
 }
 
 function buildVendorPackPlan(options: {
@@ -1194,6 +1229,8 @@ export async function startDevServer({
     entry: resolvedEntries ?? null,
     resolveOptions: {
       alias: (userConfig as any)?.resolve?.alias,
+      builtinFallback: (userConfig as any)?.resolve?.builtinFallback,
+      runtimeGlobals: (userConfig as any)?.resolve?.runtimeGlobals,
       extensions: (userConfig as any)?.resolve?.extensions,
       conditions: (userConfig as any)?.resolve?.conditions,
       mainFields: (userConfig as any)?.resolve?.mainFields,
@@ -1232,7 +1269,7 @@ export async function startDevServer({
   const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
   const depsNodeEnv = process.env.NODE_ENV ?? "development";
 
-  const depsHash = computeDepsHash(configHash, lockfile, {
+  let depsHash = computeDepsHash(configHash, lockfile, {
     nodeEnv: depsNodeEnv,
     sourcemap: depsSourcemapEnabled,
     bundleEsm: depsBundleEsmEnabled,
@@ -1242,7 +1279,8 @@ export async function startDevServer({
   logInfo(`[deps] depsHash: ${depsHash} from ${lockfile?.name ?? "config"}`);
   // Expose for loaders/import rewriting (Phase 6.x progressive deps behavior).
   process.env.IONIFY_DEPS_HASH = depsHash;
-  const depsRoot = path.join(ionifyDir, "deps", depsHash);
+  const depsRuntimeUrl = (fileName: string): string => formatDepsRuntimeUrl(fileName, depsHash);
+  let depsRoot = path.join(ionifyDir, "deps", depsHash);
   fs.mkdirSync(depsRoot, { recursive: true });
   pruneDepsCache(ionifyDir, depsHash);
 
@@ -1428,8 +1466,8 @@ export async function startDevServer({
     groupMap.set(entry.fileName, entry);
     return !existed;
   };
-  const depUsageStatePath = path.join(depsRoot, "deps-usage.v2.json");
-  const legacyDepUsageStatePath = path.join(depsRoot, "deps-usage.v1.json");
+  const depUsageStatePath = () => path.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsageStatePath = () => path.join(depsRoot, "deps-usage.v1.json");
   const directDepUsageFileNames = new Set<string>();
   const setDirectDepUsageFileNames = (index: DepUsageIndex | null) => {
     directDepUsageFileNames.clear();
@@ -1440,7 +1478,7 @@ export async function startDevServer({
     }
   };
   const loadDirectDepUsageFileNamesFromDisk = () => {
-    const raw = readJsonFile<any>(depUsageStatePath) ?? readJsonFile<any>(legacyDepUsageStatePath);
+    const raw = readJsonFile<any>(depUsageStatePath()) ?? readJsonFile<any>(legacyDepUsageStatePath());
     if (!raw || (raw.version !== 1 && raw.version !== 2) || raw.depsHash !== depsHash) return;
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
     for (const [fileName, value] of Object.entries(deps)) {
@@ -1622,10 +1660,10 @@ export async function startDevServer({
     typeof userConfig?.optimizeDeps?.vendorPackMaxMembers === "number" && userConfig.optimizeDeps.vendorPackMaxMembers > 0
       ? Math.floor(userConfig.optimizeDeps.vendorPackMaxMembers)
       : 25;
-  const vendorPackPlanPath = path.join(depsRoot, "vendor-pack.app.json");
-  const vendorPackRequestsPath = path.join(depsRoot, "deps-requests.json");
-  const vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath) : new Map();
-  const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile<VendorPackPlan>(vendorPackPlanPath) : null;
+  const vendorPackPlanPath = () => path.join(depsRoot, "vendor-pack.app.json");
+  const vendorPackRequestsPath = () => path.join(depsRoot, "deps-requests.json");
+  let vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath()) : new Map<string, number>();
+  const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile<VendorPackPlan>(vendorPackPlanPath()) : null;
   const vendorPackPlanFromDiskValid =
     vendorPacksForce &&
     vendorPackPlanFromDisk &&
@@ -1653,7 +1691,7 @@ export async function startDevServer({
 
   if (vendorPacksForce && vendorPackPlan) {
     // Persist for transparency + deterministic behavior across restarts.
-    writeJsonFile(vendorPackPlanPath, vendorPackPlan);
+    writeJsonFile(vendorPackPlanPath(), vendorPackPlan);
   }
 
   type PackEntry = { entryPath: string; fileName: string; packageLabel: string; packageName?: string | null };
@@ -1700,7 +1738,7 @@ export async function startDevServer({
     ? computeChunkGroupIdFromStableIds(vendorPackEntries.map((d) => d.fileName))
     : null;
   const vendorPackSharedFileName = vendorPackChunkGroupId ? `shared.${vendorPackChunkGroupId}.js` : null;
-  const vendorPackSharedUrl = vendorPackSharedFileName ? `${DEPS_PREFIX}${vendorPackSharedFileName}` : null;
+  const vendorPackSharedUrl = vendorPackSharedFileName ? depsRuntimeUrl(vendorPackSharedFileName) : null;
 
   // Track current-session /@deps request counts (persisted per depsHash for next restart selection).
   const vendorPackSessionRequestCounts: Map<string, number> | null = vendorPacksEnabled ? new Map() : null;
@@ -1713,7 +1751,7 @@ export async function startDevServer({
     if (!force && now - vendorPackRequestCountsLastFlush < 2000) return;
     vendorPackRequestCountsLastFlush = now;
     vendorPackRequestCountsDirty = false;
-    saveDepRequestCounts(vendorPackRequestsPath, vendorPackSessionRequestCounts);
+    saveDepRequestCounts(vendorPackRequestsPath(), vendorPackSessionRequestCounts);
   };
   const getKnownDepRequestCount = (fileName: string): number => {
     const sessionCount = vendorPackSessionRequestCounts?.get(fileName) ?? 0;
@@ -1721,8 +1759,11 @@ export async function startDevServer({
     return vendorPackLastRequestCounts.get(fileName) ?? 0;
   };
 
-  const vendorPackFileName = vendorDeps.length > 0 ? `vendor.${depsHash}.js` : null;
-  const vendorPackUrl = vendorPackFileName ? `${DEPS_PREFIX}${vendorPackFileName}` : null;
+  const getVendorPackFileName = () => vendorDeps.length > 0 ? `vendor.${depsHash}.js` : null;
+  const getVendorPackUrl = () => {
+    const fileName = getVendorPackFileName();
+    return fileName ? depsRuntimeUrl(fileName) : null;
+  };
   const vendorDepFileNames = new Set(vendorDeps.map((d) => d.fileName));
   // Phase 6.2: Vendor Core is always-on. Even when `vendorPacks: "auto"`, we still want
   // shared-chunk chunking for the core set (React runtime hot path) without pulling feature deps in.
@@ -1738,9 +1779,11 @@ export async function startDevServer({
     ? computeChunkGroupIdFromStableIds(vendorDeps.map((d) => d.fileName))
     : null;
   const vendorCoreSharedFileName = vendorCoreChunkGroupId ? `shared.${vendorCoreChunkGroupId}.js` : null;
-  const vendorCoreSharedUrl = vendorCoreSharedFileName ? `${DEPS_PREFIX}${vendorCoreSharedFileName}` : null;
+  const vendorCoreSharedUrl = vendorCoreSharedFileName ? depsRuntimeUrl(vendorCoreSharedFileName) : null;
 
   const ensureVendorPackFile = (): void => {
+    const vendorPackFileName = getVendorPackFileName();
+    const vendorPackUrl = getVendorPackUrl();
     if (!vendorPackFileName || !vendorPackUrl || vendorDeps.length === 0) return;
     const vendorKey = getCacheKey(
       `vendor:v1:${vendorDeps
@@ -1760,7 +1803,7 @@ export async function startDevServer({
     const imports = vendorDeps
       .slice()
       .sort((a, b) => a.specifier.localeCompare(b.specifier))
-      .map((d) => `import "${DEPS_PREFIX}${d.fileName}";`)
+      .map((d) => `import "${depsRuntimeUrl(d.fileName)}";`)
       .join("\n");
     const body =
       `${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}\n` +
@@ -1784,17 +1827,16 @@ export async function startDevServer({
   // - Emit pack modules under `/@deps/` to collapse many dep wrapper requests into a small set.
   // - Apply via AST-based import rewrite (in jsLoader) using a restart-safe index persisted under depsRoot.
   //
-  // Important: Pack module filenames must be content-addressed (include chunkGroupId) because `/@deps/*`
-  // responses are immutable-cached by the browser. If membership changes, the filename changes, avoiding
-  // stale pack code.
+  // Pack filenames include chunkGroupId for artifact identity. Runtime URLs additionally bind to
+  // the opaque depsHash and revalidate because logical wrapper filenames may span layouts.
   // -------------------------------------------------------------------------
-  const vendorPackV2IndexPath = path.join(depsRoot, "vendor-pack.v2.index.json");
+  const vendorPackV2IndexPath = () => path.join(depsRoot, "vendor-pack.v2.index.json");
   const vendorPackV2AllowedPrefix = vendorPacksManual
     ? "vendor-pack.manual."
     : vendorPacksProgressive
       ? "vendor-pack.feature."
       : null;
-  const vendorPackV2 = new VendorPackV2IndexManager({
+  let vendorPackV2 = new VendorPackV2IndexManager({
     depsRoot,
     depsHash,
     outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
@@ -1890,8 +1932,8 @@ export async function startDevServer({
     return entries;
   })();
   const resolveAuthoritativeDepPreloadUrls = (hintUrl: string): string[] => {
-    if (!hintUrl.startsWith(DEPS_PREFIX) || !hintUrl.endsWith(".js")) return [];
-    const fileName = hintUrl.slice(DEPS_PREFIX.length);
+    const fileName = depsFileNameFromRuntimeUrl(hintUrl);
+    if (!fileName) return [];
     const fileNames = resolveAuthoritativeDepPreloadFiles({
       fileName,
       fileExists: (candidateFileName) => fs.existsSync(path.join(depsRoot, candidateFileName)),
@@ -1902,7 +1944,7 @@ export async function startDevServer({
         (value): value is string => typeof value === "string" && value.endsWith(".js"),
       ),
     });
-    return fileNames.map((candidateFileName) => `${DEPS_PREFIX}${candidateFileName}`);
+    return fileNames.map((candidateFileName) => depsRuntimeUrl(candidateFileName));
   };
   const isRouteHintPreloadValid = (hintUrl: string, kind: RouteHintKind): boolean => {
     if (kind === "dep") {
@@ -2091,7 +2133,7 @@ export async function startDevServer({
     }
 
     for (const depFileName of Array.from(resolvedDepFiles).sort()) {
-      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(`${DEPS_PREFIX}${depFileName}`)) {
+      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(depsRuntimeUrl(depFileName))) {
         routedPreloads.add(preloadUrl);
       }
     }
@@ -2163,7 +2205,7 @@ export async function startDevServer({
     );
   }
 
-  const featurePackIndexPath = path.join(depsRoot, "vendor-pack.feature.index.json");
+  const featurePackIndexPath = () => path.join(depsRoot, "vendor-pack.feature.index.json");
   const featurePackStatePathFor = (group: FeaturePackGroup) =>
     path.join(depsRoot, `vendor-pack.feature.${group}.json`);
   const featurePackSlimStatePathFor = (group: FeaturePackGroup) =>
@@ -2194,7 +2236,7 @@ export async function startDevServer({
   const featurePackFileNameToChunkGroup = new Map<string, string>();
   const loadFeaturePackIndex = () => {
     featurePackFileNameToChunkGroup.clear();
-    const raw = featurePacksEnabled ? readJsonFile<VendorFeaturePackIndex>(featurePackIndexPath) : null;
+    const raw = featurePacksEnabled ? readJsonFile<VendorFeaturePackIndex>(featurePackIndexPath()) : null;
     if (
       !raw ||
       raw.depsHash !== depsHash ||
@@ -2235,7 +2277,7 @@ export async function startDevServer({
       updatedAt: new Date().toISOString(),
       fileNameToChunkGroupId: obj,
     };
-    writeJsonFile(featurePackIndexPath, payload);
+    writeJsonFile(featurePackIndexPath(), payload);
   };
 
   // Load index on boot (restart-safe).
@@ -2517,7 +2559,7 @@ export async function startDevServer({
     >;
   };
   const loadDepUsageIndexFromDisk = (): DepUsageIndex | null => {
-    const raw = readJsonFile<any>(depUsageStatePath) ?? readJsonFile<any>(legacyDepUsageStatePath);
+    const raw = readJsonFile<any>(depUsageStatePath()) ?? readJsonFile<any>(legacyDepUsageStatePath());
     if (!raw || (raw.version !== 1 && raw.version !== 2) || raw.depsHash !== depsHash) return null;
     const out: DepUsageIndex = new Map();
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
@@ -2575,7 +2617,7 @@ export async function startDevServer({
         entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : [],
       };
     }
-    writeJsonFile(depUsageStatePath, {
+    writeJsonFile(depUsageStatePath(), {
       version: 2,
       depsHash,
       updatedAt: new Date().toISOString(),
@@ -3282,7 +3324,7 @@ export async function startDevServer({
       .join("|");
   const featurePackSourceExts = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
   const plannedFeatureGroups = new Map<FeaturePackGroup, string>();
-  const featurePlanReportPath = path.join(depsRoot, "vendor-pack.feature.plan-report.json");
+  const featurePlanReportPath = () => path.join(depsRoot, "vendor-pack.feature.plan-report.json");
   const computeFeatureCandidates = (): Array<
     PackEntry & {
       score: number;
@@ -3305,10 +3347,10 @@ export async function startDevServer({
       }
     > = [];
     const depRouteHints = new Map(
-      routeHints
-        .summarizeAssets("dep")
-        .filter((summary) => summary.url.startsWith(DEPS_PREFIX) && summary.url.endsWith(".js"))
-        .map((summary) => [summary.url.slice(DEPS_PREFIX.length), summary] as const),
+      routeHints.summarizeAssets("dep").flatMap((summary) => {
+        const fileName = depsFileNameFromRuntimeUrl(summary.url);
+        return fileName ? ([[fileName, summary]] as const) : [];
+      }),
     );
     for (const entry of entries) {
       if (!entry.entryPath || !fs.existsSync(entry.entryPath)) continue;
@@ -3434,7 +3476,7 @@ export async function startDevServer({
       const group = assignFeaturePlanGroup(usedGroups, plan);
       next.set(group, plan.entries.map((entry) => ({ ...entry })));
     }
-    writeJsonFile(featurePlanReportPath, {
+    writeJsonFile(featurePlanReportPath(), {
       version: 2,
       depsHash,
       updatedAt: new Date().toISOString(),
@@ -3623,6 +3665,7 @@ export async function startDevServer({
   let papContractsPublished = false;
   let papArtifactsPublished = false;
   let papDirty = false;
+  let dependencyEnvironmentReconciling = false;
 
   const isProductionPublishingCpuPressured = (): boolean => {
     const parallelism = Math.max(1, typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length || 1);
@@ -3645,7 +3688,7 @@ export async function startDevServer({
     reason: string,
     level: ProductionPublishingLevel = "contracts",
   ): void => {
-    if (!papEnabled || shuttingDown) return;
+    if (!papEnabled || shuttingDown || dependencyEnvironmentReconciling) return;
     if (level === "artifacts" && !papArtifactsEnabled) return;
     if (level === "contracts" && papContractsPublished && !papDirty) {
       if (papArtifactsEnabled && !papArtifactsPublished) {
@@ -4164,19 +4207,11 @@ export async function startDevServer({
     if (fileName.startsWith("shared.") || fileName.startsWith("vendor.") || fileName.startsWith("vendor-pack.")) {
       return;
     }
-    if (vendorPackFileName && fileName === vendorPackFileName) return;
+    if (fileName === getVendorPackFileName()) return;
 
     const entryFromManifest = depsManifestIndex.get(fileName);
-    let entryFromRegistry = getDepEntry(fileName);
-    let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
-
-    if (!entryPath) {
-      const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
-      if (recovered) {
-        entryFromRegistry = recovered;
-        entryPath = recovered.entryPath;
-      }
-    }
+    const entryFromRegistry = getDepEntry(fileName);
+    const entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
 
     if (!entryPath || !fs.existsSync(entryPath)) return;
 
@@ -4243,7 +4278,7 @@ export async function startDevServer({
               if (routedPack === corePackFileName) {
                 const memberKey = vendorPackV2MemberKey(fileName);
                 packImport =
-                  `import { __ionify_vp_${memberKey}__default as RefreshRuntime } from "${DEPS_PREFIX}${corePackFileName}"`;
+                  `import { __ionify_vp_${memberKey}__default as RefreshRuntime } from "${depsRuntimeUrl(corePackFileName)}"`;
               }
             }
           }
@@ -4270,7 +4305,7 @@ export async function startDevServer({
           packageVersion,
           subpath,
         }).fileName;
-        reactRefreshImport = `${DEPS_PREFIX}${fileName}`;
+        reactRefreshImport = depsRuntimeUrl(fileName);
       }
     } catch {
       reactRefreshImport = null;
@@ -4291,7 +4326,7 @@ export async function startDevServer({
               : "0.0.0",
           subpath: computeSubpathFromEntryPath(reactRefreshPath),
         }).fileName;
-        reactRefreshImport = `${DEPS_PREFIX}${fileName}`;
+        reactRefreshImport = depsRuntimeUrl(fileName);
       } catch (err) {
         logError("Failed to resolve react-refresh/runtime", err);
         return null;
@@ -4320,9 +4355,10 @@ export async function startDevServer({
 
   const getFeaturePackRoutingHash = (): string | null => {
     if (!featurePacksEnabled) return null;
-    if (!fs.existsSync(featurePackIndexPath)) return null;
+    const indexPath = featurePackIndexPath();
+    if (!fs.existsSync(indexPath)) return null;
     try {
-      const stat = fs.statSync(featurePackIndexPath);
+      const stat = fs.statSync(indexPath);
       if (
         featurePackRoutingHashCache &&
         featurePackRoutingHashCache.mtimeMs === stat.mtimeMs &&
@@ -4330,7 +4366,7 @@ export async function startDevServer({
       ) {
         return featurePackRoutingHashCache.hash;
       }
-      const raw = JSON.parse(fs.readFileSync(featurePackIndexPath, "utf8"));
+      const raw = JSON.parse(fs.readFileSync(indexPath, "utf8"));
       const hash = hashFeaturePackRoutingIndex(
         raw,
         depsHash,
@@ -4345,9 +4381,10 @@ export async function startDevServer({
   };
 
   const getVendorPackV2RoutingHash = (): string | null => {
-    if (!fs.existsSync(vendorPackV2IndexPath)) return null;
+    const indexPath = vendorPackV2IndexPath();
+    if (!fs.existsSync(indexPath)) return null;
     try {
-      const stat = fs.statSync(vendorPackV2IndexPath);
+      const stat = fs.statSync(indexPath);
       if (
         vendorPackV2RoutingHashCache &&
         vendorPackV2RoutingHashCache.mtimeMs === stat.mtimeMs &&
@@ -4355,7 +4392,7 @@ export async function startDevServer({
       ) {
         return vendorPackV2RoutingHashCache.hash;
       }
-      const raw = JSON.parse(fs.readFileSync(vendorPackV2IndexPath, "utf8"));
+      const raw = JSON.parse(fs.readFileSync(indexPath, "utf8"));
       const hash = hashVendorPackV2RoutingIndex(
         raw,
         depsHash,
@@ -4407,13 +4444,14 @@ export async function startDevServer({
       const defMatch = trimmed.match(/^import\s+([A-Za-z0-9_$]+)\s+from\s+["']\/@deps\/([^"']+)["'];?\s*$/);
       if (defMatch) {
         const local = defMatch[1]!;
-        const depFileName = defMatch[2]!;
+        const depFileName = depsFileNameFromRuntimeUrl(`${DEPS_PREFIX}${defMatch[2]!}`);
+        if (!depFileName) continue;
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
         if (!fs.existsSync(path.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
-        lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${DEPS_PREFIX}${packFileName}";`;
+        lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${depsRuntimeUrl(packFileName)}";`;
         mutated = true;
         continue;
       }
@@ -4424,13 +4462,14 @@ export async function startDevServer({
       );
       if (nsMatch) {
         const local = nsMatch[1]!;
-        const depFileName = nsMatch[2]!;
+        const depFileName = depsFileNameFromRuntimeUrl(`${DEPS_PREFIX}${nsMatch[2]!}`);
+        if (!depFileName) continue;
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
         if (!fs.existsSync(path.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
-        lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${DEPS_PREFIX}${packFileName}";`;
+        lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${depsRuntimeUrl(packFileName)}";`;
         mutated = true;
         continue;
       }
@@ -4559,8 +4598,8 @@ export async function startDevServer({
   };
   
   const graph = new Graph(rawVersionInputs, { ionifyDir });
-  const registerDevCssGraphSources = (): void => {
-    registerCssDemandGraphSourceFiles(
+  const registerDevCssGraphSources = (): string[] => {
+    return registerCssDemandGraphSourceFiles(
       rootDir,
       graph.listFilesByKind("js").filter((filePath) => {
         if (filePath.includes("node_modules") || filePath.includes(`${path.sep}.ionify${path.sep}`)) return false;
@@ -4570,6 +4609,49 @@ export async function startDevServer({
     );
   };
   const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
+  const resolveTransformedRuntimeGraphDeps = (
+    runtimeDependencies: RuntimeDependencyFact[] | undefined,
+    importerAbs: string,
+    fallbackStaticDeps: string[],
+    fallbackDynamicDeps: string[] = [],
+  ): { deps: string[]; dynamicDeps: string[] } => {
+    if (!Array.isArray(runtimeDependencies)) {
+      return { deps: fallbackStaticDeps, dynamicDeps: fallbackDynamicDeps };
+    }
+    const staticSpecs = runtimeDependencies
+      .filter((dependency) => dependency.kind === "static")
+      .map((dependency) => dependency.specifier);
+    const dynamicSpecs = runtimeDependencies
+      .filter((dependency) => dependency.kind === "dynamic")
+      .map((dependency) => dependency.specifier);
+    const staticClassified = classifyImportSpecifiersForGraph(
+      staticSpecs,
+      importerAbs,
+      configuredExternalSpecifiers,
+    );
+    const dynamicClassified = classifyImportSpecifiersForGraph(
+      dynamicSpecs,
+      importerAbs,
+      configuredExternalSpecifiers,
+    );
+    const localRuntimeDeps = [
+      ...staticClassified.localDeps,
+      ...dynamicClassified.localDeps,
+    ];
+    recordDepLeafGraphNodes(localRuntimeDeps);
+    enqueueLocalGraphCompletion(localRuntimeDeps);
+    scheduleDependencyWatches(localRuntimeDeps);
+    return {
+      deps: rewriteFederationGraphEdgeIds(
+        [...staticClassified.localDeps, ...staticClassified.externalDeps],
+        federationRemoteBindings,
+      ),
+      dynamicDeps: rewriteFederationGraphEdgeIds(
+        [...dynamicClassified.localDeps, ...dynamicClassified.externalDeps],
+        federationRemoteBindings,
+      ),
+    };
+  };
   if (userConfig?.federation) {
     syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
   }
@@ -4820,6 +4902,18 @@ export async function startDevServer({
 	        baseHash: hash,
 	      });
 
+      const runtimeGraph = resolveTransformedRuntimeGraphDeps(
+        result.runtimeDependencies,
+        mod.absPath,
+        nextDeps,
+      );
+      graph.recordFile(
+        mod.absPath,
+        hash,
+        runtimeGraph.deps,
+        runtimeGraph.dynamicDeps,
+      );
+
       const transformed = result.code;
       const envApplied = applyEnvPlaceholders(
         transformed,
@@ -4829,7 +4923,7 @@ export async function startDevServer({
       updates.push({
         url: mod.url,
         hash,
-        deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
+          deps: runtimeGraph.deps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
         reason: mod.reason,
         status: "updated",
         code: envApplied,
@@ -5012,7 +5106,7 @@ export async function startDevServer({
       if (reqPath.startsWith(DEPS_PREFIX)) {
         const fileName = reqPath.slice(DEPS_PREFIX.length);
         if (fileName.endsWith(".js")) bumpDevStable();
-        if (vendorPackFileName && fileName === vendorPackFileName) {
+        if (fileName === getVendorPackFileName()) {
           ensureVendorPackFile();
         }
         if (fileName.endsWith(".js.map")) {
@@ -5023,7 +5117,7 @@ export async function startDevServer({
             // Check 304 before reading file
             if (isNotModified(req, etag)) {
               res.setHeader("ETag", etag);
-              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.setHeader("Cache-Control", "no-cache");
               res.statusCode = 304;
               res.end();
               return;
@@ -5034,7 +5128,7 @@ export async function startDevServer({
               200,
               "application/json; charset=utf-8",
               fs.readFileSync(mapPath),
-              { etag, cacheControl: "public, max-age=31536000, immutable" },
+              { etag, cacheControl: "no-cache" },
             );
             return;
           }
@@ -5045,7 +5139,7 @@ export async function startDevServer({
           vendorPackSessionRequestCounts &&
           fileName.endsWith(".js") &&
           !fileName.startsWith("shared.") &&
-          (!vendorPackFileName || fileName !== vendorPackFileName)
+          fileName !== getVendorPackFileName()
         ) {
           vendorPackSessionRequestCounts.set(
             fileName,
@@ -5074,26 +5168,6 @@ export async function startDevServer({
           });
         };
 
-        // Phase 6.1: On restarts, modules can be served from CAS without re-running rewrite hooks,
-        // so the in-memory dep registry may be empty. Recover entryPath deterministically using
-        // native resolution + stable fileName matching.
-		        if (
-		          !entryPath &&
-		          fileName.endsWith(".js") &&
-		          !fileName.startsWith("shared.") &&
-		          !fileName.startsWith("vendor.") &&
-	          !!native?.resolveModule
-	        ) {
-          const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
-          if (recovered) {
-            entryFromRegistry = recovered;
-            entryPath = recovered.entryPath;
-            packageLabel = recovered.packageName
-              ? formatDepLabel(recovered.packageName, recovered.subpath)
-              : packageLabel;
-	          }
-		        }
-
 		        observeDepForPackPlanning(fileName);
 
 		        const isVersionedDepWrapper =
@@ -5120,7 +5194,7 @@ export async function startDevServer({
 		            const etag = weakEtagFromStat(`deps-${depsHash}-vp2-${vendorV2Hash}`, stat);
 		            if (isNotModified(req, etag)) {
 		              res.setHeader("ETag", etag);
-		              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+	              res.setHeader("Cache-Control", "no-cache");
 		              res.statusCode = 304;
 		              res.end();
 		              logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304) (vp2)`);
@@ -5131,7 +5205,7 @@ export async function startDevServer({
 		            const rewritten = rewriteIonifySharedChunkImportsForVendorPackV2(raw) ?? raw;
 		            sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(Buffer.from(rewritten, "utf8")), {
 		              etag,
-		              cacheControl: "public, max-age=31536000, immutable",
+	              cacheControl: "no-cache",
 		            });
 		            logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (vp2)`);
 		            return;
@@ -5141,7 +5215,7 @@ export async function startDevServer({
 		          if (variant) {
 		            sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
 		              etagPrefix: `deps-${depsHash}`,
-              cacheControl: "public, max-age=31536000, immutable",
+              cacheControl: "no-cache",
             });
             const status = res.statusCode === 304 ? " (304)" : "";
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache${status} (${variant.encoding})`);
@@ -5153,7 +5227,7 @@ export async function startDevServer({
           // Check 304 before reading file (avoid blocking IO)
           if (isNotModified(req, etag)) {
             res.setHeader("ETag", etag);
-            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.setHeader("Cache-Control", "no-cache");
             res.statusCode = 304;
             res.end();
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304)`);
@@ -5161,7 +5235,7 @@ export async function startDevServer({
           }
           sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
             etag,
-            cacheControl: "public, max-age=31536000, immutable",
+            cacheControl: "no-cache",
           });
 		          logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache`);
 		          return;
@@ -5216,12 +5290,12 @@ export async function startDevServer({
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
                 etagPrefix: `deps-${depsHash}`,
-                cacheControl: "public, max-age=31536000, immutable",
+                cacheControl: "no-cache",
               });
             } else {
               sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
                 etag,
-                cacheControl: "public, max-age=31536000, immutable",
+                cacheControl: "no-cache",
               });
             }
             const elapsed = Date.now() - start;
@@ -5278,12 +5352,12 @@ export async function startDevServer({
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
                 etagPrefix: `deps-${depsHash}`,
-                cacheControl: "public, max-age=31536000, immutable",
+                cacheControl: "no-cache",
               });
             } else {
               sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs.readFileSync(depsFilePath)), {
                 etag,
-                cacheControl: "public, max-age=31536000, immutable",
+                cacheControl: "no-cache",
               });
             }
             const elapsed = Date.now() - start;
@@ -5337,13 +5411,13 @@ export async function startDevServer({
           if (variant) {
             sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
               etagPrefix: `deps-${depsHash}`,
-              cacheControl: "public, max-age=31536000, immutable",
+              cacheControl: "no-cache",
             });
           } else {
             const outBuffer = fs.readFileSync(resolvedOutPath);
             sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(outBuffer), {
               etag,
-              cacheControl: "public, max-age=31536000, immutable",
+              cacheControl: "no-cache",
             });
           }
           const elapsed = Date.now() - start;
@@ -5526,18 +5600,23 @@ export async function startDevServer({
           const contentHash = getCacheKey(cssSource);
           const baseCssDir = getCasArtifactPath(casRoot, configHash, contentHash);
           const baseCssFile = path.join(baseCssDir, "transformed.css");
+          const baseCssMetaFile = path.join(baseCssDir, "meta.json");
           watcher.watchFile(effectiveFsPath);
 
           const kind = "css";
 
           // Mode + dependency-isolated CAS key to prevent cross-mode collisions and stale CSS
-          // when @import or PostCSS plugin dependencies change.
+          // when @import or PostCSS plugin dependencies change. Tailwind graph-content
+          // freshness is proven by the CSSA aggregated stamp folded into the recipe below.
+          registerDevCssGraphSources();
+          const baseCssMeta = readJsonFile<any>(baseCssMetaFile);
+          const baseCssMetaCurrent = devCssMetaIsCurrent(baseCssMeta, contentHash, isModule, rootDir);
           const prevDeps = graph.getNode(effectiveFsPath)?.deps ?? [];
           graph.recordStructuralFiles(prevDeps);
           scheduleDependencyWatches(prevDeps);
           const depsStampHash = computeDepsStampHash(prevDeps);
           let artifactHash = getCacheKey(
-            `css:v3:${effectiveFsPath}:${contentHash}:${mode}:${depsStampHash}`,
+            `css:v3:${effectiveFsPath}:${contentHash}:${mode}:${depsStampHash}:${metaTailwindStampForRecipe(baseCssMeta)}`,
           );
           let casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
           const jsMode = mode !== "css:raw";
@@ -5550,7 +5629,12 @@ export async function startDevServer({
                 ? looksLikeIonifyCssJsModule(finalBuffer)
                 : !looksLikeIonifyCssJsModule(finalBuffer);
               if (ok) {
-                res.setHeader("X-Ionify-Cache", "HIT");
+                if (baseCssMetaCurrent) {
+                  res.setHeader("X-Ionify-Cache", "HIT");
+                } else {
+                  finalBuffer = null;
+                  res.setHeader("X-Ionify-Cache", "STALE");
+                }
               } else {
                 finalBuffer = null;
                 res.setHeader("X-Ionify-Cache", "MISMATCH");
@@ -5565,38 +5649,40 @@ export async function startDevServer({
           if (finalBuffer && !fs.existsSync(baseCssFile)) {
             try {
               registerDevCssGraphSources();
-              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
                 preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
+                // R1 (Completeness law): dev's live graph is request-shaped and
+                // cannot be proven complete for the first document, so Tailwind
+                // content must fail closed to the config globs — never narrow.
+                tailwindContentAuthority: { mode: "config-globs" },
               });
-              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-              graph.recordStructuralFiles(depsAbs);
-              const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+              const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+              const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+              graph.recordStructuralFiles(allDepsAbs);
+              const changed = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
               if (changed) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
               }
-              scheduleDependencyWatches(depsAbs);
+              scheduleDependencyWatches(allDepsAbs);
               fs.mkdirSync(baseCssDir, { recursive: true });
               const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
               fs.writeFileSync(tmp, compiledCss, "utf8");
               fs.renameSync(tmp, baseCssFile);
               // Write build-hydration sidecar files so `ionify build` can compute the css:v3
               // derived artifact hash and skip PostCSS entirely on the first build after dev.
-              const metaPath = path.join(baseCssDir, "meta.json");
-              if (!fs.existsSync(metaPath)) {
-                writeJsonFile(metaPath, {
-                  version: 1,
-                  baseHash: contentHash,
-                  pipelineHash,
-                  deps: depsAbs.slice().sort(),
-                  urlDeps: [],
-                  modules: isModule,
-                  generatedAt: new Date().toISOString(),
-                });
-              }
+              writeJsonFile(baseCssMetaFile, buildDevCssMeta({
+                contentHash,
+                pipelineHash,
+                depsAbs,
+                urlDepsAbs,
+                modules: isModule,
+                tailwindGraphContent,
+              }));
               if (isModule && tokens) {
                 const tokPath = path.join(baseCssDir, "tokens.json");
                 if (!fs.existsSync(tokPath)) writeJsonFile(tokPath, tokens);
@@ -5616,39 +5702,40 @@ export async function startDevServer({
               body = renderCssUrlModule(rawUrl);
 
               // `css:url` doesn't require compilation for the response, but build still needs a compiled CSS artifact.
-              if (!fs.existsSync(baseCssFile)) {
+              if (!fs.existsSync(baseCssFile) || !baseCssMetaCurrent) {
                 try {
                   registerDevCssGraphSources();
-                  const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+                  const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                     code: cssSource,
                     filePath: effectiveFsPath,
                     rootDir,
                     modules: isModule,
                     preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
+                    // R1 (Completeness law): dev fails closed to config globs.
+                    tailwindContentAuthority: { mode: "config-globs" },
                   });
-                  const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-                  graph.recordStructuralFiles(depsAbs);
-                  const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+                  const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+                  const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+                  const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+                  body = renderCssUrlModule(`${effectiveUrlPath}?v=${contentHash}-${computeDepsStampHash(allDepsAbs).slice(0, 8)}`);
+                  graph.recordStructuralFiles(allDepsAbs);
+                  const changed = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
                   if (changed) {
                     logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
                   }
-                  scheduleDependencyWatches(depsAbs);
+                  scheduleDependencyWatches(allDepsAbs);
                   fs.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
                   fs.writeFileSync(tmp, compiledCss, "utf8");
                   fs.renameSync(tmp, baseCssFile);
-                  const metaPath = path.join(baseCssDir, "meta.json");
-                  if (!fs.existsSync(metaPath)) {
-                    writeJsonFile(metaPath, {
-                      version: 1,
-                      baseHash: contentHash,
-                      pipelineHash,
-                      deps: depsAbs.slice().sort(),
-                      urlDeps: [],
-                      modules: isModule,
-                      generatedAt: new Date().toISOString(),
-                    });
-                  }
+                  writeJsonFile(baseCssMetaFile, buildDevCssMeta({
+                    contentHash,
+                    pipelineHash,
+                    depsAbs,
+                    urlDepsAbs,
+                    modules: isModule,
+                    tailwindGraphContent,
+                  }));
                   if (isModule && tokens) {
                     const tokPath = path.join(baseCssDir, "tokens.json");
                     if (!fs.existsSync(tokPath)) writeJsonFile(tokPath, tokens);
@@ -5660,12 +5747,16 @@ export async function startDevServer({
             } else {
               // Run PostCSS + (optional) modules pipeline.
               registerDevCssGraphSources();
-              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
                 preprocessorOptions: (userConfig as any)?.css?.preprocessorOptions,
+                // R1 (Completeness law): dev's live graph is request-shaped and
+                // cannot be proven complete for the first document, so Tailwind
+                // content must fail closed to the config globs — never narrow.
+                tailwindContentAuthority: { mode: "config-globs" },
               });
               const servedCss = rewriteCssUrls(
                 rewriteCssImportSpecifiers(
@@ -5684,43 +5775,41 @@ export async function startDevServer({
                   isForbiddenFsPath(abs) || !fs.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs),
               );
 
-              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-              const nextDepsStampHash = computeDepsStampHash(depsAbs);
+              const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+              const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+              const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+              const nextDepsStampHash = computeDepsStampHash(allDepsAbs);
               artifactHash = getCacheKey(
-                `css:v3:${effectiveFsPath}:${contentHash}:${mode}:${nextDepsStampHash}`,
+                `css:v3:${effectiveFsPath}:${contentHash}:${mode}:${nextDepsStampHash}:${compileTailwindStampForRecipe(tailwindGraphContent)}`,
               );
               casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
               casFile = path.join(casDir, jsMode ? "transformed.js" : "transformed.css");
-              graph.recordStructuralFiles(depsAbs);
-              const changed = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              graph.recordStructuralFiles(allDepsAbs);
+              const changed = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
               if (changed) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
               }
-              scheduleDependencyWatches(depsAbs);
+              scheduleDependencyWatches(allDepsAbs);
 
               // Write build-compatible compiled CSS to unified CAS (content-hash keyed).
               // Also write meta.json and tokens.json so `ionify build` can compute the css:v3
               // derived artifact hash and skip PostCSS on the first build after `ionify dev`.
               try {
-                const alreadyExists = fs.existsSync(baseCssFile);
+                const alreadyExists = fs.existsSync(baseCssFile) && baseCssMetaCurrent;
                 if (!alreadyExists) {
                   fs.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
                   fs.writeFileSync(tmp, compiledCss, "utf8");
                   fs.renameSync(tmp, baseCssFile);
                 }
-                const metaPath = path.join(baseCssDir, "meta.json");
-                if (!fs.existsSync(metaPath)) {
-                  writeJsonFile(metaPath, {
-                    version: 1,
-                    baseHash: contentHash,
-                    pipelineHash,
-                    deps: depsAbs.slice().sort(),
-                    urlDeps: [],
-                    modules: isModule,
-                    generatedAt: new Date().toISOString(),
-                  });
-                }
+                writeJsonFile(baseCssMetaFile, buildDevCssMeta({
+                  contentHash,
+                  pipelineHash,
+                  depsAbs,
+                  urlDepsAbs,
+                  modules: isModule,
+                  tailwindGraphContent,
+                }));
                 if (isModule && tokens) {
                   const tokPath = path.join(baseCssDir, "tokens.json");
                   if (!fs.existsSync(tokPath)) writeJsonFile(tokPath, tokens);
@@ -5818,7 +5907,7 @@ export async function startDevServer({
       
       scheduleDependencyWatches(localDeps);
 
-      let result: { code: string };
+      let result: TransformResult;
       try {
 	        result = await transformer.run({
 	          path: effectiveFsPath,
@@ -5839,6 +5928,17 @@ export async function startDevServer({
         code,
         baseHash: hash,
       });
+      const runtimeGraph = resolveTransformedRuntimeGraphDeps(
+        result.runtimeDependencies,
+        effectiveFsPath,
+        nextDeps,
+      );
+      graph.recordFile(
+        effectiveFsPath,
+        hash,
+        runtimeGraph.deps,
+        runtimeGraph.dynamicDeps,
+      );
       const transformedCode = result.code;
       res.setHeader("X-Ionify-Cache", changed ? "MISS" : "HIT");
 
@@ -5905,11 +6005,10 @@ export async function startDevServer({
           // aligned with the active vendor-pack routing authority and avoids
           // trusting stale pack files still sitting on disk.
           const preloadDepsUrl = (hintUrl: string) => {
-            if (!hintUrl.startsWith(DEPS_PREFIX)) return;
-            const fileName = hintUrl.slice(DEPS_PREFIX.length);
-            if (!fileName.endsWith(".js")) return;
+            const fileName = depsFileNameFromRuntimeUrl(hintUrl);
+            if (!fileName) return;
             if (!fs.existsSync(path.join(depsRoot, fileName))) return;
-            preloadUrl(hintUrl);
+            preloadUrl(depsRuntimeUrl(fileName));
           };
 
           const packPreloads = new Set<string>(collectBootstrapRoutedPackPreloadUrls());
@@ -5930,7 +6029,7 @@ export async function startDevServer({
               for (const chunkFile of chunkFiles) {
                 if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
                 if (!fs.existsSync(path.join(depsRoot, chunkFile))) continue;
-                packPreloads.add(`${DEPS_PREFIX}${chunkFile}`);
+                packPreloads.add(depsRuntimeUrl(chunkFile));
               }
             }
           }
@@ -5938,7 +6037,7 @@ export async function startDevServer({
           if (packFilesForVendorDeps.size > 0) {
             for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
             for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
-              preloadDepsUrl(`${DEPS_PREFIX}${packFileName}`);
+              preloadDepsUrl(depsRuntimeUrl(packFileName));
             }
           } else if (packPreloads.size > 0) {
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
@@ -5948,6 +6047,7 @@ export async function startDevServer({
             ensureVendorPackFile();
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
             if (sharedPreload) preloadUrl(sharedPreload);
+            const vendorPackUrl = getVendorPackUrl();
             if (vendorPackUrl) preloadUrl(vendorPackUrl);
           }
         }
@@ -5997,9 +6097,171 @@ export async function startDevServer({
     ? https.createServer(httpsOptions, requestHandler)
     : http.createServer(requestHandler);
 
+  const dependencyEnvironmentPaths = new Set(
+    dependencyEnvironmentWatchPaths(workspace.workspaceRoot, rootDir),
+  );
+  const clearGenerationTimers = <T>(timers: Map<T, ReturnType<typeof setTimeout>>) => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+  };
+  const dependencySubsystemBusy = (): boolean =>
+    activeRequests > 0 ||
+    depUsageScanRunning ||
+    manualSlimBuildRunning ||
+    manualBuildRunning ||
+    featureBuildRunning ||
+    featureSlimBuildRunning;
+
+  const activateDependencyGeneration = async (
+    snapshot: DependencyEnvironmentSnapshot,
+    reasons: string[],
+  ): Promise<void> => {
+    if (shuttingDown) return;
+    if (dependencySubsystemBusy()) {
+      dependencyEnvironmentSettler.notify("await-dependency-quiescence");
+      return;
+    }
+
+    const nextDepsHash = computeDepsHash(configHash, snapshot.lockfile, {
+      nodeEnv: depsNodeEnv,
+      sourcemap: depsSourcemapEnabled,
+      bundleEsm: depsBundleEsmEnabled,
+      sharedChunks: depsSharedChunksMode,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+    });
+    const previousDepsHash = depsHash;
+    const previousDepsRoot = depsRoot;
+
+    papContractsPublished = false;
+    papArtifactsPublished = false;
+    papDirty = true;
+    cancelProductionArtifactsPublication("dependency-environment");
+
+    if (nextDepsHash !== previousDepsHash) {
+      const nextDepsRoot = path.join(ionifyDir, "deps", nextDepsHash);
+      fs.mkdirSync(nextDepsRoot, { recursive: true });
+      let promoted = 0;
+      let skipped = 0;
+      if (native?.depsPromoteArtifacts && fs.existsSync(path.join(previousDepsRoot, "manifest.json"))) {
+        try {
+          const result = native.depsPromoteArtifacts(
+            previousDepsRoot,
+            nextDepsRoot,
+            nextDepsHash,
+            DEPS_OPTIMIZER_OUTPUT_VERSION,
+          );
+          promoted = result.promoted;
+          skipped = result.skipped;
+        } catch (error) {
+          logWarn(`[deps] DPL generation promotion failed closed: ${String(error)}`);
+        }
+      }
+
+      if (devStableTimer) clearTimeout(devStableTimer);
+      devStableTimer = null;
+      devStableServedCount = 0;
+      depsHash = nextDepsHash;
+      depsRoot = nextDepsRoot;
+      process.env.IONIFY_DEPS_HASH = nextDepsHash;
+      pruneDepsCache(ionifyDir, nextDepsHash);
+
+      refreshDepsManifestIndex();
+      directDepUsageFileNames.clear();
+      loadDirectDepUsageFileNamesFromDisk();
+      depUsageIndex = packSlimmingEnabled ? loadDepUsageIndexFromDisk() : null;
+      setDirectDepUsageFileNames(depUsageIndex);
+
+      vendorPackLastRequestCounts = vendorPacksEnabled
+        ? loadDepRequestCounts(vendorPackRequestsPath())
+        : new Map<string, number>();
+      vendorPackSessionRequestCounts?.clear();
+      vendorPackRequestCountsDirty = false;
+      vendorPackRequestCountsLastFlush = 0;
+
+      clearGenerationTimers(manualSlimBuildTimers);
+      clearGenerationTimers(manualBuildTimers);
+      clearGenerationTimers(featureBuildTimers);
+      clearGenerationTimers(featureSlimBuildTimers);
+      manualSlimBuildQueue.length = 0;
+      manualBuildQueue.length = 0;
+      featureBuildQueue.length = 0;
+      featureSlimBuildQueue.length = 0;
+
+      manualState.clear();
+      manualSlimState.clear();
+      for (const entries of manualObserved.values()) entries.clear();
+      featureObserved.clear();
+      featureState.clear();
+      featureLastReadyState.clear();
+      featureSlimState.clear();
+      featureLastReadySlimState.clear();
+      featurePackFileNameToChunkGroup.clear();
+      plannedFeatureGroups.clear();
+      featurePackActivationPending = false;
+
+      vendorPackV2 = new VendorPackV2IndexManager({
+        depsRoot,
+        depsHash,
+        outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+        allowPackFilePrefix: vendorPackV2AllowedPrefix,
+        log: { info: logInfo, warn: logWarn },
+      });
+      vendorPackV2.loadFromDisk();
+      loadFeaturePackIndex();
+      featurePackRoutingHashCache = null;
+      vendorPackV2RoutingHashCache = null;
+
+      for (const depFile of graph.listFilesByKind("dep")) {
+        graph.removeFile(depFile);
+      }
+      graph.flush();
+      bumpDevStable();
+      logInfo(
+        `[deps] DPL generation activated ${previousDepsHash} -> ${nextDepsHash}` +
+        ` (promoted=${promoted}, reoptimize=${skipped}, reasons=${reasons.join(",") || "unknown"})`,
+      );
+    } else {
+      refreshDepsManifestIndex();
+      logInfo(
+        `[deps] Dependency environment converged without store rotation` +
+        ` (depsHash=${depsHash}, reasons=${reasons.join(",") || "unknown"})`,
+      );
+    }
+
+    hmr.broadcastEvent("dependency-generation", {
+      previous: previousDepsHash,
+      current: depsHash,
+    });
+    dependencyEnvironmentReconciling = false;
+    scheduleProductionArtifactPublication("dependency-generation", "contracts");
+  };
+
+  const dependencyEnvironmentSettler = new DependencyEnvironmentSettler({
+    workspaceRoot: workspace.workspaceRoot,
+    projectRoot: rootDir,
+    settleMs: 250,
+    onStable: activateDependencyGeneration,
+    onInvalid: (reason) => {
+      logWarn(`[deps] Dependency environment is not stable; retaining ${depsHash}: ${reason}`);
+    },
+  });
+
+  for (const dependencyEnvironmentPath of dependencyEnvironmentPaths) {
+    watcher.watchFile(dependencyEnvironmentPath, { allowMissing: true });
+  }
+
   // Broadcast HMR reload on changes
   watcher.on("change", (file, status) => {
     logInfo(`[Watcher] ${status}: ${file}`);
+    if (dependencyEnvironmentPaths.has(path.resolve(file))) {
+      dependencyEnvironmentReconciling = true;
+      papContractsPublished = false;
+      papArtifactsPublished = false;
+      papDirty = true;
+      cancelProductionArtifactsPublication(`dependency:${status}`);
+      dependencyEnvironmentSettler.notify(`${status}:${path.basename(file)}`);
+      return;
+    }
     papContractsPublished = false;
     papArtifactsPublished = false;
     papDirty = true;
@@ -6083,6 +6345,7 @@ export async function startDevServer({
     shuttingDown = true;
     pendingWatchedDeps.clear();
     pendingWatchFlush = false;
+    dependencyEnvironmentSettler.close();
 
     try {
       hmr.close();

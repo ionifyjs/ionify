@@ -2,28 +2,35 @@
 import {
   FEDERATION_GRAPH_PREFIX,
   Graph,
+  LOCKFILE_ORDER,
   MODULE_PREFIX,
+  PRODUCTION_PLAN_OUTPUT_VERSION,
   REACT_REFRESH_HMR_CONTRACT_VERSION,
   REACT_REFRESH_RUNTIME_MODULE,
   TransformWorkerPool,
   VendorPackV2IndexManager,
   WS_MODULE_PREFIX,
+  admitTransformArtifact,
   analyzeFeaturePackSharedClosurePressure,
   applyDefineReplacements,
   applyParserEnv,
+  auditProductionSourceFreshness,
   buildCanonicalDepFileNameIndex,
   buildDefineConfig,
   buildFederationConfigGraphNodes,
   buildFederationVersionContract,
+  cacheDepRegistration,
   canonicalizeDepFileName,
   canonicalizeDepUsageIndex,
   classifyImportSpecifiersForGraph,
+  clearProductionPublicationProgress,
   collectConfiguredExternalSpecifiers,
   collectFederationExposeEntryPaths,
   collectFederationRemoteImportBindings,
   collectNativeExternalModules,
   compileCss,
   computeChunkGroupIdFromStableIds,
+  computeCssDemandGraphContentStamp,
   computeDefineSignature,
   computeDepsHash,
   computeSubpathFromEntryPath,
@@ -31,8 +38,10 @@ import {
   createProductionGraphVersionInputs,
   createProductionPublicationState,
   decodePublicPath,
+  depsFileNameFromRuntimeUrl,
   deriveFeaturePackRoutingMap,
   extractImports,
+  formatDepsRuntimeUrl,
   fromWsModuleId,
   generateBuildPlan,
   getCasArtifactPath,
@@ -49,10 +58,13 @@ import {
   loadDepStopsFromManifest,
   loadEnv,
   loadIonifyConfig,
+  localSourceExtensions,
   planAutoFeaturePackGroups,
   prepareCanonicalProductionDependencyPlan,
   publicPathForFile,
   readLockfile,
+  readProductionPublicationPlan,
+  readProductionPublicationState,
   reconcilePackEntries,
   registerCssDemandGraphSourceFiles,
   registerDepEntry,
@@ -69,6 +81,7 @@ import {
   resolveScopeHoist,
   resolveTreeshake,
   resolveWorkspace,
+  restoreCachedDepRegistrations,
   rewriteCssUrls,
   rewriteFederationGraphEdgeIds,
   runBuildCommand,
@@ -78,9 +91,11 @@ import {
   toWsModuleId,
   vendorPackV2MemberKey,
   writeProductionPublicationPlan,
+  writeProductionPublicationProgress,
+  writeProductionPublicationReadinessRecord,
   writeProductionPublicationState,
-  writeProductionReadinessRecord
-} from "../chunk-3ROH22V6.js";
+  writeTransformArtifact
+} from "../chunk-WHZYUUSD.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -89,7 +104,7 @@ import {
   native,
   tryBundleNodeModule,
   tryNativeTransform
-} from "../chunk-ORW3UGOY.js";
+} from "../chunk-PQP3Y562.js";
 import {
   resolveCloudProfile,
   resolveCloudToken,
@@ -106,6 +121,9 @@ import {
 import "../chunk-FHXXO743.js";
 
 // src/cli/index.ts
+import { readFileSync } from "fs";
+import { fileURLToPath as fileURLToPath2 } from "url";
+import { dirname, join } from "path";
 import { Command, Option } from "commander";
 
 // src/cli/commands/dev.ts
@@ -113,8 +131,8 @@ import http from "http";
 import https from "https";
 import url from "url";
 import { spawn } from "child_process";
-import fs7 from "fs";
-import path6 from "path";
+import fs8 from "fs";
+import path7 from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import selfsigned from "selfsigned";
@@ -1107,7 +1125,6 @@ function selectStartupPolicyPreloads(snapshot, routeKey) {
 // src/core/resolver/module-resolver.ts
 import path2 from "path";
 import fs4 from "fs";
-var DEFAULT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".json", ".mjs"];
 var DEFAULT_CONDITIONS = ["import", "default"];
 var DEFAULT_MAIN_FIELDS = ["module", "main"];
 var ModuleResolver = class {
@@ -1119,7 +1136,7 @@ var ModuleResolver = class {
     this.options = {
       baseUrl: options.baseUrl || ".",
       paths: options.paths || {},
-      extensions: options.extensions || DEFAULT_EXTENSIONS,
+      extensions: options.extensions || localSourceExtensions(),
       alias: options.alias || {},
       conditions: options.conditions || DEFAULT_CONDITIONS,
       mainFields: options.mainFields || DEFAULT_MAIN_FIELDS
@@ -1321,11 +1338,11 @@ var IonifyWatcher = class extends EventEmitter {
     const abs = path3.resolve(filePath);
     return this.watchers.has(abs) || this.polled.has(abs);
   }
-  watchFile(filePath) {
+  watchFile(filePath, options = {}) {
     const abs = path3.resolve(filePath);
     if (this.isWatched(abs)) return;
     if (/(node_modules|\.git|\.ionify|dist)/.test(abs)) return;
-    if (!fs5.existsSync(abs)) return;
+    if (!fs5.existsSync(abs) && !options.allowMissing) return;
     try {
       const dir = path3.dirname(abs);
       const watcher = fs5.watch(dir, (event, filename) => {
@@ -1336,18 +1353,24 @@ var IonifyWatcher = class extends EventEmitter {
         const stat = exists ? fs5.statSync(abs) : null;
         this.emitChange(abs, exists ? "changed" : "deleted", stat);
       });
+      watcher.on("error", () => {
+        watcher.close();
+        this.watchers.delete(abs);
+      });
       this.watchers.set(abs, watcher);
       this.polled.add(abs);
-      fs5.watchFile(abs, { interval: 5e3 }, (curr, prev) => {
-        if (curr.mtimeMs !== prev.mtimeMs) {
-          this.emitChange(abs, "changed", curr);
+      fs5.watchFile(abs, { interval: options.allowMissing ? 500 : 5e3 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs || curr.nlink !== prev.nlink) {
+          const status = curr.nlink === 0 ? "deleted" : prev.nlink === 0 ? "added" : "changed";
+          this.emitChange(abs, status, curr.nlink === 0 ? null : curr);
         }
       });
     } catch {
       this.polled.add(abs);
-      fs5.watchFile(abs, { interval: 8e3 }, (curr, prev) => {
-        if (curr.mtimeMs !== prev.mtimeMs) {
-          this.emitChange(abs, "changed", curr);
+      fs5.watchFile(abs, { interval: options.allowMissing ? 500 : 8e3 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs || curr.nlink !== prev.nlink) {
+          const status = curr.nlink === 0 ? "deleted" : prev.nlink === 0 ? "added" : "changed";
+          this.emitChange(abs, status, curr.nlink === 0 ? null : curr);
         }
       });
     }
@@ -1442,7 +1465,7 @@ var TransformEngine = class {
   cacheEnabled;
   // Bump when the on-disk transform output format or semantics change.
   // Included in CAS paths so restarts never serve stale transformed output.
-  cacheVersion = "v3";
+  cacheVersion = "v6";
   casRoot;
   versionHash;
   constructor(options) {
@@ -1455,35 +1478,57 @@ var TransformEngine = class {
     this.loaders.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
   async run(ctx) {
-    const { getCacheKey: getCacheKey2 } = await import("../cache-FL2AOD3I.js");
-    const path18 = await import("path");
-    const fs17 = await import("fs");
+    const { getCacheKey: getCacheKey2 } = await import("../cache-IXXFJLZC.js");
+    const path19 = await import("path");
+    const fs18 = await import("fs");
     const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
     const loaderSig = `${this.cacheVersion}|${this.loaders.map((l) => l.name || "loader").join("|")}`;
     const loaderHash = getCacheKey2(loaderSig);
     const memKey = `${moduleHash}-${loaderHash}`;
-    const casDir = this.casRoot && this.versionHash ? path18.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash) : null;
-    const casFile = casDir ? path18.join(casDir, "transformed.js") : null;
-    const casMapFile = casDir ? path18.join(casDir, "transformed.js.map") : null;
+    const casDir = this.casRoot && this.versionHash ? path19.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash) : null;
+    const casFile = casDir ? path19.join(casDir, "transformed.js") : null;
+    const casMapFile = casDir ? path19.join(casDir, "transformed.js.map") : null;
+    const casMetaFile = casDir ? path19.join(casDir, "transform.meta.json") : null;
+    const workspaceRoot = ctx.config?.root ? path19.resolve(ctx.config.root) : process.cwd();
     const debug = process.env.IONIFY_DEV_TRANSFORM_CACHE_DEBUG === "1";
     if (this.cacheEnabled) {
       const memHit = transformCache.get(memKey);
-      if (memHit) {
+      if (memHit && restoreCachedDepRegistrations(memHit.dependencyEntries, workspaceRoot)) {
         if (debug) {
           console.log(`[Dev Cache] HIT mem key=${memKey} size=${transformCache.metrics().size}`);
         }
-        return { code: memHit.transformed, map: memHit.map };
+        return {
+          code: memHit.transformed,
+          map: memHit.map,
+          dependencyEntries: memHit.dependencyEntries,
+          runtimeDependencies: memHit.runtimeDependencies
+        };
       }
-      if (casFile && fs17.existsSync(casFile)) {
+      if (casFile && casMetaFile && fs18.existsSync(casFile) && fs18.existsSync(casMetaFile)) {
         try {
-          const code = fs17.readFileSync(casFile, "utf8");
-          const map = casMapFile && fs17.existsSync(casMapFile) ? fs17.readFileSync(casMapFile, "utf8") : void 0;
-          const parsed = { code, map };
+          const code = fs18.readFileSync(casFile, "utf8");
+          const meta = JSON.parse(fs18.readFileSync(casMetaFile, "utf8"));
+          if (meta.version !== 2 || meta.codeHash !== getCacheKey2(code) || typeof meta.hasMap !== "boolean" || !Array.isArray(meta.dependencyEntries) || !Array.isArray(meta.runtimeDependencies) || !meta.runtimeDependencies.every(
+            (dependency) => dependency !== null && typeof dependency === "object" && typeof dependency.specifier === "string" && dependency.specifier.length > 0 && (dependency.kind === "static" || dependency.kind === "dynamic")
+          )) {
+            throw new Error("incomplete transform metadata");
+          }
+          const map = meta.hasMap ? casMapFile && fs18.existsSync(casMapFile) ? fs18.readFileSync(casMapFile, "utf8") : (() => {
+            throw new Error("missing transform source map");
+          })() : void 0;
+          const dependencyEntries = meta.dependencyEntries;
+          const runtimeDependencies = meta.runtimeDependencies;
+          if (!restoreCachedDepRegistrations(dependencyEntries, workspaceRoot)) {
+            throw new Error("unrestorable transform dependency metadata");
+          }
+          const parsed = { code, map, dependencyEntries, runtimeDependencies };
           transformCache.set(memKey, {
             hash: moduleHash,
             loaderHash,
             transformed: parsed.code,
             map: parsed.map,
+            dependencyEntries,
+            runtimeDependencies,
             timestamp: Date.now()
           });
           if (debug) {
@@ -1495,12 +1540,42 @@ var TransformEngine = class {
       }
     }
     let working = { ...ctx };
-    let result = { code: ctx.code };
+    let result = {
+      code: ctx.code,
+      dependencyEntries: [],
+      runtimeDependencies: []
+    };
     for (const loader of this.loaders) {
       if (!loader.test(working)) continue;
       const output = await loader.transform({ ...working, code: result.code });
       if (output && output.code !== void 0) {
-        result = { ...result, ...output };
+        const dependencyEntries = [
+          ...result.dependencyEntries ?? [],
+          ...output.dependencyEntries ?? []
+        ];
+        const uniqueDependencyEntries = Array.from(
+          new Map(dependencyEntries.map((entry) => [entry.fileName, entry])).values()
+        ).sort((a, b) => a.fileName.localeCompare(b.fileName));
+        const runtimeDependencies = [
+          ...result.runtimeDependencies ?? [],
+          ...output.runtimeDependencies ?? []
+        ];
+        const uniqueRuntimeDependencies = Array.from(
+          new Map(
+            runtimeDependencies.map((dependency) => [
+              `${dependency.kind}:${dependency.specifier}`,
+              dependency
+            ])
+          ).values()
+        ).sort(
+          (a, b) => a.kind === b.kind ? a.specifier.localeCompare(b.specifier) : a.kind.localeCompare(b.kind)
+        );
+        result = {
+          ...result,
+          ...output,
+          dependencyEntries: uniqueDependencyEntries,
+          runtimeDependencies: uniqueRuntimeDependencies
+        };
         working = { ...working, code: result.code };
       }
     }
@@ -1510,16 +1585,47 @@ var TransformEngine = class {
         loaderHash,
         transformed: result.code,
         map: result.map,
+        dependencyEntries: result.dependencyEntries ?? [],
+        runtimeDependencies: result.runtimeDependencies ?? [],
         timestamp: Date.now()
       });
-      if (casFile) {
+      if (casFile && casMetaFile) {
+        const tempFiles = [];
         try {
-          fs17.mkdirSync(path18.dirname(casFile), { recursive: true });
-          fs17.writeFileSync(casFile, result.code, "utf8");
+          fs18.mkdirSync(path19.dirname(casFile), { recursive: true });
+          const suffix = `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const codeTmp = `${casFile}${suffix}`;
+          const metaTmp = `${casMetaFile}${suffix}`;
+          tempFiles.push(codeTmp, metaTmp);
+          fs18.writeFileSync(codeTmp, result.code, "utf8");
+          let mapTmp = null;
           if (result.map && casMapFile) {
-            fs17.writeFileSync(casMapFile, typeof result.map === "string" ? result.map : JSON.stringify(result.map), "utf8");
+            mapTmp = `${casMapFile}${suffix}`;
+            tempFiles.push(mapTmp);
+            fs18.writeFileSync(mapTmp, typeof result.map === "string" ? result.map : JSON.stringify(result.map), "utf8");
           }
+          fs18.writeFileSync(
+            metaTmp,
+            JSON.stringify({
+              version: 2,
+              codeHash: getCacheKey2(result.code),
+              hasMap: Boolean(result.map),
+              dependencyEntries: result.dependencyEntries ?? [],
+              runtimeDependencies: result.runtimeDependencies ?? []
+            }),
+            "utf8"
+          );
+          fs18.renameSync(codeTmp, casFile);
+          if (mapTmp && casMapFile) fs18.renameSync(mapTmp, casMapFile);
+          fs18.renameSync(metaTmp, casMetaFile);
         } catch {
+        } finally {
+          for (const tempFile of tempFiles) {
+            try {
+              if (fs18.existsSync(tempFile)) fs18.unlinkSync(tempFile);
+            } catch {
+            }
+          }
         }
       }
       if (debug) {
@@ -1767,6 +1873,9 @@ function shouldUseReactRefresh(options) {
 import fs6 from "fs";
 import path5 from "path";
 var JS_EXTENSIONS = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
+function depsRuntimeUrl(fileName, chunkGroup) {
+  return formatDepsRuntimeUrl(fileName, process.env.IONIFY_DEPS_HASH, chunkGroup);
+}
 function resolveIonifyDir(rootDir) {
   const fromEnv = process.env.IONIFY_STATE_DIR;
   if (fromEnv && path5.isAbsolute(fromEnv)) return fromEnv;
@@ -2000,7 +2109,7 @@ function rewriteVendorPackV2Imports(code, rootDir) {
     if (!importFileName) continue;
     const memberKey = vendorPackV2MemberKey2(depFileName);
     const prefix = `__ionify_vp_${memberKey}`;
-    const newSourceValue = `/@deps/${importFileName}`;
+    const newSourceValue = depsRuntimeUrl(importFileName);
     const makeImportedIdent = (value, template) => ({
       type: "Identifier",
       span: template?.span ?? { start: 0, end: 0 },
@@ -2117,20 +2226,22 @@ function findNearestPackageJson(filePath) {
   }
   return null;
 }
-function makeDepsProxyForFile(filePath, code, rootDir) {
+function makeDepsProxyForFile(filePath, code, rootDir, recordDepEntry) {
   if (!looksLikeCjsWrapperSource(code)) return null;
   const pkgJsonPath = findNearestPackageJson(filePath);
   if (!pkgJsonPath) return null;
   try {
     const pkg = JSON.parse(fs6.readFileSync(pkgJsonPath, "utf8"));
-    const fileName = registerDepEntry({
+    const depEntry = registerDepEntry({
       entryPath: filePath,
       packageName: pkg?.name ?? "dep",
       packageVersion: pkg?.version ?? "0.0.0",
       // Important: include the physical subpath so stable dep ids remain correct across restarts
       // and match the optimizer's stable id (e.g. react-refresh/runtime must include `__runtime`).
       subpath: computeSubpathForDep(filePath, pkg)
-    }).fileName;
+    });
+    recordDepEntry(depEntry);
+    const fileName = depEntry.fileName;
     const importFileName = getVendorPackV2ImportFileName(rootDir, fileName);
     if (importFileName) {
       const depsHash = process.env.IONIFY_DEPS_HASH;
@@ -2154,7 +2265,7 @@ function makeDepsProxyForFile(filePath, code, rootDir) {
       }
       const memberKey = vendorPackV2MemberKey2(fileName);
       const prefix = `__ionify_vp_${memberKey}`;
-      const packUrl = `/@deps/${importFileName}`;
+      const packUrl = depsRuntimeUrl(importFileName);
       const lines = [];
       lines.push(`import { ${prefix}__default, ${prefix}__ns } from "${packUrl}";`);
       for (const name of exportNames) {
@@ -2168,7 +2279,7 @@ function makeDepsProxyForFile(filePath, code, rootDir) {
       return lines.join("\n");
     }
     const cg = getFeaturePackChunkGroupId(rootDir, fileName);
-    const url2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+    const url2 = depsRuntimeUrl(fileName, cg);
     return `import __ionify_dep__default, * as __ionify_dep__ns from "${url2}";
 export default __ionify_dep__default;
 export * from "${url2}";
@@ -2232,12 +2343,16 @@ var jsLoader = {
     const isNodeModules = filePath.includes("node_modules");
     const rewriteDebug = process.env.IONIFY_IMPORT_REWRITE_DEBUG === "1";
     const rootDir = config?.root ? path5.resolve(config.root) : process.cwd();
+    const dependencyEntries = /* @__PURE__ */ new Map();
+    const recordDepEntry = (entry) => {
+      dependencyEntries.set(entry.fileName, cacheDepRegistration(entry, rootDir));
+    };
     const stateDir = process.env.IONIFY_STATE_DIR && path5.isAbsolute(process.env.IONIFY_STATE_DIR) ? process.env.IONIFY_STATE_DIR : null;
     const versionHash = process.env.IONIFY_CONFIG_HASH || null;
     const casRoot = stateDir ? path5.join(stateDir, "cas") : null;
     let output = code;
     if (isNodeModules) {
-      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir);
+      const depsProxy = makeDepsProxyForFile(filePath, code, rootDir, recordDepEntry);
       if (depsProxy) {
         output = depsProxy;
       } else {
@@ -2315,6 +2430,19 @@ if (import.meta.hot) {
     }
     await init;
     const [imports] = parse(output);
+    const runtimeDependencies = Array.from(
+      new Map(
+        imports.filter((record) => typeof record.n === "string" && record.n.length > 0).map((record) => {
+          const dependency = {
+            specifier: record.n,
+            kind: record.t === 2 ? "dynamic" : "static"
+          };
+          return [`${dependency.kind}:${dependency.specifier}`, dependency];
+        })
+      ).values()
+    ).sort(
+      (a, b) => a.kind === b.kind ? a.specifier.localeCompare(b.specifier) : a.kind.localeCompare(b.kind)
+    );
     if (rewriteDebug && ext === ".mjs" && isNodeModules) {
       console.warn(`[Ionify][rewrite] scanning ${imports.length} import(s) in ${filePath}`);
     }
@@ -2342,16 +2470,33 @@ if (import.meta.hot) {
           const resolvedNative = native.resolveModule(pathPart, filePath);
           const kind = resolvedNative?.kind;
           const fsPath = resolvedNative?.fsPath ?? resolvedNative?.fs_path ?? null;
+          if (fsPath && isCssLikeExt(path5.extname(fsPath))) {
+            const replacement2 = publicPathForFile(rootDir, fsPath) + (suffix || "?inline");
+            mutated = true;
+            if (record.t === 2) {
+              rewritten += output.slice(lastIndex, record.s + 1);
+              rewritten += replacement2;
+              rewritten += output[record.e - 1];
+              lastIndex = record.e;
+            } else {
+              rewritten += output.slice(lastIndex, record.s);
+              rewritten += replacement2;
+              lastIndex = record.e;
+            }
+            continue;
+          }
           if (kind === "PkgCjs" && fsPath) {
             const pkg = resolvedNative?.pkg;
-            const fileName = registerDepEntry({
+            const depEntry = registerDepEntry({
               entryPath: fsPath,
               packageName: pkg?.name ?? pathPart,
               packageVersion: pkg?.version ?? "0.0.0",
               subpath: computeSubpathForDep(fsPath, pkg)
-            }).fileName;
+            });
+            recordDepEntry(depEntry);
+            const fileName = depEntry.fileName;
             const cg = getFeaturePackChunkGroupId(rootDir, fileName);
-            const replacement2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+            const replacement2 = depsRuntimeUrl(fileName, cg);
             if (!mutated) {
               mutated = true;
             }
@@ -2372,14 +2517,16 @@ if (import.meta.hot) {
               const resolvedCode = fs6.readFileSync(fsPath, "utf8");
               if (looksLikeCjsWrapperSource(resolvedCode)) {
                 const pkg2 = resolvedNative?.pkg;
-                const fileName2 = registerDepEntry({
+                const depEntry2 = registerDepEntry({
                   entryPath: fsPath,
                   packageName: pkg2?.name ?? pathPart,
                   packageVersion: pkg2?.version ?? "0.0.0",
                   subpath: computeSubpathForDep(fsPath, pkg2)
-                }).fileName;
+                });
+                recordDepEntry(depEntry2);
+                const fileName2 = depEntry2.fileName;
                 const cg2 = getFeaturePackChunkGroupId(rootDir, fileName2);
-                const replacement3 = cg2 ? `/@deps/${fileName2}?cg=${encodeURIComponent(cg2)}` : `/@deps/${fileName2}`;
+                const replacement3 = depsRuntimeUrl(fileName2, cg2);
                 if (!mutated) mutated = true;
                 if (record.t === 2) {
                   rewritten += output.slice(lastIndex, record.s + 1);
@@ -2396,14 +2543,16 @@ if (import.meta.hot) {
             } catch {
             }
             const pkg = resolvedNative?.pkg;
-            const fileName = registerDepEntry({
+            const depEntry = registerDepEntry({
               entryPath: fsPath,
               packageName: pkg?.name ?? pathPart,
               packageVersion: pkg?.version ?? "0.0.0",
               subpath: computeSubpathForDep(fsPath, pkg)
-            }).fileName;
+            });
+            recordDepEntry(depEntry);
+            const fileName = depEntry.fileName;
             const cg = getFeaturePackChunkGroupId(rootDir, fileName);
-            const replacement2 = cg ? `/@deps/${fileName}?cg=${encodeURIComponent(cg)}` : `/@deps/${fileName}`;
+            const replacement2 = depsRuntimeUrl(fileName, cg);
             if (!mutated) mutated = true;
             if (record.t === 2) {
               rewritten += output.slice(lastIndex, record.s + 1);
@@ -2485,7 +2634,13 @@ if (import.meta.hot) {
     if (vendorPackV2Enabled) {
       output = rewriteVendorPackV2Imports(output, rootDir);
     }
-    return { code: output };
+    return {
+      code: output,
+      dependencyEntries: Array.from(dependencyEntries.values()).sort(
+        (a, b) => a.fileName.localeCompare(b.fileName)
+      ),
+      runtimeDependencies
+    };
   }
 };
 
@@ -2550,16 +2705,167 @@ function weakEtagFromContent(prefix, content) {
 }
 
 // src/cli/commands/dev.ts
-import crypto from "crypto";
+import crypto2 from "crypto";
 import zlib from "zlib";
+
+// src/core/deps/dependency-environment.ts
+import crypto from "crypto";
+import fs7 from "fs";
+import path6 from "path";
+function uniqueRoots(workspaceRoot, projectRoot) {
+  return Array.from(new Set([workspaceRoot, projectRoot].map((root) => path6.resolve(root))));
+}
+function dependencyEnvironmentWatchPaths(workspaceRoot, projectRoot) {
+  const paths = /* @__PURE__ */ new Set();
+  for (const root of uniqueRoots(workspaceRoot, projectRoot)) {
+    paths.add(path6.join(root, "package.json"));
+    for (const lockfileName of LOCKFILE_ORDER) {
+      paths.add(path6.join(root, lockfileName));
+    }
+  }
+  return Array.from(paths).sort();
+}
+function validateJsonFile(filePath, contents) {
+  try {
+    const parsed = JSON.parse(contents.toString("utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return `${path6.basename(filePath)} must contain a JSON object`;
+    }
+    return null;
+  } catch {
+    return `${path6.basename(filePath)} is not stable valid JSON`;
+  }
+}
+function validateLockfile(lockfile) {
+  if (!lockfile) return null;
+  if (lockfile.name === "package-lock.json") {
+    return validateJsonFile(lockfile.path, lockfile.contents);
+  }
+  if (lockfile.name === "pnpm-lock.yaml") {
+    const text = lockfile.contents.toString("utf8");
+    return /^lockfileVersion\s*:/m.test(text) ? null : "pnpm-lock.yaml has no lockfileVersion";
+  }
+  if (lockfile.name === "yarn.lock") {
+    return lockfile.contents.length > 0 ? null : "yarn.lock is empty";
+  }
+  if (lockfile.name === "bun.lockb") {
+    return lockfile.contents.length > 0 ? null : "bun.lockb is empty";
+  }
+  return null;
+}
+function readDependencyEnvironmentSnapshot(workspaceRoot, projectRoot) {
+  const watchedPaths = dependencyEnvironmentWatchPaths(workspaceRoot, projectRoot);
+  const hash = crypto.createHash("sha256");
+  for (const root of uniqueRoots(workspaceRoot, projectRoot)) {
+    const packagePath = path6.join(root, "package.json");
+    if (!fs7.existsSync(packagePath)) continue;
+    let contents;
+    try {
+      contents = fs7.readFileSync(packagePath);
+    } catch {
+      return { ok: false, reason: `${packagePath} could not be read`, watchedPaths };
+    }
+    const invalid = validateJsonFile(packagePath, contents);
+    if (invalid) return { ok: false, reason: invalid, watchedPaths };
+    hash.update(packagePath);
+    hash.update(contents);
+  }
+  let lockfile;
+  try {
+    lockfile = readLockfile(workspaceRoot, projectRoot);
+  } catch {
+    return { ok: false, reason: "lockfile could not be read atomically", watchedPaths };
+  }
+  const invalidLockfile = validateLockfile(lockfile);
+  if (invalidLockfile) {
+    return { ok: false, reason: invalidLockfile, watchedPaths };
+  }
+  if (lockfile) {
+    hash.update(lockfile.path);
+    hash.update(lockfile.contents);
+  } else {
+    hash.update("no-lockfile");
+  }
+  return {
+    ok: true,
+    snapshot: {
+      fingerprint: hash.digest("hex"),
+      lockfile,
+      watchedPaths
+    }
+  };
+}
+var DependencyEnvironmentSettler = class {
+  constructor(options) {
+    this.options = options;
+  }
+  timer = null;
+  closed = false;
+  pendingReasons = /* @__PURE__ */ new Set();
+  notify(reason) {
+    if (this.closed) return;
+    this.pendingReasons.add(reason);
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.reconcile();
+    }, this.options.settleMs);
+    this.timer.unref?.();
+  }
+  close() {
+    this.closed = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.pendingReasons.clear();
+  }
+  async reconcile() {
+    if (this.closed) return;
+    const first = readDependencyEnvironmentSnapshot(
+      this.options.workspaceRoot,
+      this.options.projectRoot
+    );
+    if (!first.ok) {
+      this.options.onInvalid?.(first.reason);
+      this.notify("retry-invalid");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, this.options.settleMs));
+    if (this.closed) return;
+    const second = readDependencyEnvironmentSnapshot(
+      this.options.workspaceRoot,
+      this.options.projectRoot
+    );
+    if (!second.ok) {
+      this.options.onInvalid?.(second.reason);
+      this.notify("retry-invalid");
+      return;
+    }
+    if (first.snapshot.fingerprint !== second.snapshot.fingerprint) {
+      this.notify("retry-changing");
+      return;
+    }
+    const reasons = Array.from(this.pendingReasons).sort();
+    this.pendingReasons.clear();
+    try {
+      await this.options.onStable(second.snapshot, reasons);
+    } catch (error) {
+      this.options.onInvalid?.(
+        `generation activation failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      this.notify("retry-activation");
+    }
+  }
+};
+
+// src/cli/commands/dev.ts
 var IONIFY_CSS_JS_MARKER = "// ionify:css";
 var IONIFY_VENDOR_PACK_MARKER = "// ionify:vendor-pack";
 var DEPS_OPTIMIZER_OUTPUT_VERSION = getDepsOptimizerOutputVersion();
 var VENDOR_PACK_V2_REWRITE_POLICY_VERSION = 2;
 var __filename2 = fileURLToPath(import.meta.url);
-var __dirname2 = path6.dirname(__filename2);
-var CLIENT_DIR = path6.resolve(__dirname2, "../client");
-var CLIENT_FALLBACK_DIR = path6.resolve(process.cwd(), "src/client");
+var __dirname2 = path7.dirname(__filename2);
+var CLIENT_DIR = path7.resolve(__dirname2, "../client");
+var CLIENT_FALLBACK_DIR = path7.resolve(process.cwd(), "src/client");
 var DEPS_PREFIX = "/@deps/";
 function syncFederationGraphNodes(graph, nodes) {
   const nextIds = new Set(nodes.map((node) => node.id));
@@ -2573,13 +2879,13 @@ function syncFederationGraphNodes(graph, nodes) {
 function resolvePublicDir(rootDir, value) {
   if (value === false) return null;
   const dir = typeof value === "string" && value.trim().length > 0 ? value.trim() : "public";
-  return path6.isAbsolute(dir) ? dir : path6.resolve(rootDir, dir);
+  return path7.isAbsolute(dir) ? dir : path7.resolve(rootDir, dir);
 }
 function decodePublicDirPath(publicDirAbs, urlPath) {
   if (!urlPath.startsWith("/")) return null;
-  const normalizedRoot = path6.resolve(publicDirAbs);
-  const joined = path6.resolve(normalizedRoot, "." + urlPath);
-  if (!joined.startsWith(normalizedRoot + path6.sep) && joined !== normalizedRoot) return null;
+  const normalizedRoot = path7.resolve(publicDirAbs);
+  const joined = path7.resolve(normalizedRoot, "." + urlPath);
+  if (!joined.startsWith(normalizedRoot + path7.sep) && joined !== normalizedRoot) return null;
   if (isForbiddenFsPath(joined)) return null;
   return joined;
 }
@@ -2594,9 +2900,9 @@ function resolveSpaFallbackPolicy(rootDir, rawValue) {
   const rawEnabled = objectValue ? objectValue.enabled : rawValue;
   const mode = rawEnabled === void 0 ? "auto" : rawEnabled === true || rawEnabled === false ? rawEnabled : rawEnabled === "auto" ? "auto" : "auto";
   const entryRaw = objectValue && typeof objectValue.entry === "string" && objectValue.entry.trim().length > 0 ? objectValue.entry.trim() : "/index.html";
-  const entryFilePath = entryRaw.startsWith("/") ? path6.join(rootDir, entryRaw) : path6.resolve(rootDir, entryRaw);
+  const entryFilePath = entryRaw.startsWith("/") ? path7.join(rootDir, entryRaw) : path7.resolve(rootDir, entryRaw);
   const disableDotRule = objectValue?.disableDotRule === true;
-  const entryExists = fs7.existsSync(entryFilePath) && fs7.statSync(entryFilePath).isFile();
+  const entryExists = fs8.existsSync(entryFilePath) && fs8.statSync(entryFilePath).isFile();
   const enabled = mode === "auto" ? entryExists : mode === true ? entryExists : false;
   return {
     enabled,
@@ -2618,7 +2924,7 @@ function isHtmlNavigationRequest(req, reqPath, query, policy) {
   if ("import" in query || "inline" in query || "raw" in query || "module" in query || "url" in query) {
     return false;
   }
-  const baseName = path6.posix.basename(reqPath);
+  const baseName = path7.posix.basename(reqPath);
   if (!policy.disableDotRule && baseName.includes(".")) {
     return false;
   }
@@ -2630,7 +2936,7 @@ function isHtmlNavigationRequest(req, reqPath, query, policy) {
   return accept.includes("text/html");
 }
 function normalizeGraphDepForClient(rootDir, dep) {
-  return dep.startsWith("http://") || dep.startsWith("https://") ? dep : path6.isAbsolute(dep) ? normalizeUrlFromFs(rootDir, dep) : dep;
+  return dep.startsWith("http://") || dep.startsWith("https://") ? dep : path7.isAbsolute(dep) ? normalizeUrlFromFs(rootDir, dep) : dep;
 }
 function rewriteCssImportSpecifiers(cssText, filePath, rootDir, moduleResolver) {
   const importRe = /@import\s+(?:url\(\s*)?(?:'([^']+)'|"([^"]+)"|([^'"\s)]+))\s*\)?[^;]*;/gi;
@@ -2663,13 +2969,13 @@ function rewriteCssImportSpecifiers(cssText, filePath, rootDir, moduleResolver) 
   return rewritten;
 }
 function readClientAssetFile(fileName) {
-  const primary = path6.join(CLIENT_DIR, fileName);
-  if (fs7.existsSync(primary)) {
-    return { filePath: primary, code: fs7.readFileSync(primary, "utf8") };
+  const primary = path7.join(CLIENT_DIR, fileName);
+  if (fs8.existsSync(primary)) {
+    return { filePath: primary, code: fs8.readFileSync(primary, "utf8") };
   }
-  const fallback = path6.join(CLIENT_FALLBACK_DIR, fileName);
-  if (fs7.existsSync(fallback)) {
-    return { filePath: fallback, code: fs7.readFileSync(fallback, "utf8") };
+  const fallback = path7.join(CLIENT_FALLBACK_DIR, fileName);
+  if (fs8.existsSync(fallback)) {
+    return { filePath: fallback, code: fs8.readFileSync(fallback, "utf8") };
   }
   throw new Error(`Missing Ionify client asset: ${fileName}`);
 }
@@ -2681,9 +2987,9 @@ function resolveHttpsMaterial(rootDir, rawValue) {
   const trimmed = rawValue.trim();
   if (!trimmed) return void 0;
   if (trimmed.includes("BEGIN ")) return trimmed;
-  const candidate = path6.isAbsolute(trimmed) ? trimmed : path6.resolve(rootDir, trimmed);
-  if (!fs7.existsSync(candidate)) return void 0;
-  return fs7.readFileSync(candidate);
+  const candidate = path7.isAbsolute(trimmed) ? trimmed : path7.resolve(rootDir, trimmed);
+  if (!fs8.existsSync(candidate)) return void 0;
+  return fs8.readFileSync(candidate);
 }
 function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
   if (!httpsConfig) return null;
@@ -2699,11 +3005,11 @@ function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
       };
     }
   }
-  const certDir = path6.join(ionifyDir, "certs");
-  const keyPath = path6.join(certDir, "dev-server.key");
-  const certPath = path6.join(certDir, "dev-server.crt");
-  if (!fs7.existsSync(keyPath) || !fs7.existsSync(certPath)) {
-    fs7.mkdirSync(certDir, { recursive: true });
+  const certDir = path7.join(ionifyDir, "certs");
+  const keyPath = path7.join(certDir, "dev-server.key");
+  const certPath = path7.join(certDir, "dev-server.crt");
+  if (!fs8.existsSync(keyPath) || !fs8.existsSync(certPath)) {
+    fs8.mkdirSync(certDir, { recursive: true });
     const generated = selfsigned.generate(
       [
         { name: "commonName", value: "localhost" },
@@ -2725,16 +3031,16 @@ function ensureDevHttpsOptions(httpsConfig, rootDir, ionifyDir) {
         ]
       }
     );
-    fs7.writeFileSync(keyPath, generated.private, "utf8");
-    fs7.writeFileSync(certPath, generated.cert, "utf8");
+    fs8.writeFileSync(keyPath, generated.private, "utf8");
+    fs8.writeFileSync(certPath, generated.cert, "utf8");
   }
   return {
-    key: fs7.readFileSync(keyPath),
-    cert: fs7.readFileSync(certPath)
+    key: fs8.readFileSync(keyPath),
+    cert: fs8.readFileSync(certPath)
   };
 }
 function guessContentType(filePath) {
-  const ext = path6.extname(filePath);
+  const ext = path7.extname(filePath);
   if (ext === ".html") return "text/html; charset=utf-8";
   if (isCssLikeExt(ext)) return "text/css; charset=utf-8";
   if (ext === ".json") return "application/json; charset=utf-8";
@@ -2775,16 +3081,16 @@ function selectPrecompressedVariant(req, baseFilePath) {
   const enc = value.toLowerCase();
   if (enc.includes("br")) {
     const brPath = `${baseFilePath}.br`;
-    if (fs7.existsSync(brPath)) return { filePath: brPath, encoding: "br" };
+    if (fs8.existsSync(brPath)) return { filePath: brPath, encoding: "br" };
   }
   if (enc.includes("gzip")) {
     const gzPath = `${baseFilePath}.gz`;
-    if (fs7.existsSync(gzPath)) return { filePath: gzPath, encoding: "gzip" };
+    if (fs8.existsSync(gzPath)) return { filePath: gzPath, encoding: "gzip" };
   }
   return null;
 }
 function sendPrecompressedFile(req, res, status, contentType, variant, opts) {
-  const stat = fs7.statSync(variant.filePath);
+  const stat = fs8.statSync(variant.filePath);
   const etag = weakEtagFromStat(opts.etagPrefix, stat);
   res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", opts.cacheControl);
@@ -2797,7 +3103,7 @@ function sendPrecompressedFile(req, res, status, contentType, variant, opts) {
     return;
   }
   res.statusCode = status;
-  res.end(fs7.readFileSync(variant.filePath));
+  res.end(fs8.readFileSync(variant.filePath));
 }
 function looksLikeIonifyCssJsModule(body) {
   const head = body.subarray(0, 96).toString("utf8");
@@ -2807,10 +3113,9 @@ function computeDepsStampHash(depsAbs) {
   if (!depsAbs.length) return "0";
   const entries = [];
   for (const dep of depsAbs) {
-    const abs = path6.resolve(dep);
+    const abs = path7.resolve(dep);
     try {
-      const stat = fs7.statSync(abs);
-      entries.push(`${abs}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+      entries.push(`${abs}:${getCacheKey(fs8.readFileSync(abs))}`);
     } catch {
       entries.push(`${abs}:missing`);
     }
@@ -2842,10 +3147,10 @@ function sendBuffer(req, res, status, contentType, body, opts) {
   res.end(body);
 }
 function readProjectPackageJson(rootDir) {
-  const pkgPath = path6.join(rootDir, "package.json");
-  if (!fs7.existsSync(pkgPath)) return null;
+  const pkgPath = path7.join(rootDir, "package.json");
+  if (!fs8.existsSync(pkgPath)) return null;
   try {
-    return JSON.parse(fs7.readFileSync(pkgPath, "utf8"));
+    return JSON.parse(fs8.readFileSync(pkgPath, "utf8"));
   } catch {
     return null;
   }
@@ -2880,7 +3185,7 @@ function detectVendorSpecifiers(pkgJson) {
 function computeSubpathForDep2(fsPath, pkg) {
   const computed = computeSubpathFromEntryPath(fsPath);
   if (computed) return computed;
-  if (fs7.existsSync(fsPath)) return null;
+  if (fs8.existsSync(fsPath)) return null;
   const raw = pkg?.subpath;
   if (typeof raw === "string") {
     const cleaned = raw.replace(/^\.\//, "").replace(/^\/+/, "");
@@ -2992,11 +3297,11 @@ function buildRouteHintClientKey(req) {
   return key.length > 2 ? key : null;
 }
 function pruneDepsCache(ionifyDir, depsHash) {
-  const depsRoot = path6.join(ionifyDir, "deps");
-  if (!fs7.existsSync(depsRoot)) return;
-  const entries = fs7.readdirSync(depsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
-    const fullPath = path6.join(depsRoot, entry.name);
-    const stat = fs7.statSync(fullPath);
+  const depsRoot = path7.join(ionifyDir, "deps");
+  if (!fs8.existsSync(depsRoot)) return;
+  const entries = fs8.readdirSync(depsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+    const fullPath = path7.join(depsRoot, entry.name);
+    const stat = fs8.statSync(fullPath);
     return { name: entry.name, path: fullPath, mtimeMs: stat.mtimeMs };
   }).sort((a, b) => b.mtimeMs - a.mtimeMs);
   const keep = /* @__PURE__ */ new Set();
@@ -3006,15 +3311,15 @@ function pruneDepsCache(ionifyDir, depsHash) {
   }
   for (const entry of entries) {
     if (!keep.has(entry.name)) {
-      fs7.rmSync(entry.path, { recursive: true, force: true });
+      fs8.rmSync(entry.path, { recursive: true, force: true });
     }
   }
 }
 function loadDepsManifestIndex(depsRoot) {
-  const manifestPath = path6.join(depsRoot, "manifest.json");
-  if (!fs7.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
+  const manifestPath = path7.join(depsRoot, "manifest.json");
+  if (!fs8.existsSync(manifestPath)) return /* @__PURE__ */ new Map();
   try {
-    const raw = fs7.readFileSync(manifestPath, "utf8");
+    const raw = fs8.readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
     const entries = parsed?.entries ?? {};
     const map = /* @__PURE__ */ new Map();
@@ -3049,18 +3354,73 @@ function loadDepsManifestIndex(depsRoot) {
   }
 }
 function readJsonFile3(filePath) {
-  if (!fs7.existsSync(filePath)) return null;
+  if (!fs8.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs7.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs8.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
 }
 function writeJsonFile3(filePath, data) {
   try {
-    fs7.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+    fs8.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
   } catch {
   }
+}
+function normalizeAbsList(values) {
+  if (!Array.isArray(values)) return [];
+  return Array.from(
+    new Set(
+      values.filter((value) => typeof value === "string" && value.length > 0).map((value) => path7.resolve(value))
+    )
+  ).sort();
+}
+var DEV_CSS_META_VERSION = 2;
+function metaTailwindStampForRecipe(meta) {
+  return meta?.tailwindGraphContent?.enabled === true && typeof meta.tailwindGraphContent.stamp === "string" && meta.tailwindGraphContent.stamp.length > 0 ? meta.tailwindGraphContent.stamp : "none";
+}
+function compileTailwindStampForRecipe(tailwindGraphContent) {
+  return tailwindGraphContent?.enabled === true && typeof tailwindGraphContent.stamp === "string" && tailwindGraphContent.stamp.length > 0 ? tailwindGraphContent.stamp : "none";
+}
+function devCssMetaIsCurrent(meta, contentHash, modules, rootDir) {
+  if (!meta || typeof meta !== "object") return false;
+  if (meta.version !== DEV_CSS_META_VERSION || meta.baseHash !== contentHash || meta.modules !== modules) return false;
+  if (typeof meta.depsStampHash !== "string" || meta.depsStampHash.length === 0) return false;
+  const deps = normalizeAbsList([...Array.isArray(meta.deps) ? meta.deps : [], ...Array.isArray(meta.urlDeps) ? meta.urlDeps : []]);
+  const currentStamp = computeDepsStampHash(deps);
+  if (currentStamp !== meta.depsStampHash) return false;
+  if (meta.tailwindGraphContent?.enabled === true && Number(meta.tailwindGraphContent?.files ?? 0) > 0) {
+    if (typeof meta.tailwindGraphContent.stamp !== "string" || meta.tailwindGraphContent.stamp.length === 0) {
+      return false;
+    }
+    const current = computeCssDemandGraphContentStamp(rootDir);
+    if (!current || current.stamp !== meta.tailwindGraphContent.stamp) return false;
+  }
+  return true;
+}
+function buildDevCssMeta(options) {
+  const deps = normalizeAbsList(options.depsAbs);
+  const urlDeps = normalizeAbsList(options.urlDepsAbs);
+  const tw = options.tailwindGraphContent;
+  const twEnabled = tw?.enabled === true && Number(tw?.files ?? 0) > 0;
+  return {
+    version: DEV_CSS_META_VERSION,
+    baseHash: options.contentHash,
+    pipelineHash: options.pipelineHash,
+    depsStampHash: computeDepsStampHash([...deps, ...urlDeps]),
+    deps,
+    urlDeps,
+    modules: options.modules,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    tailwindGraphContent: tw ? {
+      enabled: tw.enabled === true,
+      files: Number(tw.files ?? 0),
+      plugins: Number(tw.plugins ?? 0),
+      configPath: typeof tw.configPath === "string" ? tw.configPath : null,
+      fallbackReason: typeof tw.fallbackReason === "string" ? tw.fallbackReason : null,
+      stamp: twEnabled && typeof tw.stamp === "string" && tw.stamp.length > 0 ? tw.stamp : null
+    } : null
+  };
 }
 function loadDepRequestCounts(filePath) {
   const raw = readJsonFile3(filePath);
@@ -3081,59 +3441,6 @@ function saveDepRequestCounts(filePath, counts) {
     if (value > 0) obj[key] = value;
   }
   writeJsonFile3(filePath, obj);
-}
-function parseStableDepFileName(fileName) {
-  if (typeof fileName !== "string" || !fileName.endsWith(".js")) return null;
-  const base = fileName.slice(0, -".js".length);
-  const at = base.indexOf("@");
-  if (at <= 0) return null;
-  const sanitizedName = base.slice(0, at);
-  const rest = base.slice(at + 1);
-  const underscore = rest.lastIndexOf("_");
-  if (underscore <= 0) return null;
-  const versionAndSubpath = rest.slice(0, underscore);
-  const subSep = versionAndSubpath.indexOf("__");
-  const version = subSep === -1 ? versionAndSubpath : versionAndSubpath.slice(0, subSep);
-  const subpathNorm = subSep === -1 ? "" : versionAndSubpath.slice(subSep + 2);
-  const subpath = subpathNorm ? subpathNorm.split("__").join("/") : null;
-  if (!sanitizedName || !version) return null;
-  return { sanitizedName, version, subpath };
-}
-function recoverDepEntryFromStableFileName(fileName, rootDir) {
-  if (!native?.resolveModule) return null;
-  const parsed = parseStableDepFileName(fileName);
-  if (!parsed) return null;
-  const suffix = parsed.subpath ? `/${parsed.subpath}` : "";
-  const bases = [parsed.sanitizedName];
-  if (parsed.sanitizedName.includes("__")) {
-    bases.push(`@${parsed.sanitizedName.replace("__", "/")}`);
-    bases.push(`@${parsed.sanitizedName.split("__").join("/")}`);
-  }
-  const seen = /* @__PURE__ */ new Set();
-  for (const base of bases) {
-    const spec = `${base}${suffix}`;
-    if (seen.has(spec)) continue;
-    seen.add(spec);
-    try {
-      const r = native.resolveModule(spec, rootDir);
-      const fsPath = r?.fsPath ?? r?.fs_path ?? null;
-      if (!fsPath || typeof fsPath !== "string") continue;
-      const pkg = r?.pkg ?? null;
-      const packageName = typeof pkg?.name === "string" ? pkg.name : base.replace(/^@/, "");
-      const packageVersion = typeof pkg?.version === "string" ? pkg.version : parsed.version;
-      const entry = registerDepEntry({
-        entryPath: fsPath,
-        packageName,
-        packageVersion,
-        subpath: computeSubpathForDep2(fsPath, pkg)
-      });
-      if (entry.fileName === fileName) {
-        return entry;
-      }
-    } catch {
-    }
-  }
-  return null;
 }
 function buildVendorPackPlan(options) {
   const {
@@ -3186,7 +3493,7 @@ function buildVendorPackPlan(options) {
     if (seen.has(candidate.fileName)) continue;
     const sizeBytes = candidate.signals.sizeBytes ?? 0;
     if (totalBytes + sizeBytes > maxBytes) continue;
-    if (!candidate.entryPath || !fs7.existsSync(candidate.entryPath)) continue;
+    if (!candidate.entryPath || !fs8.existsSync(candidate.entryPath)) continue;
     seen.add(candidate.fileName);
     totalBytes += sizeBytes;
     selected.push(candidate);
@@ -3220,7 +3527,7 @@ async function startDevServer({
   process.env.MODE = envMode;
   const userConfig = await loadIonifyConfig(process.cwd(), envMode);
   const configuredExternalSpecifiers = collectConfiguredExternalSpecifiers(userConfig);
-  const projectRootOverride = userConfig?.root ? path6.resolve(userConfig.root) : null;
+  const projectRootOverride = userConfig?.root ? path7.resolve(userConfig.root) : null;
   const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
     projectRootOverride
   });
@@ -3228,7 +3535,7 @@ async function startDevServer({
   const ionifyDir = workspace.ionifyDir;
   const allowedRoots = workspace.allowedRoots;
   const publicDirAbs = resolvePublicDir(rootDir, userConfig?.publicDir);
-  fs7.mkdirSync(ionifyDir, { recursive: true });
+  fs8.mkdirSync(ionifyDir, { recursive: true });
   process.env.IONIFY_PROJECT_ROOT = rootDir;
   process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
   process.env.IONIFY_STATE_DIR = ionifyDir;
@@ -3258,7 +3565,7 @@ async function startDevServer({
     combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
   });
   const resolvedEntries = userConfig?.entry ? (Array.isArray(userConfig.entry) ? userConfig.entry : [userConfig.entry]).map(
-    (entry) => entry.startsWith("/") ? path6.join(rootDir, entry) : path6.resolve(rootDir, entry)
+    (entry) => entry.startsWith("/") ? path7.join(rootDir, entry) : path7.resolve(rootDir, entry)
   ) : void 0;
   const pluginNames = Array.isArray(userConfig?.plugins) ? userConfig.plugins.map((p) => typeof p === "string" ? p : p?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
   const rawVersionInputs = {
@@ -3270,6 +3577,8 @@ async function startDevServer({
     entry: resolvedEntries ?? null,
     resolveOptions: {
       alias: userConfig?.resolve?.alias,
+      builtinFallback: userConfig?.resolve?.builtinFallback,
+      runtimeGlobals: userConfig?.resolve?.runtimeGlobals,
       extensions: userConfig?.resolve?.extensions,
       conditions: userConfig?.resolve?.conditions,
       mainFields: userConfig?.resolve?.mainFields
@@ -3285,7 +3594,7 @@ async function startDevServer({
   const configHash = computeGraphVersion(rawVersionInputs);
   logInfo(`[Dev] Version hash: ${configHash}`);
   process.env.IONIFY_CONFIG_HASH = configHash;
-  const casRoot = path6.join(ionifyDir, "cas");
+  const casRoot = path7.join(ionifyDir, "cas");
   const lockfile = readLockfile(workspace.workspaceRoot, rootDir);
   if (lockfile) {
     const countLabel = lockfile.packageCount === null ? "unknown" : lockfile.packageCount;
@@ -3297,7 +3606,7 @@ async function startDevServer({
   const depsSharedChunksMode = depsSharedChunksRaw === void 0 || depsSharedChunksRaw === "auto" ? "auto" : depsSharedChunksRaw === true ? "1" : depsSharedChunksRaw === false ? "0" : String(depsSharedChunksRaw);
   const depsSharedChunksEnabled = depsSharedChunksMode !== "0";
   const depsNodeEnv = process.env.NODE_ENV ?? "development";
-  const depsHash = computeDepsHash(configHash, lockfile, {
+  let depsHash = computeDepsHash(configHash, lockfile, {
     nodeEnv: depsNodeEnv,
     sourcemap: depsSourcemapEnabled,
     bundleEsm: depsBundleEsmEnabled,
@@ -3306,22 +3615,23 @@ async function startDevServer({
   });
   logInfo(`[deps] depsHash: ${depsHash} from ${lockfile?.name ?? "config"}`);
   process.env.IONIFY_DEPS_HASH = depsHash;
-  const depsRoot = path6.join(ionifyDir, "deps", depsHash);
-  fs7.mkdirSync(depsRoot, { recursive: true });
+  const depsRuntimeUrl2 = (fileName) => formatDepsRuntimeUrl(fileName, depsHash);
+  let depsRoot = path7.join(ionifyDir, "deps", depsHash);
+  fs8.mkdirSync(depsRoot, { recursive: true });
   pruneDepsCache(ionifyDir, depsHash);
   const DEV_STABLE_DEBOUNCE_MS = 5e3;
   let devStableTimer = null;
   let devStableServedCount = 0;
   const writeDevStableSentinel = () => {
     try {
-      const sentinelPath = path6.join(depsRoot, ".dev-stable");
+      const sentinelPath = path7.join(depsRoot, ".dev-stable");
       const payload = {
         ts: (/* @__PURE__ */ new Date()).toISOString(),
         depsHash,
         nodeEnv: depsNodeEnv,
         servedDepCount: devStableServedCount
       };
-      fs7.writeFileSync(sentinelPath, JSON.stringify(payload));
+      fs8.writeFileSync(sentinelPath, JSON.stringify(payload));
     } catch {
     }
   };
@@ -3348,7 +3658,7 @@ async function startDevServer({
   };
   const realpathOrSelf = (filePath) => {
     try {
-      return fs7.realpathSync(filePath);
+      return fs8.realpathSync(filePath);
     } catch {
       return filePath;
     }
@@ -3365,7 +3675,7 @@ async function startDevServer({
     const seen = /* @__PURE__ */ new Set();
     for (const depAbs of depAbsPaths) {
       if (typeof depAbs !== "string" || depAbs.length === 0) continue;
-      if (!depAbs.includes(`${path6.sep}node_modules${path6.sep}`)) continue;
+      if (!depAbs.includes(`${path7.sep}node_modules${path7.sep}`)) continue;
       const canonical = realpathOrSelf(depAbs);
       if (seen.has(canonical)) continue;
       seen.add(canonical);
@@ -3377,7 +3687,7 @@ async function startDevServer({
       let hash = entry?.artifactHash ?? null;
       if (!hash) {
         try {
-          hash = crypto.createHash("sha256").update(fs7.readFileSync(canonical)).digest("hex");
+          hash = crypto2.createHash("sha256").update(fs8.readFileSync(canonical)).digest("hex");
         } catch {
           continue;
         }
@@ -3392,20 +3702,20 @@ async function startDevServer({
     let processed = 0;
     while (queue.length && processed < 2e3) {
       const absPath = queue.shift();
-      if (!path6.isAbsolute(absPath)) continue;
+      if (!path7.isAbsolute(absPath)) continue;
       const canonical = realpathOrSelf(absPath);
       if (seen.has(canonical)) continue;
       seen.add(canonical);
-      if (canonical.includes(`${path6.sep}node_modules${path6.sep}`)) {
+      if (canonical.includes(`${path7.sep}node_modules${path7.sep}`)) {
         recordDepLeafGraphNodes([canonical]);
         continue;
       }
       if (graph.getNode(canonical)) continue;
-      if (!fs7.existsSync(canonical)) continue;
-      const extName = path6.extname(canonical).toLowerCase();
+      if (!fs8.existsSync(canonical)) continue;
+      const extName = path7.extname(canonical).toLowerCase();
       if (isAssetExt(extName)) {
         try {
-          const assetHash = crypto.createHash("sha256").update(fs7.readFileSync(canonical)).digest("hex");
+          const assetHash = crypto2.createHash("sha256").update(fs8.readFileSync(canonical)).digest("hex");
           graph.recordFile(canonical, assetHash, [], [], "asset");
         } catch {
         }
@@ -3414,7 +3724,7 @@ async function startDevServer({
       if (!graphCompletionExts.has(extName)) continue;
       let code;
       try {
-        code = fs7.readFileSync(canonical, "utf8");
+        code = fs8.readFileSync(canonical, "utf8");
       } catch {
         continue;
       }
@@ -3451,7 +3761,7 @@ async function startDevServer({
   const pendingGraphCompletionSeeds = /* @__PURE__ */ new Set();
   const enqueueLocalGraphCompletion = (seedAbsPaths) => {
     for (const depAbs of seedAbsPaths) {
-      if (typeof depAbs !== "string" || depAbs.length === 0 || !path6.isAbsolute(depAbs)) continue;
+      if (typeof depAbs !== "string" || depAbs.length === 0 || !path7.isAbsolute(depAbs)) continue;
       pendingGraphCompletionSeeds.add(depAbs);
     }
   };
@@ -3476,8 +3786,8 @@ async function startDevServer({
     groupMap.set(entry.fileName, entry);
     return !existed;
   };
-  const depUsageStatePath = path6.join(depsRoot, "deps-usage.v2.json");
-  const legacyDepUsageStatePath = path6.join(depsRoot, "deps-usage.v1.json");
+  const depUsageStatePath = () => path7.join(depsRoot, "deps-usage.v2.json");
+  const legacyDepUsageStatePath = () => path7.join(depsRoot, "deps-usage.v1.json");
   const directDepUsageFileNames = /* @__PURE__ */ new Set();
   const setDirectDepUsageFileNames = (index) => {
     directDepUsageFileNames.clear();
@@ -3488,7 +3798,7 @@ async function startDevServer({
     }
   };
   const loadDirectDepUsageFileNamesFromDisk = () => {
-    const raw = readJsonFile3(depUsageStatePath) ?? readJsonFile3(legacyDepUsageStatePath);
+    const raw = readJsonFile3(depUsageStatePath()) ?? readJsonFile3(legacyDepUsageStatePath());
     if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return;
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
     for (const [fileName, value] of Object.entries(deps)) {
@@ -3610,10 +3920,10 @@ async function startDevServer({
   const vendorPacksMode = vendorPacksForce ? "force" : "auto";
   const vendorPackMaxBytes = typeof userConfig?.optimizeDeps?.vendorPackMaxBytes === "number" && userConfig.optimizeDeps.vendorPackMaxBytes > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxBytes) : 600 * 1024;
   const vendorPackMaxMembers = typeof userConfig?.optimizeDeps?.vendorPackMaxMembers === "number" && userConfig.optimizeDeps.vendorPackMaxMembers > 0 ? Math.floor(userConfig.optimizeDeps.vendorPackMaxMembers) : 25;
-  const vendorPackPlanPath = path6.join(depsRoot, "vendor-pack.app.json");
-  const vendorPackRequestsPath = path6.join(depsRoot, "deps-requests.json");
-  const vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath) : /* @__PURE__ */ new Map();
-  const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile3(vendorPackPlanPath) : null;
+  const vendorPackPlanPath = () => path7.join(depsRoot, "vendor-pack.app.json");
+  const vendorPackRequestsPath = () => path7.join(depsRoot, "deps-requests.json");
+  let vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath()) : /* @__PURE__ */ new Map();
+  const vendorPackPlanFromDisk = vendorPacksForce ? readJsonFile3(vendorPackPlanPath()) : null;
   const vendorPackPlanFromDiskValid = vendorPacksForce && vendorPackPlanFromDisk && typeof vendorPackPlanFromDisk?.depsHash === "string" && vendorPackPlanFromDisk.depsHash === depsHash && Array.isArray(vendorPackPlanFromDisk?.members) ? vendorPackPlanFromDisk : null;
   const vendorPackComputedPlan = vendorPacksForce ? buildVendorPackPlan({
     depsHash,
@@ -3626,7 +3936,7 @@ async function startDevServer({
   }) : null;
   const vendorPackPlan = vendorPacksForce ? vendorPackComputedPlan && vendorPackComputedPlan.members.length > 0 ? vendorPackComputedPlan : vendorPackPlanFromDiskValid ?? vendorPackComputedPlan : null;
   if (vendorPacksForce && vendorPackPlan) {
-    writeJsonFile3(vendorPackPlanPath, vendorPackPlan);
+    writeJsonFile3(vendorPackPlanPath(), vendorPackPlan);
   }
   const vendorPackMembers = vendorPacksForce && vendorPackPlan ? vendorPackPlan.members : [];
   const vendorPackEntries = [];
@@ -3638,7 +3948,7 @@ async function startDevServer({
   }
   for (const member of vendorPackMembers) {
     if (!member?.fileName || !member?.entryPath) continue;
-    if (!fs7.existsSync(member.entryPath)) continue;
+    if (!fs8.existsSync(member.entryPath)) continue;
     if (vendorPackFileNameSet.has(member.fileName)) continue;
     vendorPackFileNameSet.add(member.fileName);
     vendorPackEntries.push({
@@ -3662,7 +3972,7 @@ async function startDevServer({
   }
   const vendorPackChunkGroupId = canChunkVendorPacks ? computeChunkGroupIdFromStableIds(vendorPackEntries.map((d) => d.fileName)) : null;
   const vendorPackSharedFileName = vendorPackChunkGroupId ? `shared.${vendorPackChunkGroupId}.js` : null;
-  const vendorPackSharedUrl = vendorPackSharedFileName ? `${DEPS_PREFIX}${vendorPackSharedFileName}` : null;
+  const vendorPackSharedUrl = vendorPackSharedFileName ? depsRuntimeUrl2(vendorPackSharedFileName) : null;
   const vendorPackSessionRequestCounts = vendorPacksEnabled ? /* @__PURE__ */ new Map() : null;
   let vendorPackRequestCountsDirty = false;
   let vendorPackRequestCountsLastFlush = 0;
@@ -3673,48 +3983,53 @@ async function startDevServer({
     if (!force && now - vendorPackRequestCountsLastFlush < 2e3) return;
     vendorPackRequestCountsLastFlush = now;
     vendorPackRequestCountsDirty = false;
-    saveDepRequestCounts(vendorPackRequestsPath, vendorPackSessionRequestCounts);
+    saveDepRequestCounts(vendorPackRequestsPath(), vendorPackSessionRequestCounts);
   };
   const getKnownDepRequestCount = (fileName) => {
     const sessionCount = vendorPackSessionRequestCounts?.get(fileName) ?? 0;
     if (sessionCount > 0) return sessionCount;
     return vendorPackLastRequestCounts.get(fileName) ?? 0;
   };
-  const vendorPackFileName = vendorDeps.length > 0 ? `vendor.${depsHash}.js` : null;
-  const vendorPackUrl = vendorPackFileName ? `${DEPS_PREFIX}${vendorPackFileName}` : null;
+  const getVendorPackFileName = () => vendorDeps.length > 0 ? `vendor.${depsHash}.js` : null;
+  const getVendorPackUrl = () => {
+    const fileName = getVendorPackFileName();
+    return fileName ? depsRuntimeUrl2(fileName) : null;
+  };
   const vendorDepFileNames = new Set(vendorDeps.map((d) => d.fileName));
   const canChunkVendorCore = depsSharedChunksEnabled && vendorDeps.length > 1 && !!native?.optimizeDependenciesChunked && !depsSourcemapEnabled && depsBundleEsmEnabled && // Avoid conflicting chunk groups when `vendorPacks: true` is active and chunked.
   !canChunkVendorPacks;
   const vendorCoreChunkGroupId = canChunkVendorCore ? computeChunkGroupIdFromStableIds(vendorDeps.map((d) => d.fileName)) : null;
   const vendorCoreSharedFileName = vendorCoreChunkGroupId ? `shared.${vendorCoreChunkGroupId}.js` : null;
-  const vendorCoreSharedUrl = vendorCoreSharedFileName ? `${DEPS_PREFIX}${vendorCoreSharedFileName}` : null;
+  const vendorCoreSharedUrl = vendorCoreSharedFileName ? depsRuntimeUrl2(vendorCoreSharedFileName) : null;
   const ensureVendorPackFile = () => {
+    const vendorPackFileName = getVendorPackFileName();
+    const vendorPackUrl = getVendorPackUrl();
     if (!vendorPackFileName || !vendorPackUrl || vendorDeps.length === 0) return;
     const vendorKey = getCacheKey(
       `vendor:v1:${vendorDeps.map((d) => `${d.specifier}:${d.fileName}`).sort().join("|")}`
     );
-    const filePath = path6.join(depsRoot, vendorPackFileName);
-    if (fs7.existsSync(filePath)) {
+    const filePath = path7.join(depsRoot, vendorPackFileName);
+    if (fs8.existsSync(filePath)) {
       try {
-        const head = fs7.readFileSync(filePath, "utf8").slice(0, 256);
+        const head = fs8.readFileSync(filePath, "utf8").slice(0, 256);
         if (head.includes(`${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}`)) return;
       } catch {
       }
     }
-    const imports = vendorDeps.slice().sort((a, b) => a.specifier.localeCompare(b.specifier)).map((d) => `import "${DEPS_PREFIX}${d.fileName}";`).join("\n");
+    const imports = vendorDeps.slice().sort((a, b) => a.specifier.localeCompare(b.specifier)).map((d) => `import "${depsRuntimeUrl2(d.fileName)}";`).join("\n");
     const body = `${IONIFY_VENDOR_PACK_MARKER} ${vendorKey}
 // depsHash: ${depsHash}
 // vendor: ${vendorDeps.map((d) => d.specifier).join(", ")}
 ${imports}
 `;
     try {
-      fs7.writeFileSync(filePath, body, "utf8");
+      fs8.writeFileSync(filePath, body, "utf8");
     } catch {
     }
   };
-  const vendorPackV2IndexPath = path6.join(depsRoot, "vendor-pack.v2.index.json");
+  const vendorPackV2IndexPath = () => path7.join(depsRoot, "vendor-pack.v2.index.json");
   const vendorPackV2AllowedPrefix = vendorPacksManual ? "vendor-pack.manual." : vendorPacksProgressive ? "vendor-pack.feature." : null;
-  const vendorPackV2 = new VendorPackV2IndexManager({
+  let vendorPackV2 = new VendorPackV2IndexManager({
     depsRoot,
     depsHash,
     outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
@@ -3722,7 +4037,7 @@ ${imports}
     log: { info: logInfo, warn: logWarn }
   });
   vendorPackV2.loadFromDisk();
-  const routeHintStatePath = path6.join(ionifyDir, "route-hints.v1.json");
+  const routeHintStatePath = path7.join(ionifyDir, "route-hints.v1.json");
   const routeHints = new RouteHintIndex(routeHintStatePath);
   const startupPolicyRaw = userConfig?.startupPolicy;
   const startupPolicyObject = startupPolicyRaw && typeof startupPolicyRaw === "object" && !Array.isArray(startupPolicyRaw) ? startupPolicyRaw : {};
@@ -3741,8 +4056,8 @@ ${imports}
     maxEagerSourceBytes: typeof startupPolicyObject.maxEagerSourceBytes === "number" ? startupPolicyObject.maxEagerSourceBytes : 128 * 1024,
     maxEagerTotalBytes: typeof startupPolicyObject.maxEagerTotalBytes === "number" ? startupPolicyObject.maxEagerTotalBytes : 384 * 1024
   };
-  const startupObservationStatePath = path6.join(ionifyDir, "startup-observations.v1.json");
-  const startupPolicyStatePath = path6.join(ionifyDir, "startup-policy.v1.json");
+  const startupObservationStatePath = path7.join(ionifyDir, "startup-observations.v1.json");
+  const startupPolicyStatePath = path7.join(ionifyDir, "startup-policy.v1.json");
   const startupObservations = new StartupObservationIndex(startupObservationStatePath);
   let startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
   const startupInstrumentJavaScriptBuffer = (buffer) => instrumentJavaScriptBuffer(buffer, startupPolicyObserveEvaluations);
@@ -3751,10 +4066,10 @@ ${imports}
   const resolveBootstrapEntryFile = (rawEntryPath) => {
     const raw = String(rawEntryPath || "").trim();
     if (!raw) return null;
-    const candidates = path6.isAbsolute(raw) ? [raw, path6.join(rootDir, raw.replace(/^\/+/, ""))] : [path6.resolve(rootDir, raw)];
+    const candidates = path7.isAbsolute(raw) ? [raw, path7.join(rootDir, raw.replace(/^\/+/, ""))] : [path7.resolve(rootDir, raw)];
     for (const candidate of candidates) {
       if (!candidate) continue;
-      if (fs7.existsSync(candidate)) return candidate;
+      if (fs8.existsSync(candidate)) return candidate;
     }
     return null;
   };
@@ -3764,21 +4079,21 @@ ${imports}
     }
     const entries = [];
     for (const candidate of [
-      path6.join(rootDir, "src", "main.tsx"),
-      path6.join(rootDir, "src", "main.ts"),
-      path6.join(rootDir, "src", "index.tsx"),
-      path6.join(rootDir, "src", "index.ts")
+      path7.join(rootDir, "src", "main.tsx"),
+      path7.join(rootDir, "src", "main.ts"),
+      path7.join(rootDir, "src", "index.tsx"),
+      path7.join(rootDir, "src", "index.ts")
     ]) {
-      if (fs7.existsSync(candidate)) entries.push(candidate);
+      if (fs8.existsSync(candidate)) entries.push(candidate);
     }
     return entries;
   })();
   const resolveAuthoritativeDepPreloadUrls = (hintUrl) => {
-    if (!hintUrl.startsWith(DEPS_PREFIX) || !hintUrl.endsWith(".js")) return [];
-    const fileName = hintUrl.slice(DEPS_PREFIX.length);
+    const fileName = depsFileNameFromRuntimeUrl(hintUrl);
+    if (!fileName) return [];
     const fileNames = resolveAuthoritativeDepPreloadFiles({
       fileName,
-      fileExists: (candidateFileName) => fs7.existsSync(path6.join(depsRoot, candidateFileName)),
+      fileExists: (candidateFileName) => fs8.existsSync(path7.join(depsRoot, candidateFileName)),
       fileNameToPackFile: vendorPackV2.fileNameToPackFile,
       packFileToChunkFiles: vendorPackV2.packFileToChunkFiles,
       packFileToSharedFile: vendorPackV2.packFileToSharedFile,
@@ -3786,7 +4101,7 @@ ${imports}
         (value) => typeof value === "string" && value.endsWith(".js")
       )
     });
-    return fileNames.map((candidateFileName) => `${DEPS_PREFIX}${candidateFileName}`);
+    return fileNames.map((candidateFileName) => depsRuntimeUrl2(candidateFileName));
   };
   const isRouteHintPreloadValid = (hintUrl, kind) => {
     if (kind === "dep") {
@@ -3801,10 +4116,10 @@ ${imports}
       allowedRoots,
       workspaceRoot: workspace.workspaceRoot
     });
-    if (!resolved || !fs7.existsSync(resolved)) return false;
-    const stat = fs7.statSync(resolved);
+    if (!resolved || !fs8.existsSync(resolved)) return false;
+    const stat = fs8.statSync(resolved);
     if (stat.isDirectory()) return false;
-    const ext = path6.extname(resolved).toLowerCase();
+    const ext = path7.extname(resolved).toLowerCase();
     return ext !== ".html" && !isAssetExt(ext);
   };
   const expandRouteHintPreloadUrls = (hintUrl, kind) => {
@@ -3816,10 +4131,10 @@ ${imports}
     const parsed = url.parse(assetUrl);
     const pathname = parsed.pathname || "";
     if (!pathname) return null;
-    const candidatePath = kind === "dep" && pathname.startsWith(DEPS_PREFIX) ? path6.join(depsRoot, pathname.slice(DEPS_PREFIX.length)) : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
-    if (!candidatePath || !fs7.existsSync(candidatePath)) return null;
+    const candidatePath = kind === "dep" && pathname.startsWith(DEPS_PREFIX) ? path7.join(depsRoot, pathname.slice(DEPS_PREFIX.length)) : decodePublicPath(rootDir, pathname, { allowedRoots, workspaceRoot: workspace.workspaceRoot });
+    if (!candidatePath || !fs8.existsSync(candidatePath)) return null;
     try {
-      const stat = fs7.statSync(candidatePath);
+      const stat = fs8.statSync(candidatePath);
       return stat.isFile() ? stat.size : null;
     } catch {
       return null;
@@ -3878,20 +4193,20 @@ ${imports}
     const maxSourceFiles = 32;
     while (queue.length > 0 && visited.size < maxSourceFiles) {
       const nextPath = queue.shift();
-      if (!nextPath || !fs7.existsSync(nextPath)) continue;
+      if (!nextPath || !fs8.existsSync(nextPath)) continue;
       const canonicalPath = (() => {
         try {
-          return fs7.realpathSync(nextPath);
+          return fs8.realpathSync(nextPath);
         } catch {
           return nextPath;
         }
       })();
       if (visited.has(canonicalPath)) continue;
       visited.add(canonicalPath);
-      if (!bootstrapSourceExts.has(path6.extname(canonicalPath).toLowerCase())) continue;
+      if (!bootstrapSourceExts.has(path7.extname(canonicalPath).toLowerCase())) continue;
       let code = "";
       try {
-        code = fs7.readFileSync(canonicalPath, "utf8");
+        code = fs8.readFileSync(canonicalPath, "utf8");
       } catch {
         continue;
       }
@@ -3916,10 +4231,10 @@ ${imports}
         configuredExternalSpecifiers
       );
       for (const localDep of localDeps) {
-        if (!path6.isAbsolute(localDep)) continue;
-        if (!fs7.existsSync(localDep)) continue;
-        if (localDep.includes(`${path6.sep}node_modules${path6.sep}`)) continue;
-        if (!bootstrapSourceExts.has(path6.extname(localDep).toLowerCase())) continue;
+        if (!path7.isAbsolute(localDep)) continue;
+        if (!fs8.existsSync(localDep)) continue;
+        if (localDep.includes(`${path7.sep}node_modules${path7.sep}`)) continue;
+        if (!bootstrapSourceExts.has(path7.extname(localDep).toLowerCase())) continue;
         queue.push(localDep);
       }
       for (const externalDep of externalDeps) {
@@ -3953,7 +4268,7 @@ ${imports}
       }
     }
     for (const depFileName of Array.from(resolvedDepFiles).sort()) {
-      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(`${DEPS_PREFIX}${depFileName}`)) {
+      for (const preloadUrl of resolveAuthoritativeDepPreloadUrls(depsRuntimeUrl2(depFileName))) {
         routedPreloads.add(preloadUrl);
       }
     }
@@ -3974,14 +4289,14 @@ ${imports}
       `[deps] vendorPacks:auto enabled but feature packs are unavailable (${reasons.join(", ")}). Falling back to per-entry deps.`
     );
   }
-  const featurePackIndexPath = path6.join(depsRoot, "vendor-pack.feature.index.json");
-  const featurePackStatePathFor = (group) => path6.join(depsRoot, `vendor-pack.feature.${group}.json`);
-  const featurePackSlimStatePathFor = (group) => path6.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
+  const featurePackIndexPath = () => path7.join(depsRoot, "vendor-pack.feature.index.json");
+  const featurePackStatePathFor = (group) => path7.join(depsRoot, `vendor-pack.feature.${group}.json`);
+  const featurePackSlimStatePathFor = (group) => path7.join(depsRoot, `vendor-pack.feature.${group}.slim.json`);
   const discoverFeaturePackGroupsFromDisk = () => {
     if (!featurePacksEnabled) return [];
     let names = [];
     try {
-      names = fs7.readdirSync(depsRoot);
+      names = fs8.readdirSync(depsRoot);
     } catch {
       return [];
     }
@@ -4002,7 +4317,7 @@ ${imports}
   const featurePackFileNameToChunkGroup = /* @__PURE__ */ new Map();
   const loadFeaturePackIndex = () => {
     featurePackFileNameToChunkGroup.clear();
-    const raw = featurePacksEnabled ? readJsonFile3(featurePackIndexPath) : null;
+    const raw = featurePacksEnabled ? readJsonFile3(featurePackIndexPath()) : null;
     if (!raw || raw.depsHash !== depsHash || raw.version !== 1 || raw.outputVersion !== DEPS_OPTIMIZER_OUTPUT_VERSION) {
       return;
     }
@@ -4013,9 +4328,9 @@ ${imports}
       if (typeof fileName !== "string" || typeof chunkGroupId !== "string") continue;
       if (!fileName.endsWith(".js")) continue;
       rawCount += 1;
-      const shared = path6.join(depsRoot, `shared.${chunkGroupId}.js`);
-      const wrapper = path6.join(depsRoot, fileName);
-      if (!fs7.existsSync(shared) || !fs7.existsSync(wrapper)) continue;
+      const shared = path7.join(depsRoot, `shared.${chunkGroupId}.js`);
+      const wrapper = path7.join(depsRoot, fileName);
+      if (!fs8.existsSync(shared) || !fs8.existsSync(wrapper)) continue;
       featurePackFileNameToChunkGroup.set(fileName, chunkGroupId);
     }
     if (rawCount > 0 && featurePackFileNameToChunkGroup.size !== rawCount) {
@@ -4036,7 +4351,7 @@ ${imports}
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       fileNameToChunkGroupId: obj
     };
-    writeJsonFile3(featurePackIndexPath, payload);
+    writeJsonFile3(featurePackIndexPath(), payload);
   };
   loadFeaturePackIndex();
   const ensureVendorPackV2Module = (options) => {
@@ -4063,8 +4378,8 @@ ${imports}
     manualObserved.set(def.group, /* @__PURE__ */ new Map());
   }
   const manualHasCore = manualObserved.has("core");
-  const manualPackStatePathFor = (group) => path6.join(depsRoot, `vendor-pack.manual.${group}.json`);
-  const manualPackSlimStatePathFor = (group) => path6.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
+  const manualPackStatePathFor = (group) => path7.join(depsRoot, `vendor-pack.manual.${group}.json`);
+  const manualPackSlimStatePathFor = (group) => path7.join(depsRoot, `vendor-pack.manual.${group}.slim.json`);
   const updateManualState = (group, next) => {
     const stamped = { ...next, outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION };
     manualState.set(group, stamped);
@@ -4089,7 +4404,7 @@ ${imports}
     for (const entry of entries) {
       if (selected.length >= vendorPackMaxMembers) break;
       if (seen.has(entry.fileName)) continue;
-      if (!entry.entryPath || !fs7.existsSync(entry.entryPath)) continue;
+      if (!entry.entryPath || !fs8.existsSync(entry.entryPath)) continue;
       if (isCoreSingletonDepFileName(entry.fileName)) continue;
       if (manualHasCore && group !== "core" && vendorDepFileNames.has(entry.fileName)) continue;
       const sizeBytes = depsManifestIndex.get(entry.fileName)?.sizeBytes ?? 0;
@@ -4187,7 +4502,7 @@ ${imports}
     }
   }
   const loadDepUsageIndexFromDisk = () => {
-    const raw = readJsonFile3(depUsageStatePath) ?? readJsonFile3(legacyDepUsageStatePath);
+    const raw = readJsonFile3(depUsageStatePath()) ?? readJsonFile3(legacyDepUsageStatePath());
     if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
     const out = /* @__PURE__ */ new Map();
     const deps = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
@@ -4234,7 +4549,7 @@ ${imports}
         entryRootKeys: Array.isArray(item.entryRootKeys) ? item.entryRootKeys.slice() : []
       };
     }
-    writeJsonFile3(depUsageStatePath, {
+    writeJsonFile3(depUsageStatePath(), {
       version: 2,
       depsHash,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -4304,14 +4619,14 @@ ${imports}
               if (!hasAnyUsage) continue;
               const existingSlim = manualSlimState.get(next);
               if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
-                const sharedPath = path6.join(depsRoot, existingSlim.sharedFileName);
+                const sharedPath = path7.join(depsRoot, existingSlim.sharedFileName);
                 const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
                 const baseSet = new Set(baseEntries.map((e) => e.fileName));
-                const inputsMatch = fs7.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                const inputsMatch = fs8.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
                   const entry = byBase.get(base.fileName);
                   if (!entry) return false;
                   if (entry.entryPath !== base.entryPath) return false;
-                  if (!fs7.existsSync(path6.join(depsRoot, entry.wrapperFileName))) return false;
+                  if (!fs8.existsSync(path7.join(depsRoot, entry.wrapperFileName))) return false;
                   const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
                   const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
                   if (expected.length !== actual.length) return false;
@@ -4367,8 +4682,8 @@ ${imports}
                 broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
                 const elapsed = Date.now() - start;
                 const sharedFileName = `shared.${groupId}.js`;
-                const sharedOut = path6.join(depsRoot, sharedFileName);
-                if (!fs7.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const sharedOut = path7.join(depsRoot, sharedFileName);
+                if (!fs8.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
                 const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
                 const outByEntryPath = /* @__PURE__ */ new Map();
                 for (const item of resultsArr) {
@@ -4377,25 +4692,25 @@ ${imports}
                   if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
                   const canonicalEntryPath = (() => {
                     try {
-                      return fs7.realpathSync(entryPath);
+                      return fs8.realpathSync(entryPath);
                     } catch {
                       return entryPath;
                     }
                   })();
-                  outByEntryPath.set(canonicalEntryPath, path6.basename(outPath));
+                  outByEntryPath.set(canonicalEntryPath, path7.basename(outPath));
                 }
                 const slimMembers = [];
                 const slimEntries = [];
                 for (const base of baseEntries) {
                   const canonicalBaseEntryPath = (() => {
                     try {
-                      return fs7.realpathSync(base.entryPath);
+                      return fs8.realpathSync(base.entryPath);
                     } catch {
                       return base.entryPath;
                     }
                   })();
                   const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
-                  if (!fs7.existsSync(path6.join(depsRoot, wrapperFileName))) {
+                  if (!fs8.existsSync(path7.join(depsRoot, wrapperFileName))) {
                     throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
                   }
                   slimMembers.push({
@@ -4429,9 +4744,9 @@ ${imports}
                   sharedFileName,
                   entries: slimEntries
                 });
-                const fullSharedPath = path6.join(depsRoot, baseState.sharedFileName);
-                const fullBytes = fs7.existsSync(fullSharedPath) ? fs7.statSync(fullSharedPath).size : 0;
-                const slimBytes = fs7.existsSync(sharedOut) ? fs7.statSync(sharedOut).size : 0;
+                const fullSharedPath = path7.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = fs8.existsSync(fullSharedPath) ? fs8.statSync(fullSharedPath).size : 0;
+                const slimBytes = fs8.existsSync(sharedOut) ? fs8.statSync(sharedOut).size : 0;
                 const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
                 const savedLabel = saved > 0 ? ` (-${formatByteDelta(saved)})` : "";
                 if (process.env.DEBUG_DEPS) {
@@ -4485,8 +4800,8 @@ ${imports}
           if (entries.length === 0) continue;
           const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
           const sharedFileName = `shared.${chunkGroupId}.js`;
-          const sharedPath = path6.join(depsRoot, sharedFileName);
-          const alreadyReady = fs7.existsSync(sharedPath) && entries.every((e) => fs7.existsSync(path6.join(depsRoot, e.fileName)));
+          const sharedPath = path7.join(depsRoot, sharedFileName);
+          const alreadyReady = fs8.existsSync(sharedPath) && entries.every((e) => fs8.existsSync(path7.join(depsRoot, e.fileName)));
           if (alreadyReady) {
             updateManualState(next, {
               version: 1,
@@ -4533,8 +4848,8 @@ ${imports}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const elapsed = Date.now() - start;
-            const sharedOut = path6.join(depsRoot, `shared.${groupId}.js`);
-            const ok = fs7.existsSync(sharedOut) && resolvedEntries2.every((entry) => fs7.existsSync(path6.join(depsRoot, entry.fileName)));
+            const sharedOut = path7.join(depsRoot, `shared.${groupId}.js`);
+            const ok = fs8.existsSync(sharedOut) && resolvedEntries2.every((entry) => fs8.existsSync(path7.join(depsRoot, entry.fileName)));
             if (!ok) {
               throw new Error("Manual pack optimizer did not produce expected outputs");
             }
@@ -4595,7 +4910,7 @@ ${imports}
   const recordManualCandidate = (entry) => {
     if (!manualPacksEnabled) return;
     if (!entry.fileName || !entry.entryPath) return;
-    if (!fs7.existsSync(entry.entryPath)) return;
+    if (!fs8.existsSync(entry.entryPath)) return;
     if (isCoreSingletonDepFileName(entry.fileName)) return;
     const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
     const group = classifyManualPackGroup(entry.packageName, entry.subpath);
@@ -4668,7 +4983,7 @@ ${imports}
     pruneFeaturePackRoutes(group);
     for (const filePath of featureStateFilesFor(group)) {
       try {
-        fs7.unlinkSync(filePath);
+        fs8.unlinkSync(filePath);
       } catch {
       }
     }
@@ -4804,16 +5119,19 @@ ${imports}
   const featureEntriesSignature = (entries) => entries.map((entry) => entry.fileName).filter(Boolean).slice().sort().join("|");
   const featurePackSourceExts = /* @__PURE__ */ new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
   const plannedFeatureGroups = /* @__PURE__ */ new Map();
-  const featurePlanReportPath = path6.join(depsRoot, "vendor-pack.feature.plan-report.json");
+  const featurePlanReportPath = () => path7.join(depsRoot, "vendor-pack.feature.plan-report.json");
   const computeFeatureCandidates = () => {
     const entries = reconcilePackEntries(Array.from(featureObserved.values()), canonicalFileNameForEntry);
     const candidates = [];
     const depRouteHints = new Map(
-      routeHints.summarizeAssets("dep").filter((summary) => summary.url.startsWith(DEPS_PREFIX) && summary.url.endsWith(".js")).map((summary) => [summary.url.slice(DEPS_PREFIX.length), summary])
+      routeHints.summarizeAssets("dep").flatMap((summary) => {
+        const fileName = depsFileNameFromRuntimeUrl(summary.url);
+        return fileName ? [[fileName, summary]] : [];
+      })
     );
     for (const entry of entries) {
-      if (!entry.entryPath || !fs7.existsSync(entry.entryPath)) continue;
-      if (!featurePackSourceExts.has(path6.extname(entry.entryPath).toLowerCase())) continue;
+      if (!entry.entryPath || !fs8.existsSync(entry.entryPath)) continue;
+      if (!featurePackSourceExts.has(path7.extname(entry.entryPath).toLowerCase())) continue;
       if (vendorDepFileNames.has(entry.fileName) || isCoreSingletonDepFileName(entry.fileName)) continue;
       const manifestEntry = depsManifestIndex.get(entry.fileName);
       const requestCount = getKnownDepRequestCount(entry.fileName);
@@ -4920,7 +5238,7 @@ ${imports}
       const group = assignFeaturePlanGroup(usedGroups, plan);
       next.set(group, plan.entries.map((entry) => ({ ...entry })));
     }
-    writeJsonFile3(featurePlanReportPath, {
+    writeJsonFile3(featurePlanReportPath(), {
       version: 2,
       depsHash,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -4942,8 +5260,8 @@ ${imports}
           const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
           const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
           if (!activeState?.sharedFileName) return null;
-          const sharedPath = path6.join(depsRoot, activeState.sharedFileName);
-          const sharedBytes = fs7.existsSync(sharedPath) ? fs7.statSync(sharedPath).size : null;
+          const sharedPath = path7.join(depsRoot, activeState.sharedFileName);
+          const sharedBytes = fs8.existsSync(sharedPath) ? fs8.statSync(sharedPath).size : null;
           return {
             mode: activeState === slimState ? "slim" : "base",
             sharedFileName: activeState.sharedFileName,
@@ -4956,7 +5274,7 @@ ${imports}
           const baseState = featureLastReadyState.get(group);
           const slimState = packSlimmingEnabled ? featureLastReadySlimState.get(group) : null;
           const activeState = isActivatableFeatureSlimState(baseState, slimState) ? slimState : baseState;
-          const activeSharedBytes = activeState?.sharedFileName && fs7.existsSync(path6.join(depsRoot, activeState.sharedFileName)) ? fs7.statSync(path6.join(depsRoot, activeState.sharedFileName)).size : null;
+          const activeSharedBytes = activeState?.sharedFileName && fs8.existsSync(path7.join(depsRoot, activeState.sharedFileName)) ? fs8.statSync(path7.join(depsRoot, activeState.sharedFileName)).size : null;
           return analyzeFeaturePackSharedClosurePressure({
             entries,
             candidatesByFileName: pressureCandidatesByFileName,
@@ -5055,6 +5373,7 @@ ${imports}
   let papContractsPublished = false;
   let papArtifactsPublished = false;
   let papDirty = false;
+  let dependencyEnvironmentReconciling = false;
   const isProductionPublishingCpuPressured = () => {
     const parallelism = Math.max(1, typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length || 1);
     return os.loadavg()[0] > parallelism * papCpuLoadFactor;
@@ -5070,7 +5389,7 @@ ${imports}
     }
   };
   const scheduleProductionArtifactPublication = (reason, level = "contracts") => {
-    if (!papEnabled || shuttingDown) return;
+    if (!papEnabled || shuttingDown || dependencyEnvironmentReconciling) return;
     if (level === "artifacts" && !papArtifactsEnabled) return;
     if (level === "contracts" && papContractsPublished && !papDirty) {
       if (papArtifactsEnabled && !papArtifactsPublished) {
@@ -5104,7 +5423,7 @@ ${imports}
           }
           if (shuttingDown) return;
           const cliEntry = process.argv[1];
-          if (!cliEntry || !fs7.existsSync(cliEntry)) {
+          if (!cliEntry || !fs8.existsSync(cliEntry)) {
             logWarn("[publish] Production publication skipped: CLI entry is not available for child handoff.");
             return;
           }
@@ -5217,14 +5536,14 @@ ${imports}
               if (usedByBase.size === 0) continue;
               const existingSlim = featureSlimState.get(next);
               if (existingSlim && existingSlim.status === "ready" && existingSlim.depsHash === depsHash && existingSlim.group === next && existingSlim.chunkGroupId && existingSlim.sharedFileName && Array.isArray(existingSlim.entries) && existingSlim.entries.length > 0) {
-                const sharedPath = path6.join(depsRoot, existingSlim.sharedFileName);
+                const sharedPath = path7.join(depsRoot, existingSlim.sharedFileName);
                 const byBase = new Map(existingSlim.entries.map((e) => [e.baseFileName, e]));
                 const baseSet = new Set(baseEntries.map((e) => e.fileName));
-                const inputsMatch = fs7.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
+                const inputsMatch = fs8.existsSync(sharedPath) && existingSlim.entries.every((e) => baseSet.has(e.baseFileName)) && baseEntries.every((base) => {
                   const entry = byBase.get(base.fileName);
                   if (!entry) return false;
                   if (entry.entryPath !== base.entryPath) return false;
-                  if (!fs7.existsSync(path6.join(depsRoot, entry.wrapperFileName))) return false;
+                  if (!fs8.existsSync(path7.join(depsRoot, entry.wrapperFileName))) return false;
                   const expected = (usedByBase.get(base.fileName) ?? []).slice().sort();
                   const actual = Array.isArray(entry.usedExports) ? entry.usedExports.slice().sort() : [];
                   if (expected.length !== actual.length) return false;
@@ -5269,8 +5588,8 @@ ${imports}
                 broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
                 const elapsed = Date.now() - start;
                 const sharedFileName = `shared.${groupId}.js`;
-                const sharedOut = path6.join(depsRoot, sharedFileName);
-                if (!fs7.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
+                const sharedOut = path7.join(depsRoot, sharedFileName);
+                if (!fs8.existsSync(sharedOut)) throw new Error("Slim shared chunk not found on disk");
                 const resultsArr = Array.isArray(result?.entries) ? result.entries : [];
                 const outByEntryPath = /* @__PURE__ */ new Map();
                 for (const item of resultsArr) {
@@ -5279,24 +5598,24 @@ ${imports}
                   if (typeof entryPath !== "string" || typeof outPath !== "string") continue;
                   const canonicalEntryPath = (() => {
                     try {
-                      return fs7.realpathSync(entryPath);
+                      return fs8.realpathSync(entryPath);
                     } catch {
                       return entryPath;
                     }
                   })();
-                  outByEntryPath.set(canonicalEntryPath, path6.basename(outPath));
+                  outByEntryPath.set(canonicalEntryPath, path7.basename(outPath));
                 }
                 const slimEntries = [];
                 for (const base of baseEntries) {
                   const canonicalBaseEntryPath = (() => {
                     try {
-                      return fs7.realpathSync(base.entryPath);
+                      return fs8.realpathSync(base.entryPath);
                     } catch {
                       return base.entryPath;
                     }
                   })();
                   const wrapperFileName = outByEntryPath.get(canonicalBaseEntryPath) ?? base.fileName;
-                  if (!fs7.existsSync(path6.join(depsRoot, wrapperFileName))) {
+                  if (!fs8.existsSync(path7.join(depsRoot, wrapperFileName))) {
                     throw new Error(`Slim wrapper missing for ${base.packageLabel}: ${wrapperFileName}`);
                   }
                   slimEntries.push({
@@ -5318,9 +5637,9 @@ ${imports}
                   sharedFileName,
                   entries: slimEntries
                 });
-                const fullSharedPath = path6.join(depsRoot, baseState.sharedFileName);
-                const fullBytes = fs7.existsSync(fullSharedPath) ? fs7.statSync(fullSharedPath).size : 0;
-                const slimBytes = fs7.existsSync(sharedOut) ? fs7.statSync(sharedOut).size : 0;
+                const fullSharedPath = path7.join(depsRoot, baseState.sharedFileName);
+                const fullBytes = fs8.existsSync(fullSharedPath) ? fs8.statSync(fullSharedPath).size : 0;
+                const slimBytes = fs8.existsSync(sharedOut) ? fs8.statSync(sharedOut).size : 0;
                 const saved = fullBytes > 0 && slimBytes > 0 ? fullBytes - slimBytes : 0;
                 const savedLabel = saved > 0 ? ` (-${formatByteDelta(saved)})` : "";
                 logInfo(`Slim pack ready: ${next}${savedLabel}`);
@@ -5366,8 +5685,8 @@ ${imports}
           if (!hasPositivePackRequestSavings(entries.length)) continue;
           const chunkGroupId = computeChunkGroupIdFromStableIds(entries.map((e) => e.fileName));
           const sharedFileName = `shared.${chunkGroupId}.js`;
-          const sharedPath = path6.join(depsRoot, sharedFileName);
-          const alreadyReady = fs7.existsSync(sharedPath) && entries.every((e) => fs7.existsSync(path6.join(depsRoot, e.fileName)));
+          const sharedPath = path7.join(depsRoot, sharedFileName);
+          const alreadyReady = fs8.existsSync(sharedPath) && entries.every((e) => fs8.existsSync(path7.join(depsRoot, e.fileName)));
           if (alreadyReady) {
             updateFeatureState(next, {
               version: 1,
@@ -5407,8 +5726,8 @@ ${imports}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const elapsed = Date.now() - start;
-            const sharedOut = path6.join(depsRoot, `shared.${groupId}.js`);
-            const ok = fs7.existsSync(sharedOut) && resolvedEntries2.every((entry) => fs7.existsSync(path6.join(depsRoot, entry.fileName)));
+            const sharedOut = path7.join(depsRoot, `shared.${groupId}.js`);
+            const ok = fs8.existsSync(sharedOut) && resolvedEntries2.every((entry) => fs8.existsSync(path7.join(depsRoot, entry.fileName)));
             if (!ok) {
               throw new Error("Feature pack optimizer did not produce expected outputs");
             }
@@ -5467,7 +5786,7 @@ ${imports}
   const recordFeatureCandidate = (entry) => {
     if (!featurePacksEnabled) return;
     if (!entry.fileName || !entry.entryPath) return;
-    if (!fs7.existsSync(entry.entryPath)) return;
+    if (!fs8.existsSync(entry.entryPath)) return;
     const fileName = canonicalFileNameForEntry(entry.fileName, entry.entryPath);
     if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) return;
     const wasNew = upsertObservedPackEntry(featureObserved, {
@@ -5484,7 +5803,7 @@ ${imports}
     let changed = false;
     for (const usage of index.values()) {
       if (!usage?.fileName || !usage?.entryPath || !usage?.packageName) continue;
-      if (!fs7.existsSync(usage.entryPath)) continue;
+      if (!fs8.existsSync(usage.entryPath)) continue;
       const fileName = canonicalFileNameForEntry(usage.fileName, usage.entryPath);
       if (vendorDepFileNames.has(fileName) || isCoreSingletonDepFileName(fileName)) continue;
       const subpath = typeof getDepEntry(fileName)?.subpath === "string" ? getDepEntry(fileName)?.subpath ?? null : computeSubpathFromEntryPath(usage.entryPath);
@@ -5519,18 +5838,11 @@ ${imports}
     if (fileName.startsWith("shared.") || fileName.startsWith("vendor.") || fileName.startsWith("vendor-pack.")) {
       return;
     }
-    if (vendorPackFileName && fileName === vendorPackFileName) return;
+    if (fileName === getVendorPackFileName()) return;
     const entryFromManifest = depsManifestIndex.get(fileName);
-    let entryFromRegistry = getDepEntry(fileName);
-    let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
-    if (!entryPath) {
-      const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
-      if (recovered) {
-        entryFromRegistry = recovered;
-        entryPath = recovered.entryPath;
-      }
-    }
-    if (!entryPath || !fs7.existsSync(entryPath)) return;
+    const entryFromRegistry = getDepEntry(fileName);
+    const entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
+    if (!entryPath || !fs8.existsSync(entryPath)) return;
     const packageLabel = entryFromRegistry?.packageName ? formatDepLabel(entryFromRegistry.packageName, entryFromRegistry.subpath) : entryFromManifest?.packageLabel ?? fileName;
     const packageName = entryFromRegistry?.packageName ?? pkgNameFromLabel(entryFromManifest?.packageLabel) ?? null;
     const subpath = typeof entryFromRegistry?.subpath === "string" ? entryFromRegistry.subpath : null;
@@ -5561,7 +5873,7 @@ ${imports}
         const coreState = manualState.get("core");
         const coreChunkGroupId = coreState?.status === "ready" ? coreState.chunkGroupId : null;
         const corePackFileName = coreChunkGroupId ? `vendor-pack.manual.core.${coreChunkGroupId}.js` : null;
-        if (corePackFileName && fs7.existsSync(path6.join(depsRoot, corePackFileName))) {
+        if (corePackFileName && fs8.existsSync(path7.join(depsRoot, corePackFileName))) {
           const r = native.resolveModule("react-refresh/runtime", rootDir);
           const fsPath = r?.fsPath ?? r?.fs_path ?? null;
           if (fsPath && typeof fsPath === "string") {
@@ -5579,7 +5891,7 @@ ${imports}
               const routedPack = vendorPackV2.fileNameToPackFile.get(fileName) ?? null;
               if (routedPack === corePackFileName) {
                 const memberKey = vendorPackV2MemberKey(fileName);
-                packImport = `import { __ionify_vp_${memberKey}__default as RefreshRuntime } from "${DEPS_PREFIX}${corePackFileName}"`;
+                packImport = `import { __ionify_vp_${memberKey}__default as RefreshRuntime } from "${depsRuntimeUrl2(corePackFileName)}"`;
               }
             }
           }
@@ -5604,7 +5916,7 @@ ${imports}
           packageVersion,
           subpath
         }).fileName;
-        reactRefreshImport = `${DEPS_PREFIX}${fileName}`;
+        reactRefreshImport = depsRuntimeUrl2(fileName);
       }
     } catch {
       reactRefreshImport = null;
@@ -5614,14 +5926,14 @@ ${imports}
         const ionifyRequire = createRequire(import.meta.url);
         const reactRefreshPath = ionifyRequire.resolve("react-refresh/runtime");
         const reactRefreshPkgPath = ionifyRequire.resolve("react-refresh/package.json");
-        const reactRefreshPkg = JSON.parse(fs7.readFileSync(reactRefreshPkgPath, "utf8"));
+        const reactRefreshPkg = JSON.parse(fs8.readFileSync(reactRefreshPkgPath, "utf8"));
         const fileName = registerDepEntry({
           entryPath: reactRefreshPath,
           packageName: "react-refresh",
           packageVersion: typeof reactRefreshPkg?.version === "string" && reactRefreshPkg.version.trim().length > 0 ? reactRefreshPkg.version : "0.0.0",
           subpath: computeSubpathFromEntryPath(reactRefreshPath)
         }).fileName;
-        reactRefreshImport = `${DEPS_PREFIX}${fileName}`;
+        reactRefreshImport = depsRuntimeUrl2(fileName);
       } catch (err) {
         logError("Failed to resolve react-refresh/runtime", err);
         return null;
@@ -5650,13 +5962,14 @@ ${refreshCode}
   };
   const getFeaturePackRoutingHash = () => {
     if (!featurePacksEnabled) return null;
-    if (!fs7.existsSync(featurePackIndexPath)) return null;
+    const indexPath = featurePackIndexPath();
+    if (!fs8.existsSync(indexPath)) return null;
     try {
-      const stat = fs7.statSync(featurePackIndexPath);
+      const stat = fs8.statSync(indexPath);
       if (featurePackRoutingHashCache && featurePackRoutingHashCache.mtimeMs === stat.mtimeMs && featurePackRoutingHashCache.size === stat.size) {
         return featurePackRoutingHashCache.hash;
       }
-      const raw = JSON.parse(fs7.readFileSync(featurePackIndexPath, "utf8"));
+      const raw = JSON.parse(fs8.readFileSync(indexPath, "utf8"));
       const hash = hashFeaturePackRoutingIndex(
         raw,
         depsHash,
@@ -5670,13 +5983,14 @@ ${refreshCode}
     }
   };
   const getVendorPackV2RoutingHash = () => {
-    if (!fs7.existsSync(vendorPackV2IndexPath)) return null;
+    const indexPath = vendorPackV2IndexPath();
+    if (!fs8.existsSync(indexPath)) return null;
     try {
-      const stat = fs7.statSync(vendorPackV2IndexPath);
+      const stat = fs8.statSync(indexPath);
       if (vendorPackV2RoutingHashCache && vendorPackV2RoutingHashCache.mtimeMs === stat.mtimeMs && vendorPackV2RoutingHashCache.size === stat.size) {
         return vendorPackV2RoutingHashCache.hash;
       }
-      const raw = JSON.parse(fs7.readFileSync(vendorPackV2IndexPath, "utf8"));
+      const raw = JSON.parse(fs8.readFileSync(indexPath, "utf8"));
       const hash = hashVendorPackV2RoutingIndex(
         raw,
         depsHash,
@@ -5722,13 +6036,14 @@ ${refreshCode}
       const defMatch = trimmed.match(/^import\s+([A-Za-z0-9_$]+)\s+from\s+["']\/@deps\/([^"']+)["'];?\s*$/);
       if (defMatch) {
         const local = defMatch[1];
-        const depFileName = defMatch[2];
+        const depFileName = depsFileNameFromRuntimeUrl(`${DEPS_PREFIX}${defMatch[2]}`);
+        if (!depFileName) continue;
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
-        if (!fs7.existsSync(path6.join(depsRoot, packFileName))) continue;
+        if (!fs8.existsSync(path7.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
-        lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${DEPS_PREFIX}${packFileName}";`;
+        lines[i] = `import { __ionify_vp_${memberKey}__default as ${local} } from "${depsRuntimeUrl2(packFileName)}";`;
         mutated = true;
         continue;
       }
@@ -5737,13 +6052,14 @@ ${refreshCode}
       );
       if (nsMatch) {
         const local = nsMatch[1];
-        const depFileName = nsMatch[2];
+        const depFileName = depsFileNameFromRuntimeUrl(`${DEPS_PREFIX}${nsMatch[2]}`);
+        if (!depFileName) continue;
         if (isCoreSingletonDepFileName(depFileName)) continue;
         const packFileName = vendorPackV2.fileNameToPackFile.get(depFileName) ?? null;
         if (!packFileName) continue;
-        if (!fs7.existsSync(path6.join(depsRoot, packFileName))) continue;
+        if (!fs8.existsSync(path7.join(depsRoot, packFileName))) continue;
         const memberKey = vendorPackV2MemberKey(depFileName);
-        lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${DEPS_PREFIX}${packFileName}";`;
+        lines[i] = `import { __ionify_vp_${memberKey}__ns as ${local} } from "${depsRuntimeUrl2(packFileName)}";`;
         mutated = true;
         continue;
       }
@@ -5773,11 +6089,11 @@ ${refreshCode}
   const ensureBaseCasTransform = async (opts) => {
     const ext = opts.ext.toLowerCase();
     if (!baseCasExts.has(ext)) return;
-    if (opts.filePath.includes(`${path6.sep}node_modules${path6.sep}`)) return;
+    if (opts.filePath.includes(`${path7.sep}node_modules${path7.sep}`)) return;
     if (!opts.baseHash) return;
     const dir = getCasArtifactPath(casRoot, configHash, opts.baseHash);
-    const outFile = path6.join(dir, "transformed.js");
-    if (fs7.existsSync(outFile)) return;
+    const outFile = path7.join(dir, "transformed.js");
+    if (fs8.existsSync(outFile)) return;
     const existing = pendingBaseCas.get(opts.baseHash);
     if (existing) {
       await existing;
@@ -5797,15 +6113,15 @@ ${refreshCode}
           return;
         }
         try {
-          fs7.mkdirSync(dir, { recursive: true });
+          fs8.mkdirSync(dir, { recursive: true });
           const tmp = `${outFile}.tmp-${process.pid}-${Date.now()}`;
-          fs7.writeFileSync(tmp, result.code, "utf8");
-          fs7.renameSync(tmp, outFile);
+          fs8.writeFileSync(tmp, result.code, "utf8");
+          fs8.renameSync(tmp, outFile);
           if (result.map) {
             const mapFile = `${outFile}.map`;
             const tmpMap = `${mapFile}.tmp-${process.pid}-${Date.now()}`;
-            fs7.writeFileSync(tmpMap, result.map, "utf8");
-            fs7.renameSync(tmpMap, mapFile);
+            fs8.writeFileSync(tmpMap, result.map, "utf8");
+            fs8.renameSync(tmpMap, mapFile);
           }
         } catch {
         }
@@ -5852,16 +6168,50 @@ ${refreshCode}
   };
   const graph = new Graph(rawVersionInputs, { ionifyDir });
   const registerDevCssGraphSources = () => {
-    registerCssDemandGraphSourceFiles(
+    return registerCssDemandGraphSourceFiles(
       rootDir,
       graph.listFilesByKind("js").filter((filePath) => {
-        if (filePath.includes("node_modules") || filePath.includes(`${path6.sep}.ionify${path6.sep}`)) return false;
+        if (filePath.includes("node_modules") || filePath.includes(`${path7.sep}.ionify${path7.sep}`)) return false;
         const clean = filePath.split("?")[0].split("#")[0].toLowerCase();
         return clean.endsWith(".js") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx") || clean.endsWith(".mdx");
       })
     );
   };
   const federationRemoteBindings = collectFederationRemoteImportBindings(userConfig, rootDir);
+  const resolveTransformedRuntimeGraphDeps = (runtimeDependencies, importerAbs, fallbackStaticDeps, fallbackDynamicDeps = []) => {
+    if (!Array.isArray(runtimeDependencies)) {
+      return { deps: fallbackStaticDeps, dynamicDeps: fallbackDynamicDeps };
+    }
+    const staticSpecs = runtimeDependencies.filter((dependency) => dependency.kind === "static").map((dependency) => dependency.specifier);
+    const dynamicSpecs = runtimeDependencies.filter((dependency) => dependency.kind === "dynamic").map((dependency) => dependency.specifier);
+    const staticClassified = classifyImportSpecifiersForGraph(
+      staticSpecs,
+      importerAbs,
+      configuredExternalSpecifiers
+    );
+    const dynamicClassified = classifyImportSpecifiersForGraph(
+      dynamicSpecs,
+      importerAbs,
+      configuredExternalSpecifiers
+    );
+    const localRuntimeDeps = [
+      ...staticClassified.localDeps,
+      ...dynamicClassified.localDeps
+    ];
+    recordDepLeafGraphNodes(localRuntimeDeps);
+    enqueueLocalGraphCompletion(localRuntimeDeps);
+    scheduleDependencyWatches(localRuntimeDeps);
+    return {
+      deps: rewriteFederationGraphEdgeIds(
+        [...staticClassified.localDeps, ...staticClassified.externalDeps],
+        federationRemoteBindings
+      ),
+      dynamicDeps: rewriteFederationGraphEdgeIds(
+        [...dynamicClassified.localDeps, ...dynamicClassified.externalDeps],
+        federationRemoteBindings
+      )
+    };
+  };
   if (userConfig?.federation) {
     syncFederationGraphNodes(graph, buildFederationConfigGraphNodes(userConfig, rootDir));
   }
@@ -5960,7 +6310,7 @@ ${refreshCode}
   const buildUpdatePayload = async (modules) => {
     const updates = [];
     for (const mod of modules) {
-      const exists = fs7.existsSync(mod.absPath);
+      const exists = fs8.existsSync(mod.absPath);
       if (mod.reason === "deleted" || !exists) {
         graph.removeFile(mod.absPath);
         watcher.unwatchFile(mod.absPath);
@@ -5974,12 +6324,12 @@ ${refreshCode}
         continue;
       }
       watcher.watchFile(mod.absPath);
-      const ext = path6.extname(mod.absPath).toLowerCase();
+      const ext = path7.extname(mod.absPath).toLowerCase();
       if (isCssLikeExt(ext)) {
         let hash2 = mod.hash;
         if (!hash2) {
           try {
-            hash2 = getCacheKey(fs7.readFileSync(mod.absPath, "utf8"));
+            hash2 = getCacheKey(fs8.readFileSync(mod.absPath, "utf8"));
           } catch {
             hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
           }
@@ -6000,8 +6350,8 @@ ${refreshCode}
         let hash2 = mod.hash;
         if (!hash2) {
           try {
-            const buf = fs7.readFileSync(mod.absPath);
-            hash2 = crypto.createHash("sha256").update(buf).digest("hex");
+            const buf = fs8.readFileSync(mod.absPath);
+            hash2 = crypto2.createHash("sha256").update(buf).digest("hex");
           } catch {
             hash2 = graph.getNode(mod.absPath)?.hash ?? getCacheKey(mod.absPath);
           }
@@ -6019,7 +6369,7 @@ ${refreshCode}
       }
       let code;
       try {
-        code = fs7.readFileSync(mod.absPath, "utf8");
+        code = fs8.readFileSync(mod.absPath, "utf8");
       } catch (err) {
         logError("Failed to read module during HMR apply", err);
         throw err;
@@ -6061,7 +6411,7 @@ ${refreshCode}
         });
         continue;
       }
-      const extName = path6.extname(mod.absPath);
+      const extName = path7.extname(mod.absPath);
       const result = await transformer.run({
         path: mod.absPath,
         code,
@@ -6075,6 +6425,17 @@ ${refreshCode}
         code,
         baseHash: hash
       });
+      const runtimeGraph = resolveTransformedRuntimeGraphDeps(
+        result.runtimeDependencies,
+        mod.absPath,
+        nextDeps
+      );
+      graph.recordFile(
+        mod.absPath,
+        hash,
+        runtimeGraph.deps,
+        runtimeGraph.dynamicDeps
+      );
       const transformed = result.code;
       const envApplied = applyEnvPlaceholders(
         transformed,
@@ -6083,7 +6444,7 @@ ${refreshCode}
       updates.push({
         url: mod.url,
         hash,
-        deps: nextDeps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
+        deps: runtimeGraph.deps.map((dep) => normalizeGraphDepForClient(rootDir, dep)),
         reason: mod.reason,
         status: "updated",
         code: envApplied
@@ -6250,17 +6611,17 @@ ${refreshCode}
       if (reqPath.startsWith(DEPS_PREFIX)) {
         const fileName = reqPath.slice(DEPS_PREFIX.length);
         if (fileName.endsWith(".js")) bumpDevStable();
-        if (vendorPackFileName && fileName === vendorPackFileName) {
+        if (fileName === getVendorPackFileName()) {
           ensureVendorPackFile();
         }
         if (fileName.endsWith(".js.map")) {
-          const mapPath = path6.join(depsRoot, fileName);
-          if (fs7.existsSync(mapPath)) {
-            const stat = fs7.statSync(mapPath);
+          const mapPath = path7.join(depsRoot, fileName);
+          if (fs8.existsSync(mapPath)) {
+            const stat = fs8.statSync(mapPath);
             const etag = weakEtagFromStat(`deps-map-${depsHash}`, stat);
             if (isNotModified(req, etag)) {
               res.setHeader("ETag", etag);
-              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.setHeader("Cache-Control", "no-cache");
               res.statusCode = 304;
               res.end();
               return;
@@ -6270,13 +6631,13 @@ ${refreshCode}
               res,
               200,
               "application/json; charset=utf-8",
-              fs7.readFileSync(mapPath),
-              { etag, cacheControl: "public, max-age=31536000, immutable" }
+              fs8.readFileSync(mapPath),
+              { etag, cacheControl: "no-cache" }
             );
             return;
           }
         }
-        if (vendorPackSessionRequestCounts && fileName.endsWith(".js") && !fileName.startsWith("shared.") && (!vendorPackFileName || fileName !== vendorPackFileName)) {
+        if (vendorPackSessionRequestCounts && fileName.endsWith(".js") && !fileName.startsWith("shared.") && fileName !== getVendorPackFileName()) {
           vendorPackSessionRequestCounts.set(
             fileName,
             (vendorPackSessionRequestCounts.get(fileName) ?? 0) + 1
@@ -6284,7 +6645,7 @@ ${refreshCode}
           vendorPackRequestCountsDirty = true;
           flushVendorPackRequestCounts(false);
         }
-        const depsFilePath = path6.join(depsRoot, fileName);
+        const depsFilePath = path7.join(depsRoot, fileName);
         const entryFromManifest = depsManifestIndex.get(fileName);
         let entryFromRegistry = getDepEntry(fileName);
         let entryPath = entryFromManifest?.entryPath ?? entryFromRegistry?.entryPath;
@@ -6299,39 +6660,31 @@ ${refreshCode}
             observedAtMs: routeHintObservedAtMs
           });
         };
-        if (!entryPath && fileName.endsWith(".js") && !fileName.startsWith("shared.") && !fileName.startsWith("vendor.") && !!native?.resolveModule) {
-          const recovered = recoverDepEntryFromStableFileName(fileName, rootDir);
-          if (recovered) {
-            entryFromRegistry = recovered;
-            entryPath = recovered.entryPath;
-            packageLabel = recovered.packageName ? formatDepLabel(recovered.packageName, recovered.subpath) : packageLabel;
-          }
-        }
         observeDepForPackPlanning(fileName);
         const isVersionedDepWrapper = fileName.endsWith(".js") && !fileName.startsWith("shared.") && !fileName.startsWith("vendor.") && !fileName.startsWith("vendor-pack.");
         const manifestVersionCurrent = !isVersionedDepWrapper || // No manifest entry means no recorded version — treat the on-disk file as current
         // (it may have been written directly, e.g. by tests or external tooling).
         // Only trigger a stale-rebuild when an entry exists WITH a mismatched outputVersion.
         !entryFromManifest || entryFromManifest.outputVersion === DEPS_OPTIMIZER_OUTPUT_VERSION;
-        if (fs7.existsSync(depsFilePath) && manifestVersionCurrent) {
+        if (fs8.existsSync(depsFilePath) && manifestVersionCurrent) {
           observeRouteHintDepRequest();
           const vendorV2Hash = getVendorPackV2RoutingHash();
           if (vendorV2Hash && fileName.startsWith("shared.") && fileName.endsWith(".js")) {
-            const stat2 = fs7.statSync(depsFilePath);
+            const stat2 = fs8.statSync(depsFilePath);
             const etag2 = weakEtagFromStat(`deps-${depsHash}-vp2-${vendorV2Hash}`, stat2);
             if (isNotModified(req, etag2)) {
               res.setHeader("ETag", etag2);
-              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              res.setHeader("Cache-Control", "no-cache");
               res.statusCode = 304;
               res.end();
               logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304) (vp2)`);
               return;
             }
-            const raw = fs7.readFileSync(depsFilePath, "utf8");
+            const raw = fs8.readFileSync(depsFilePath, "utf8");
             const rewritten = rewriteIonifySharedChunkImportsForVendorPackV2(raw) ?? raw;
             sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(Buffer.from(rewritten, "utf8")), {
               etag: etag2,
-              cacheControl: "public, max-age=31536000, immutable"
+              cacheControl: "no-cache"
             });
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (vp2)`);
             return;
@@ -6340,34 +6693,34 @@ ${refreshCode}
           if (variant) {
             sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
               etagPrefix: `deps-${depsHash}`,
-              cacheControl: "public, max-age=31536000, immutable"
+              cacheControl: "no-cache"
             });
             const status = res.statusCode === 304 ? " (304)" : "";
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache${status} (${variant.encoding})`);
             return;
           }
-          const stat = fs7.statSync(depsFilePath);
+          const stat = fs8.statSync(depsFilePath);
           const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
           if (isNotModified(req, etag)) {
             res.setHeader("ETag", etag);
-            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.setHeader("Cache-Control", "no-cache");
             res.statusCode = 304;
             res.end();
             logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache (304)`);
             return;
           }
-          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs7.readFileSync(depsFilePath)), {
+          sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs8.readFileSync(depsFilePath)), {
             etag,
-            cacheControl: "public, max-age=31536000, immutable"
+            cacheControl: "no-cache"
           });
           logInfo(`[deps] OPTIMIZE ${packageLabel}: HIT from cache`);
           return;
         }
-        if (fs7.existsSync(depsFilePath) && !manifestVersionCurrent) {
+        if (fs8.existsSync(depsFilePath) && !manifestVersionCurrent) {
           try {
-            fs7.rmSync(depsFilePath, { force: true });
-            fs7.rmSync(`${depsFilePath}.gz`, { force: true });
-            fs7.rmSync(`${depsFilePath}.map`, { force: true });
+            fs8.rmSync(depsFilePath, { force: true });
+            fs8.rmSync(`${depsFilePath}.gz`, { force: true });
+            fs8.rmSync(`${depsFilePath}.map`, { force: true });
           } catch {
           }
           logInfo(
@@ -6377,7 +6730,7 @@ ${refreshCode}
         if (canChunkVendorPacks && vendorPackEntries.length > 1 && (vendorPackDepFileNames.has(fileName) || vendorPackSharedFileName && fileName === vendorPackSharedFileName)) {
           try {
             const start = Date.now();
-            const rawSize = entryPath && fs7.existsSync(entryPath) ? fs7.statSync(entryPath).size : 0;
+            const rawSize = entryPath && fs8.existsSync(entryPath) ? fs8.statSync(entryPath).size : 0;
             const chunked = native?.optimizeDependenciesChunked;
             if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
             const result2 = chunked(
@@ -6387,10 +6740,10 @@ ${refreshCode}
             broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
             const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
             const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
-            if (!fs7.existsSync(depsFilePath)) {
+            if (!fs8.existsSync(depsFilePath)) {
               throw new Error("Vendor pack optimizer did not produce requested file");
             }
-            const stat = fs7.statSync(depsFilePath);
+            const stat = fs8.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
             observeRouteHintDepRequest();
@@ -6398,12 +6751,12 @@ ${refreshCode}
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
                 etagPrefix: `deps-${depsHash}`,
-                cacheControl: "public, max-age=31536000, immutable"
+                cacheControl: "no-cache"
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs7.readFileSync(depsFilePath)), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs8.readFileSync(depsFilePath)), {
                 etag,
-                cacheControl: "public, max-age=31536000, immutable"
+                cacheControl: "no-cache"
               });
             }
             const elapsed = Date.now() - start;
@@ -6425,7 +6778,7 @@ ${refreshCode}
         if (canChunkVendorCore && (vendorDepFileNames.has(fileName) || vendorCoreSharedFileName && fileName === vendorCoreSharedFileName)) {
           try {
             const start = Date.now();
-            const rawSize = entryPath && fs7.existsSync(entryPath) ? fs7.statSync(entryPath).size : 0;
+            const rawSize = entryPath && fs8.existsSync(entryPath) ? fs8.statSync(entryPath).size : 0;
             const chunked = native?.optimizeDependenciesChunked;
             if (!chunked) throw new Error("native.optimizeDependenciesChunked is not available");
             const result2 = chunked(
@@ -6435,10 +6788,10 @@ ${refreshCode}
             broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
             const group = result2?.chunk_group ?? result2?.chunkGroup ?? "unknown";
             const chunks = result2?.chunk_files ?? result2?.chunkFiles ?? [];
-            if (!fs7.existsSync(depsFilePath)) {
+            if (!fs8.existsSync(depsFilePath)) {
               throw new Error("Chunked optimizer did not produce requested file");
             }
-            const stat = fs7.statSync(depsFilePath);
+            const stat = fs8.statSync(depsFilePath);
             const optimizedSize = stat.size;
             const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
             observeRouteHintDepRequest();
@@ -6446,12 +6799,12 @@ ${refreshCode}
             if (variant) {
               sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
                 etagPrefix: `deps-${depsHash}`,
-                cacheControl: "public, max-age=31536000, immutable"
+                cacheControl: "no-cache"
               });
             } else {
-              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs7.readFileSync(depsFilePath)), {
+              sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(fs8.readFileSync(depsFilePath)), {
                 etag,
-                cacheControl: "public, max-age=31536000, immutable"
+                cacheControl: "no-cache"
               });
             }
             const elapsed = Date.now() - start;
@@ -6477,7 +6830,7 @@ ${refreshCode}
         }
         try {
           const start = Date.now();
-          const rawSize = fs7.existsSync(entryPath) ? fs7.statSync(entryPath).size : 0;
+          const rawSize = fs8.existsSync(entryPath) ? fs8.statSync(entryPath).size : 0;
           const result2 = native.optimizeDependency(
             entryPath,
             depsHash,
@@ -6488,11 +6841,11 @@ ${refreshCode}
           broadcastPeerDepWarnings(result2?.peerDepWarnings ?? result2?.peer_dep_warnings);
           const outPath = result2?.out_path ?? result2?.outPath ?? depsFilePath;
           const mapPath = result2?.map_path ?? result2?.mapPath ?? null;
-          const resolvedOutPath = path6.isAbsolute(outPath) ? outPath : path6.join(depsRoot, outPath);
-          if (!fs7.existsSync(resolvedOutPath)) {
+          const resolvedOutPath = path7.isAbsolute(outPath) ? outPath : path7.join(depsRoot, outPath);
+          if (!fs8.existsSync(resolvedOutPath)) {
             throw new Error("Optimizer did not produce output");
           }
-          const stat = fs7.statSync(resolvedOutPath);
+          const stat = fs8.statSync(resolvedOutPath);
           const optimizedSize = stat.size;
           const etag = weakEtagFromStat(`deps-${depsHash}`, stat);
           observeRouteHintDepRequest();
@@ -6500,19 +6853,19 @@ ${refreshCode}
           if (variant) {
             sendPrecompressedFile(req, res, 200, "application/javascript; charset=utf-8", variant, {
               etagPrefix: `deps-${depsHash}`,
-              cacheControl: "public, max-age=31536000, immutable"
+              cacheControl: "no-cache"
             });
           } else {
-            const outBuffer = fs7.readFileSync(resolvedOutPath);
+            const outBuffer = fs8.readFileSync(resolvedOutPath);
             sendBuffer(req, res, 200, "application/javascript; charset=utf-8", startupInstrumentJavaScriptBuffer(outBuffer), {
               etag,
-              cacheControl: "public, max-age=31536000, immutable"
+              cacheControl: "no-cache"
             });
           }
           const elapsed = Date.now() - start;
           const rawKb = (rawSize / 1024).toFixed(1);
           const optKb = (optimizedSize / 1024).toFixed(1);
-          const mapSuffix = mapPath ? ` map=${path6.basename(mapPath)}` : "";
+          const mapSuffix = mapPath ? ` map=${path7.basename(mapPath)}` : "";
           logInfo(`[deps] OPTIMIZE ${packageLabel}: MISS \u2192 BUILD (${elapsed}ms, ${rawKb}KB \u2192 ${optKb}KB)${mapSuffix}`);
           refreshDepsManifestIndex();
           observeDepForPackPlanning(fileName);
@@ -6530,7 +6883,7 @@ ${refreshCode}
       let isPublicFile = false;
       if (publicDirAbs && shouldTryPublicDir(reqPath)) {
         const candidate = decodePublicDirPath(publicDirAbs, reqPath);
-        if (candidate && fs7.existsSync(candidate)) {
+        if (candidate && fs8.existsSync(candidate)) {
           fsPath = candidate;
           isPublicFile = true;
         }
@@ -6545,12 +6898,12 @@ ${refreshCode}
       }
       let effectiveFsPath = fsPath;
       let effectiveUrlPath = reqPath;
-      if (fs7.existsSync(effectiveFsPath) && fs7.statSync(effectiveFsPath).isDirectory()) {
+      if (fs8.existsSync(effectiveFsPath) && fs8.statSync(effectiveFsPath).isDirectory()) {
         const indexExtensions = [".html", ".js", ".ts", ".tsx", ".jsx"];
         let found = false;
         for (const ext2 of indexExtensions) {
-          const indexFile = path6.join(effectiveFsPath, `index${ext2}`);
-          if (fs7.existsSync(indexFile)) {
+          const indexFile = path7.join(effectiveFsPath, `index${ext2}`);
+          if (fs8.existsSync(indexFile)) {
             effectiveFsPath = indexFile;
             effectiveUrlPath = effectiveUrlPath.endsWith("/") ? `${effectiveUrlPath}index${ext2}` : `${effectiveUrlPath}/index${ext2}`;
             found = true;
@@ -6558,13 +6911,13 @@ ${refreshCode}
           }
         }
         if (!found) {
-          const packageJson = path6.join(effectiveFsPath, "package.json");
-          if (fs7.existsSync(packageJson)) {
+          const packageJson = path7.join(effectiveFsPath, "package.json");
+          if (fs8.existsSync(packageJson)) {
             try {
-              const pkg = JSON.parse(fs7.readFileSync(packageJson, "utf8"));
+              const pkg = JSON.parse(fs8.readFileSync(packageJson, "utf8"));
               if (pkg.main) {
-                const mainFile = path6.join(effectiveFsPath, pkg.main);
-                if (fs7.existsSync(mainFile)) {
+                const mainFile = path7.join(effectiveFsPath, pkg.main);
+                if (fs8.existsSync(mainFile)) {
                   effectiveFsPath = mainFile;
                   found = true;
                 }
@@ -6575,8 +6928,8 @@ ${refreshCode}
         }
         if (!found) {
           for (const ext2 of indexExtensions) {
-            const moduleFile = path6.join(effectiveFsPath, `module${ext2}`);
-            if (fs7.existsSync(moduleFile)) {
+            const moduleFile = path7.join(effectiveFsPath, `module${ext2}`);
+            if (fs8.existsSync(moduleFile)) {
               effectiveFsPath = moduleFile;
               found = true;
               break;
@@ -6594,7 +6947,7 @@ ${refreshCode}
           }
         }
       }
-      if (!fs7.existsSync(effectiveFsPath)) {
+      if (!fs8.existsSync(effectiveFsPath)) {
         if (isHtmlNavigationRequest(req, reqPath, q, spaFallback) && spaFallback.entryFilePath) {
           effectiveFsPath = spaFallback.entryFilePath;
           isPublicFile = false;
@@ -6604,25 +6957,25 @@ ${refreshCode}
           return;
         }
       }
-      if (!fs7.existsSync(effectiveFsPath)) {
+      if (!fs8.existsSync(effectiveFsPath)) {
         res.statusCode = 404;
         res.end("Not found");
         return;
       }
-      const ext = path6.extname(effectiveFsPath);
+      const ext = path7.extname(effectiveFsPath);
       if (isPublicFile && !isAssetExt(ext)) {
         try {
           watcher.watchFile(effectiveFsPath);
         } catch {
         }
         res.writeHead(200, { "Content-Type": guessContentType(effectiveFsPath) });
-        fs7.createReadStream(effectiveFsPath).pipe(res);
+        fs8.createReadStream(effectiveFsPath).pipe(res);
         return;
       }
       if (isAssetExt(ext)) {
         try {
-          const data = fs7.readFileSync(effectiveFsPath);
-          const assetHash = crypto.createHash("sha256").update(data).digest("hex");
+          const data = fs8.readFileSync(effectiveFsPath);
+          const assetHash = crypto2.createHash("sha256").update(data).digest("hex");
           const kind = "asset";
           const changed2 = graph.recordFile(effectiveFsPath, assetHash, [], [], kind);
           watcher.watchFile(effectiveFsPath);
@@ -6639,37 +6992,46 @@ ${refreshCode}
           return;
         } else {
           res.writeHead(200, { "Content-Type": contentTypeForAsset(ext) });
-          fs7.createReadStream(effectiveFsPath).pipe(res);
+          fs8.createReadStream(effectiveFsPath).pipe(res);
           return;
         }
       }
       if (isCssLikeExt(ext)) {
         try {
-          const cssSource = fs7.readFileSync(effectiveFsPath, "utf8");
+          const cssSource = fs8.readFileSync(effectiveFsPath, "utf8");
           const isModule = "module" in q || isCssModuleLikePath(effectiveFsPath);
           const mode2 = "raw" in q ? "css:raw-string" : "url" in q ? "css:url" : isModule ? "css:module" : "inline" in q ? "css:inline" : "css:raw";
           const contentHash = getCacheKey(cssSource);
           const baseCssDir = getCasArtifactPath(casRoot, configHash, contentHash);
-          const baseCssFile = path6.join(baseCssDir, "transformed.css");
+          const baseCssFile = path7.join(baseCssDir, "transformed.css");
+          const baseCssMetaFile = path7.join(baseCssDir, "meta.json");
           watcher.watchFile(effectiveFsPath);
           const kind = "css";
+          registerDevCssGraphSources();
+          const baseCssMeta = readJsonFile3(baseCssMetaFile);
+          const baseCssMetaCurrent = devCssMetaIsCurrent(baseCssMeta, contentHash, isModule, rootDir);
           const prevDeps = graph.getNode(effectiveFsPath)?.deps ?? [];
           graph.recordStructuralFiles(prevDeps);
           scheduleDependencyWatches(prevDeps);
           const depsStampHash = computeDepsStampHash(prevDeps);
           let artifactHash = getCacheKey(
-            `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${depsStampHash}`
+            `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${depsStampHash}:${metaTailwindStampForRecipe(baseCssMeta)}`
           );
           let casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
           const jsMode = mode2 !== "css:raw";
-          let casFile = path6.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+          let casFile = path7.join(casDir, jsMode ? "transformed.js" : "transformed.css");
           let finalBuffer = null;
-          if (fs7.existsSync(casFile)) {
+          if (fs8.existsSync(casFile)) {
             try {
-              finalBuffer = fs7.readFileSync(casFile);
+              finalBuffer = fs8.readFileSync(casFile);
               const ok = jsMode ? looksLikeIonifyCssJsModule(finalBuffer) : !looksLikeIonifyCssJsModule(finalBuffer);
               if (ok) {
-                res.setHeader("X-Ionify-Cache", "HIT");
+                if (baseCssMetaCurrent) {
+                  res.setHeader("X-Ionify-Cache", "HIT");
+                } else {
+                  finalBuffer = null;
+                  res.setHeader("X-Ionify-Cache", "STALE");
+                }
               } else {
                 finalBuffer = null;
                 res.setHeader("X-Ionify-Cache", "MISMATCH");
@@ -6678,42 +7040,44 @@ ${refreshCode}
               finalBuffer = null;
             }
           }
-          if (finalBuffer && !fs7.existsSync(baseCssFile)) {
+          if (finalBuffer && !fs8.existsSync(baseCssFile)) {
             try {
               registerDevCssGraphSources();
-              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
-                preprocessorOptions: userConfig?.css?.preprocessorOptions
+                preprocessorOptions: userConfig?.css?.preprocessorOptions,
+                // R1 (Completeness law): dev's live graph is request-shaped and
+                // cannot be proven complete for the first document, so Tailwind
+                // content must fail closed to the config globs — never narrow.
+                tailwindContentAuthority: { mode: "config-globs" }
               });
-              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-              graph.recordStructuralFiles(depsAbs);
-              const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+              const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+              const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+              graph.recordStructuralFiles(allDepsAbs);
+              const changed2 = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
               if (changed2) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
               }
-              scheduleDependencyWatches(depsAbs);
-              fs7.mkdirSync(baseCssDir, { recursive: true });
+              scheduleDependencyWatches(allDepsAbs);
+              fs8.mkdirSync(baseCssDir, { recursive: true });
               const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-              fs7.writeFileSync(tmp, compiledCss, "utf8");
-              fs7.renameSync(tmp, baseCssFile);
-              const metaPath = path6.join(baseCssDir, "meta.json");
-              if (!fs7.existsSync(metaPath)) {
-                writeJsonFile3(metaPath, {
-                  version: 1,
-                  baseHash: contentHash,
-                  pipelineHash,
-                  deps: depsAbs.slice().sort(),
-                  urlDeps: [],
-                  modules: isModule,
-                  generatedAt: (/* @__PURE__ */ new Date()).toISOString()
-                });
-              }
+              fs8.writeFileSync(tmp, compiledCss, "utf8");
+              fs8.renameSync(tmp, baseCssFile);
+              writeJsonFile3(baseCssMetaFile, buildDevCssMeta({
+                contentHash,
+                pipelineHash,
+                depsAbs,
+                urlDepsAbs,
+                modules: isModule,
+                tailwindGraphContent
+              }));
               if (isModule && tokens) {
-                const tokPath = path6.join(baseCssDir, "tokens.json");
-                if (!fs7.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
+                const tokPath = path7.join(baseCssDir, "tokens.json");
+                if (!fs8.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
               }
             } catch {
             }
@@ -6723,54 +7087,59 @@ ${refreshCode}
             if (mode2 === "css:url") {
               const rawUrl = `${effectiveUrlPath}?v=${contentHash}-${depsStampHash.slice(0, 8)}`;
               body = renderCssUrlModule(rawUrl);
-              if (!fs7.existsSync(baseCssFile)) {
+              if (!fs8.existsSync(baseCssFile) || !baseCssMetaCurrent) {
                 try {
                   registerDevCssGraphSources();
-                  const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+                  const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                     code: cssSource,
                     filePath: effectiveFsPath,
                     rootDir,
                     modules: isModule,
-                    preprocessorOptions: userConfig?.css?.preprocessorOptions
+                    preprocessorOptions: userConfig?.css?.preprocessorOptions,
+                    // R1 (Completeness law): dev fails closed to config globs.
+                    tailwindContentAuthority: { mode: "config-globs" }
                   });
-                  const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-                  graph.recordStructuralFiles(depsAbs);
-                  const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+                  const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+                  const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+                  const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+                  body = renderCssUrlModule(`${effectiveUrlPath}?v=${contentHash}-${computeDepsStampHash(allDepsAbs).slice(0, 8)}`);
+                  graph.recordStructuralFiles(allDepsAbs);
+                  const changed2 = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
                   if (changed2) {
                     logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
                   }
-                  scheduleDependencyWatches(depsAbs);
-                  fs7.mkdirSync(baseCssDir, { recursive: true });
+                  scheduleDependencyWatches(allDepsAbs);
+                  fs8.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-                  fs7.writeFileSync(tmp, compiledCss, "utf8");
-                  fs7.renameSync(tmp, baseCssFile);
-                  const metaPath = path6.join(baseCssDir, "meta.json");
-                  if (!fs7.existsSync(metaPath)) {
-                    writeJsonFile3(metaPath, {
-                      version: 1,
-                      baseHash: contentHash,
-                      pipelineHash,
-                      deps: depsAbs.slice().sort(),
-                      urlDeps: [],
-                      modules: isModule,
-                      generatedAt: (/* @__PURE__ */ new Date()).toISOString()
-                    });
-                  }
+                  fs8.writeFileSync(tmp, compiledCss, "utf8");
+                  fs8.renameSync(tmp, baseCssFile);
+                  writeJsonFile3(baseCssMetaFile, buildDevCssMeta({
+                    contentHash,
+                    pipelineHash,
+                    depsAbs,
+                    urlDepsAbs,
+                    modules: isModule,
+                    tailwindGraphContent
+                  }));
                   if (isModule && tokens) {
-                    const tokPath = path6.join(baseCssDir, "tokens.json");
-                    if (!fs7.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
+                    const tokPath = path7.join(baseCssDir, "tokens.json");
+                    if (!fs8.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
                   }
                 } catch {
                 }
               }
             } else {
               registerDevCssGraphSources();
-              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash } = await compileCss({
+              const { css: compiledCss, tokens, deps, urlDeps, pipelineHash, tailwindGraphContent } = await compileCss({
                 code: cssSource,
                 filePath: effectiveFsPath,
                 rootDir,
                 modules: isModule,
-                preprocessorOptions: userConfig?.css?.preprocessorOptions
+                preprocessorOptions: userConfig?.css?.preprocessorOptions,
+                // R1 (Completeness law): dev's live graph is request-shaped and
+                // cannot be proven complete for the first document, so Tailwind
+                // content must fail closed to the config globs — never narrow.
+                tailwindContentAuthority: { mode: "config-globs" }
               });
               const servedCss = rewriteCssUrls(
                 rewriteCssImportSpecifiers(
@@ -6785,44 +7154,42 @@ ${refreshCode}
                 // dev-served public path so `@/`-alias + bare-package url()s resolve (relative ones
                 // already would). Mirrors the build emit-time rebasing via the shared resolver, so
                 // the phase-neutral CAS `transformed.css` stays untouched.
-                (abs) => isForbiddenFsPath(abs) || !fs7.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs)
+                (abs) => isForbiddenFsPath(abs) || !fs8.existsSync(abs) ? null : normalizeUrlFromFs(rootDir, abs)
               );
-              const depsAbs = [...deps, ...urlDeps].map((d) => d.filePath).filter(Boolean);
-              const nextDepsStampHash = computeDepsStampHash(depsAbs);
+              const depsAbs = deps.map((d) => d.filePath).filter(Boolean);
+              const urlDepsAbs = urlDeps.map((d) => d.filePath).filter(Boolean);
+              const allDepsAbs = [...depsAbs, ...urlDepsAbs];
+              const nextDepsStampHash = computeDepsStampHash(allDepsAbs);
               artifactHash = getCacheKey(
-                `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${nextDepsStampHash}`
+                `css:v3:${effectiveFsPath}:${contentHash}:${mode2}:${nextDepsStampHash}:${compileTailwindStampForRecipe(tailwindGraphContent)}`
               );
               casDir = getCasArtifactPath(casRoot, configHash, artifactHash);
-              casFile = path6.join(casDir, jsMode ? "transformed.js" : "transformed.css");
-              graph.recordStructuralFiles(depsAbs);
-              const changed2 = graph.recordFile(effectiveFsPath, contentHash, depsAbs, [], kind);
+              casFile = path7.join(casDir, jsMode ? "transformed.js" : "transformed.css");
+              graph.recordStructuralFiles(allDepsAbs);
+              const changed2 = graph.recordFile(effectiveFsPath, contentHash, allDepsAbs, [], kind);
               if (changed2) {
                 logInfo(`[Graph] CSS updated: ${effectiveFsPath}`);
               }
-              scheduleDependencyWatches(depsAbs);
+              scheduleDependencyWatches(allDepsAbs);
               try {
-                const alreadyExists = fs7.existsSync(baseCssFile);
+                const alreadyExists = fs8.existsSync(baseCssFile) && baseCssMetaCurrent;
                 if (!alreadyExists) {
-                  fs7.mkdirSync(baseCssDir, { recursive: true });
+                  fs8.mkdirSync(baseCssDir, { recursive: true });
                   const tmp = `${baseCssFile}.tmp-${process.pid}-${Date.now()}`;
-                  fs7.writeFileSync(tmp, compiledCss, "utf8");
-                  fs7.renameSync(tmp, baseCssFile);
+                  fs8.writeFileSync(tmp, compiledCss, "utf8");
+                  fs8.renameSync(tmp, baseCssFile);
                 }
-                const metaPath = path6.join(baseCssDir, "meta.json");
-                if (!fs7.existsSync(metaPath)) {
-                  writeJsonFile3(metaPath, {
-                    version: 1,
-                    baseHash: contentHash,
-                    pipelineHash,
-                    deps: depsAbs.slice().sort(),
-                    urlDeps: [],
-                    modules: isModule,
-                    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
-                  });
-                }
+                writeJsonFile3(baseCssMetaFile, buildDevCssMeta({
+                  contentHash,
+                  pipelineHash,
+                  depsAbs,
+                  urlDepsAbs,
+                  modules: isModule,
+                  tailwindGraphContent
+                }));
                 if (isModule && tokens) {
-                  const tokPath = path6.join(baseCssDir, "tokens.json");
-                  if (!fs7.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
+                  const tokPath = path7.join(baseCssDir, "tokens.json");
+                  if (!fs8.existsSync(tokPath)) writeJsonFile3(tokPath, tokens);
                 }
               } catch {
               }
@@ -6841,8 +7208,8 @@ ${refreshCode}
             finalBuffer = Buffer.from(body, "utf8");
             res.setHeader("X-Ionify-Cache", "MISS");
             try {
-              fs7.mkdirSync(casDir, { recursive: true });
-              fs7.writeFileSync(casFile, finalBuffer);
+              fs8.mkdirSync(casDir, { recursive: true });
+              fs8.writeFileSync(casFile, finalBuffer);
             } catch {
             }
           }
@@ -6870,7 +7237,7 @@ ${refreshCode}
           return;
         }
       }
-      const code = fs7.readFileSync(effectiveFsPath, "utf8");
+      const code = fs8.readFileSync(effectiveFsPath, "utf8");
       let hash;
       let specs;
       if (native?.parseModuleIr) {
@@ -6921,11 +7288,22 @@ ${refreshCode}
         code,
         baseHash: hash
       });
+      const runtimeGraph = resolveTransformedRuntimeGraphDeps(
+        result.runtimeDependencies,
+        effectiveFsPath,
+        nextDeps
+      );
+      graph.recordFile(
+        effectiveFsPath,
+        hash,
+        runtimeGraph.deps,
+        runtimeGraph.dynamicDeps
+      );
       const transformedCode = result.code;
       res.setHeader("X-Ionify-Cache", changed ? "MISS" : "HIT");
       const withDefine = applyDefineReplacements(transformedCode, defineConfig);
       const envApplied = applyEnvPlaceholders(withDefine, ext);
-      if (path6.extname(effectiveFsPath) === ".html") {
+      if (path7.extname(effectiveFsPath) === ".html") {
         activateFeaturePacksOnNextDocument();
         const documentRouteKey = normalizeDocumentRouteKey(reqPath);
         routeHints.beginDocument({
@@ -6967,11 +7345,10 @@ ${refreshCode}
           );
         } else {
           const preloadDepsUrl = (hintUrl) => {
-            if (!hintUrl.startsWith(DEPS_PREFIX)) return;
-            const fileName = hintUrl.slice(DEPS_PREFIX.length);
-            if (!fileName.endsWith(".js")) return;
-            if (!fs7.existsSync(path6.join(depsRoot, fileName))) return;
-            preloadUrl(hintUrl);
+            const fileName = depsFileNameFromRuntimeUrl(hintUrl);
+            if (!fileName) return;
+            if (!fs8.existsSync(path7.join(depsRoot, fileName))) return;
+            preloadUrl(depsRuntimeUrl2(fileName));
           };
           const packPreloads = new Set(collectBootstrapRoutedPackPreloadUrls());
           const packFilesForVendorDeps = /* @__PURE__ */ new Set();
@@ -6979,7 +7356,7 @@ ${refreshCode}
             for (const dep of vendorDeps) {
               const packFileName = vendorPackV2.fileNameToPackFile.get(dep.fileName) ?? null;
               if (!packFileName) continue;
-              if (!fs7.existsSync(path6.join(depsRoot, packFileName))) continue;
+              if (!fs8.existsSync(path7.join(depsRoot, packFileName))) continue;
               packFilesForVendorDeps.add(packFileName);
               const chunkFiles = vendorPackV2.packFileToChunkFiles.get(packFileName) ?? (() => {
                 const shared = vendorPackV2.packFileToSharedFile.get(packFileName) ?? null;
@@ -6988,15 +7365,15 @@ ${refreshCode}
               if (chunkFiles.length === 0) continue;
               for (const chunkFile of chunkFiles) {
                 if (typeof chunkFile !== "string" || !chunkFile.endsWith(".js")) continue;
-                if (!fs7.existsSync(path6.join(depsRoot, chunkFile))) continue;
-                packPreloads.add(`${DEPS_PREFIX}${chunkFile}`);
+                if (!fs8.existsSync(path7.join(depsRoot, chunkFile))) continue;
+                packPreloads.add(depsRuntimeUrl2(chunkFile));
               }
             }
           }
           if (packFilesForVendorDeps.size > 0) {
             for (const depsUrl of Array.from(packPreloads).sort()) preloadDepsUrl(depsUrl);
             for (const packFileName of Array.from(packFilesForVendorDeps).sort()) {
-              preloadDepsUrl(`${DEPS_PREFIX}${packFileName}`);
+              preloadDepsUrl(depsRuntimeUrl2(packFileName));
             }
           } else if (packPreloads.size > 0) {
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
@@ -7006,6 +7383,7 @@ ${refreshCode}
             ensureVendorPackFile();
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
             if (sharedPreload) preloadUrl(sharedPreload);
+            const vendorPackUrl = getVendorPackUrl();
             if (vendorPackUrl) preloadUrl(vendorPackUrl);
           }
         }
@@ -7046,14 +7424,148 @@ ${refreshCode}
     }
   };
   const server = httpsOptions ? https.createServer(httpsOptions, requestHandler) : http.createServer(requestHandler);
+  const dependencyEnvironmentPaths = new Set(
+    dependencyEnvironmentWatchPaths(workspace.workspaceRoot, rootDir)
+  );
+  const clearGenerationTimers = (timers) => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+  };
+  const dependencySubsystemBusy = () => activeRequests > 0 || depUsageScanRunning || manualSlimBuildRunning || manualBuildRunning || featureBuildRunning || featureSlimBuildRunning;
+  const activateDependencyGeneration = async (snapshot, reasons) => {
+    if (shuttingDown) return;
+    if (dependencySubsystemBusy()) {
+      dependencyEnvironmentSettler.notify("await-dependency-quiescence");
+      return;
+    }
+    const nextDepsHash = computeDepsHash(configHash, snapshot.lockfile, {
+      nodeEnv: depsNodeEnv,
+      sourcemap: depsSourcemapEnabled,
+      bundleEsm: depsBundleEsmEnabled,
+      sharedChunks: depsSharedChunksMode,
+      outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION
+    });
+    const previousDepsHash = depsHash;
+    const previousDepsRoot = depsRoot;
+    papContractsPublished = false;
+    papArtifactsPublished = false;
+    papDirty = true;
+    cancelProductionArtifactsPublication("dependency-environment");
+    if (nextDepsHash !== previousDepsHash) {
+      const nextDepsRoot = path7.join(ionifyDir, "deps", nextDepsHash);
+      fs8.mkdirSync(nextDepsRoot, { recursive: true });
+      let promoted = 0;
+      let skipped = 0;
+      if (native?.depsPromoteArtifacts && fs8.existsSync(path7.join(previousDepsRoot, "manifest.json"))) {
+        try {
+          const result = native.depsPromoteArtifacts(
+            previousDepsRoot,
+            nextDepsRoot,
+            nextDepsHash,
+            DEPS_OPTIMIZER_OUTPUT_VERSION
+          );
+          promoted = result.promoted;
+          skipped = result.skipped;
+        } catch (error) {
+          logWarn(`[deps] DPL generation promotion failed closed: ${String(error)}`);
+        }
+      }
+      if (devStableTimer) clearTimeout(devStableTimer);
+      devStableTimer = null;
+      devStableServedCount = 0;
+      depsHash = nextDepsHash;
+      depsRoot = nextDepsRoot;
+      process.env.IONIFY_DEPS_HASH = nextDepsHash;
+      pruneDepsCache(ionifyDir, nextDepsHash);
+      refreshDepsManifestIndex();
+      directDepUsageFileNames.clear();
+      loadDirectDepUsageFileNamesFromDisk();
+      depUsageIndex = packSlimmingEnabled ? loadDepUsageIndexFromDisk() : null;
+      setDirectDepUsageFileNames(depUsageIndex);
+      vendorPackLastRequestCounts = vendorPacksEnabled ? loadDepRequestCounts(vendorPackRequestsPath()) : /* @__PURE__ */ new Map();
+      vendorPackSessionRequestCounts?.clear();
+      vendorPackRequestCountsDirty = false;
+      vendorPackRequestCountsLastFlush = 0;
+      clearGenerationTimers(manualSlimBuildTimers);
+      clearGenerationTimers(manualBuildTimers);
+      clearGenerationTimers(featureBuildTimers);
+      clearGenerationTimers(featureSlimBuildTimers);
+      manualSlimBuildQueue.length = 0;
+      manualBuildQueue.length = 0;
+      featureBuildQueue.length = 0;
+      featureSlimBuildQueue.length = 0;
+      manualState.clear();
+      manualSlimState.clear();
+      for (const entries of manualObserved.values()) entries.clear();
+      featureObserved.clear();
+      featureState.clear();
+      featureLastReadyState.clear();
+      featureSlimState.clear();
+      featureLastReadySlimState.clear();
+      featurePackFileNameToChunkGroup.clear();
+      plannedFeatureGroups.clear();
+      featurePackActivationPending = false;
+      vendorPackV2 = new VendorPackV2IndexManager({
+        depsRoot,
+        depsHash,
+        outputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION,
+        allowPackFilePrefix: vendorPackV2AllowedPrefix,
+        log: { info: logInfo, warn: logWarn }
+      });
+      vendorPackV2.loadFromDisk();
+      loadFeaturePackIndex();
+      featurePackRoutingHashCache = null;
+      vendorPackV2RoutingHashCache = null;
+      for (const depFile of graph.listFilesByKind("dep")) {
+        graph.removeFile(depFile);
+      }
+      graph.flush();
+      bumpDevStable();
+      logInfo(
+        `[deps] DPL generation activated ${previousDepsHash} -> ${nextDepsHash} (promoted=${promoted}, reoptimize=${skipped}, reasons=${reasons.join(",") || "unknown"})`
+      );
+    } else {
+      refreshDepsManifestIndex();
+      logInfo(
+        `[deps] Dependency environment converged without store rotation (depsHash=${depsHash}, reasons=${reasons.join(",") || "unknown"})`
+      );
+    }
+    hmr.broadcastEvent("dependency-generation", {
+      previous: previousDepsHash,
+      current: depsHash
+    });
+    dependencyEnvironmentReconciling = false;
+    scheduleProductionArtifactPublication("dependency-generation", "contracts");
+  };
+  const dependencyEnvironmentSettler = new DependencyEnvironmentSettler({
+    workspaceRoot: workspace.workspaceRoot,
+    projectRoot: rootDir,
+    settleMs: 250,
+    onStable: activateDependencyGeneration,
+    onInvalid: (reason) => {
+      logWarn(`[deps] Dependency environment is not stable; retaining ${depsHash}: ${reason}`);
+    }
+  });
+  for (const dependencyEnvironmentPath of dependencyEnvironmentPaths) {
+    watcher.watchFile(dependencyEnvironmentPath, { allowMissing: true });
+  }
   watcher.on("change", (file, status) => {
     logInfo(`[Watcher] ${status}: ${file}`);
+    if (dependencyEnvironmentPaths.has(path7.resolve(file))) {
+      dependencyEnvironmentReconciling = true;
+      papContractsPublished = false;
+      papArtifactsPublished = false;
+      papDirty = true;
+      cancelProductionArtifactsPublication(`dependency:${status}`);
+      dependencyEnvironmentSettler.notify(`${status}:${path7.basename(file)}`);
+      return;
+    }
     papContractsPublished = false;
     papArtifactsPublished = false;
     papDirty = true;
     cancelProductionArtifactsPublication(`watch:${status}`);
     scheduleProductionArtifactPublication(`watch:${status}`, "contracts");
-    const ext = path6.extname(file).toLowerCase();
+    const ext = path7.extname(file).toLowerCase();
     const isReactFastRefreshBoundary = status !== "deleted" && (ext === ".tsx" || ext === ".jsx");
     const isCssBoundary = status !== "deleted" && isCssLikeExt(ext);
     const collected = graph.collectAffected([file]);
@@ -7073,7 +7585,7 @@ ${refreshCode}
       if (reason !== "deleted") {
         if (absPath === file) {
           try {
-            const code = fs7.readFileSync(absPath, "utf8");
+            const code = fs8.readFileSync(absPath, "utf8");
             hash = getCacheKey(code);
           } catch {
             hash = graph.getNode(absPath)?.hash ?? null;
@@ -7084,7 +7596,7 @@ ${refreshCode}
       }
       modules.push({
         absPath,
-        url: isCssLikePath(absPath) ? `${normalizeUrlFromFs(rootDir, absPath)}?inline` : isAssetExt(path6.extname(absPath).toLowerCase()) ? `${normalizeUrlFromFs(rootDir, absPath)}?import` : normalizeUrlFromFs(rootDir, absPath),
+        url: isCssLikePath(absPath) ? `${normalizeUrlFromFs(rootDir, absPath)}?inline` : isAssetExt(path7.extname(absPath).toLowerCase()) ? `${normalizeUrlFromFs(rootDir, absPath)}?import` : normalizeUrlFromFs(rootDir, absPath),
         hash,
         reason
       });
@@ -7110,6 +7622,7 @@ ${refreshCode}
     shuttingDown = true;
     pendingWatchedDeps.clear();
     pendingWatchFlush = false;
+    dependencyEnvironmentSettler.close();
     try {
       hmr.close();
     } catch (err) {
@@ -7239,8 +7752,8 @@ ${refreshCode}
     const labels = prewarmEntries.map((d) => d.packageLabel).join(", ");
     logInfo(`[deps] ${prewarmLabel} detected (${prewarmEntries.length}): ${labels}`);
     ensureVendorPackFile();
-    const missing = prewarmEntries.filter((d) => !fs7.existsSync(path6.join(depsRoot, d.fileName)));
-    const sharedMissing = vendorPacksForce ? vendorPackSharedFileName ? !fs7.existsSync(path6.join(depsRoot, vendorPackSharedFileName)) : false : vendorCoreSharedFileName ? !fs7.existsSync(path6.join(depsRoot, vendorCoreSharedFileName)) : false;
+    const missing = prewarmEntries.filter((d) => !fs8.existsSync(path7.join(depsRoot, d.fileName)));
+    const sharedMissing = vendorPacksForce ? vendorPackSharedFileName ? !fs8.existsSync(path7.join(depsRoot, vendorPackSharedFileName)) : false : vendorCoreSharedFileName ? !fs8.existsSync(path7.join(depsRoot, vendorCoreSharedFileName)) : false;
     if (missing.length > 0 || sharedMissing) {
       const entryCount = missing.length;
       logInfo(`[deps] Pre-warming ${prewarmLabel} (${entryCount}) in parallel...`);
@@ -7280,7 +7793,7 @@ ${refreshCode}
             } else if (r?.out_path || r?.outPath) {
               const outPath = r.out_path ?? r.outPath;
               logInfo(
-                `[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${path6.basename(outPath)}`
+                `[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${path7.basename(outPath)}`
               );
             }
           });
@@ -7299,7 +7812,7 @@ ${refreshCode}
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             const outPath = result?.out_path ?? result?.outPath ?? null;
             if (outPath) {
-              logInfo(`[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${path6.basename(outPath)}`);
+              logInfo(`[deps] \u2713 Prewarmed ${dep.packageLabel} \u2192 ${path7.basename(outPath)}`);
             }
           } catch (err) {
             logWarn(`[deps] Prewarm failed ${dep.packageLabel}: ${String(err)}`);
@@ -7336,7 +7849,7 @@ ${refreshCode}
             );
             broadcastPeerDepWarnings(result?.peerDepWarnings ?? result?.peer_dep_warnings);
             if (result?.out_path) {
-              const fileName = path6.basename(result.out_path);
+              const fileName = path7.basename(result.out_path);
               logInfo(`[deps] \u2713 Pre-warmed ${pkgName} \u2192 ${fileName}`);
             }
           } catch (err) {
@@ -7354,12 +7867,12 @@ ${refreshCode}
       usageEntries.push(...resolvedEntries);
     } else {
       for (const candidate of [
-        path6.join(rootDir, "src", "main.tsx"),
-        path6.join(rootDir, "src", "main.ts"),
-        path6.join(rootDir, "src", "index.tsx"),
-        path6.join(rootDir, "src", "index.ts")
+        path7.join(rootDir, "src", "main.tsx"),
+        path7.join(rootDir, "src", "main.ts"),
+        path7.join(rootDir, "src", "index.tsx"),
+        path7.join(rootDir, "src", "index.ts")
       ]) {
-        if (fs7.existsSync(candidate)) usageEntries.push(candidate);
+        if (fs8.existsSync(candidate)) usageEntries.push(candidate);
       }
     }
     if (!native?.resolveModule) {
@@ -7429,8 +7942,8 @@ ${refreshCode}
 }
 
 // src/cli/commands/analyze.ts
-import fs8 from "fs";
-import path7 from "path";
+import fs9 from "fs";
+import path8 from "path";
 import chalk from "chalk";
 var GRAPH_TREE_MAX_DEPTH = 4;
 var HEAVY_DEP_SUGGESTION_MIN_BYTES = 50 * 1024;
@@ -7520,16 +8033,16 @@ function resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, specifier) {
   const withoutQuery = withoutHash.split("?", 1)[0] ?? withoutHash;
   if (!withoutQuery) return null;
   if (withoutQuery.startsWith("/")) {
-    return path7.join(rootDir, withoutQuery);
+    return path8.join(rootDir, withoutQuery);
   }
-  return path7.resolve(path7.dirname(htmlInput), withoutQuery);
+  return path8.resolve(path8.dirname(htmlInput), withoutQuery);
 }
 function inferAnalyzeEntriesFromHtml(rootDir) {
-  const htmlInput = path7.join(rootDir, "index.html");
-  if (!fs8.existsSync(htmlInput)) return [];
+  const htmlInput = path8.join(rootDir, "index.html");
+  if (!fs9.existsSync(htmlInput)) return [];
   let html = "";
   try {
-    html = fs8.readFileSync(htmlInput, "utf8");
+    html = fs9.readFileSync(htmlInput, "utf8");
   } catch {
     return [];
   }
@@ -7539,23 +8052,23 @@ function inferAnalyzeEntriesFromHtml(rootDir) {
   for (const match of html.matchAll(moduleScriptRe)) {
     const src = typeof match[1] === "string" ? match[1] : "";
     const resolved = resolveAnalyzeEntryFromHtmlInput(htmlInput, rootDir, src);
-    if (!resolved || !fs8.existsSync(resolved) || seen.has(resolved)) continue;
+    if (!resolved || !fs9.existsSync(resolved) || seen.has(resolved)) continue;
     seen.add(resolved);
     entries.push(resolved);
   }
   return entries;
 }
 function readJson(filePath) {
-  if (!fs8.existsSync(filePath)) return null;
+  if (!fs9.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs8.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs9.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
 }
 function statSize(filePath) {
   try {
-    return fs8.statSync(filePath).size;
+    return fs9.statSync(filePath).size;
   } catch {
     return null;
   }
@@ -7581,7 +8094,7 @@ function resolveRouteSourceAssetPath(projectRoot, url2) {
   if (!normalized.startsWith("/")) return null;
   const relative = normalized.slice(1);
   if (!relative) return null;
-  return path7.join(projectRoot, relative);
+  return path8.join(projectRoot, relative);
 }
 function formatBytes(bytes) {
   if (bytes === null) return "n/a";
@@ -7595,7 +8108,7 @@ function formatBytes(bytes) {
   return `${gb.toFixed(2)}GB`;
 }
 function loadVendorPackRoutingIndex(depsRoot, depsHash) {
-  const index = readJson(path7.join(depsRoot, "vendor-pack.v2.index.json"));
+  const index = readJson(path8.join(depsRoot, "vendor-pack.v2.index.json"));
   if (!index || index.version !== 1 || index.depsHash !== depsHash) return null;
   return index;
 }
@@ -7627,23 +8140,23 @@ function getSelectedSurfaces(options) {
   return selected.length > 0 ? selected : ["graph", "build", "packs", "routes", "findings"];
 }
 function listDepsRootCandidates(ionifyDir) {
-  const depsDir = path7.join(ionifyDir, "deps");
-  if (!fs8.existsSync(depsDir)) return [];
-  return fs8.readdirSync(depsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
+  const depsDir = path8.join(ionifyDir, "deps");
+  if (!fs9.existsSync(depsDir)) return [];
+  return fs9.readdirSync(depsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
     const depsHash = entry.name;
-    const depsRoot = path7.join(depsDir, depsHash);
-    const indexPath = path7.join(depsRoot, "vendor-pack.v2.index.json");
-    const manifestPath = path7.join(depsRoot, "manifest.json");
-    const usagePath = path7.join(depsRoot, "deps-usage.v2.json");
-    const legacyUsagePath = path7.join(depsRoot, "deps-usage.v1.json");
-    const statPath = fs8.existsSync(indexPath) ? indexPath : depsRoot;
+    const depsRoot = path8.join(depsDir, depsHash);
+    const indexPath = path8.join(depsRoot, "vendor-pack.v2.index.json");
+    const manifestPath = path8.join(depsRoot, "manifest.json");
+    const usagePath = path8.join(depsRoot, "deps-usage.v2.json");
+    const legacyUsagePath = path8.join(depsRoot, "deps-usage.v1.json");
+    const statPath = fs9.existsSync(indexPath) ? indexPath : depsRoot;
     let mtimeMs = 0;
     try {
-      mtimeMs = fs8.statSync(statPath).mtimeMs;
+      mtimeMs = fs9.statSync(statPath).mtimeMs;
     } catch {
       mtimeMs = 0;
     }
-    const completeness = Number(fs8.existsSync(indexPath)) + Number(fs8.existsSync(manifestPath)) + Number(fs8.existsSync(usagePath) || fs8.existsSync(legacyUsagePath));
+    const completeness = Number(fs9.existsSync(indexPath)) + Number(fs9.existsSync(manifestPath)) + Number(fs9.existsSync(usagePath) || fs9.existsSync(legacyUsagePath));
     return { depsHash, depsRoot, mtimeMs, completeness };
   }).sort((a, b) => b.completeness - a.completeness || b.mtimeMs - a.mtimeMs || a.depsHash.localeCompare(b.depsHash));
 }
@@ -7735,10 +8248,10 @@ function computeGraphSummary(nodes, limit = 10, includeTree = false) {
   };
 }
 function readGraphFromDisk(ionifyDir) {
-  const file = path7.join(ionifyDir, "graph.json");
-  if (!fs8.existsSync(file)) return null;
+  const file = path8.join(ionifyDir, "graph.json");
+  if (!fs9.existsSync(file)) return null;
   try {
-    const snapshot = JSON.parse(fs8.readFileSync(file, "utf8"));
+    const snapshot = JSON.parse(fs9.readFileSync(file, "utf8"));
     if (snapshot?.version !== 1 || !snapshot?.nodes) return null;
     return Object.entries(snapshot.nodes).map(([id, node]) => ({
       id,
@@ -7769,7 +8282,7 @@ async function loadGraphSnapshot(ionifyDir) {
 async function resolveAnalyzeWorkspace() {
   const envMode = process.env.IONIFY_MODE ?? process.env.MODE ?? process.env.NODE_ENV ?? "development";
   const config = await loadIonifyConfig(process.cwd(), envMode);
-  const projectRootOverride = config?.root ? path7.resolve(config.root) : null;
+  const projectRootOverride = config?.root ? path8.resolve(config.root) : null;
   const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
     projectRootOverride
   });
@@ -7788,7 +8301,7 @@ async function resolveAnalyzeWorkspace() {
     constantEnv: process.env.IONIFY_SCOPE_HOIST_CONST,
     combineEnv: process.env.IONIFY_SCOPE_HOIST_COMBINE
   });
-  const configuredEntries = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? path7.join(rootDir, entry) : path7.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
+  const configuredEntries = config?.entry ? (Array.isArray(config.entry) ? config.entry : [config.entry]).map((entry) => entry.startsWith("/") ? path8.join(rootDir, entry) : path8.resolve(rootDir, entry)).filter((entry) => typeof entry === "string" && entry.length > 0) : [];
   const entries = configuredEntries.length > 0 ? configuredEntries : inferAnalyzeEntriesFromHtml(rootDir);
   const pluginNames = Array.isArray(config?.plugins) ? config.plugins.map((plugin) => typeof plugin === "string" ? plugin : plugin?.name).filter((name) => typeof name === "string" && name.length > 0) : void 0;
   const configHash = computeGraphVersion({
@@ -7805,13 +8318,13 @@ async function resolveAnalyzeWorkspace() {
     }
   });
   process.env.IONIFY_CONFIG_HASH = configHash;
-  ensureNativeGraph(path7.join(workspace.ionifyDir, "graph.db"), configHash);
+  ensureNativeGraph(path8.join(workspace.ionifyDir, "graph.db"), configHash);
   return workspace;
 }
 function summarizeBuildOutputs(outDir, limit) {
-  const absOutDir = path7.resolve(outDir);
-  const manifestPath = path7.join(absOutDir, "manifest.json");
-  const statsPath = path7.join(absOutDir, "build.stats.json");
+  const absOutDir = path8.resolve(outDir);
+  const manifestPath = path8.join(absOutDir, "manifest.json");
+  const statsPath = path8.join(absOutDir, "build.stats.json");
   const manifest = readJson(manifestPath);
   const stats = readJson(statsPath);
   if (!manifest && !stats) return null;
@@ -7905,11 +8418,11 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
     const requestsPacked = 1 + uniqueChunks.length;
     const requestsUnpacked = members.length;
     const requestsSaved = Math.max(0, requestsUnpacked - requestsPacked);
-    const packBytes = statSize(path7.join(depsRoot, packFileName));
+    const packBytes = statSize(path8.join(depsRoot, packFileName));
     let chunksBytes = 0;
     let chunksKnown = true;
     for (const chunk of uniqueChunks) {
-      const b = statSize(path7.join(depsRoot, chunk));
+      const b = statSize(path8.join(depsRoot, chunk));
       if (b === null) chunksKnown = false;
       chunksBytes += b ?? 0;
     }
@@ -7917,7 +8430,7 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
     let wrappersBytes = 0;
     let wrappersKnown = true;
     for (const fileName of members) {
-      const b = statSize(path7.join(depsRoot, fileName));
+      const b = statSize(path8.join(depsRoot, fileName));
       if (b === null) wrappersKnown = false;
       wrappersBytes += b ?? 0;
     }
@@ -7935,20 +8448,20 @@ function analyzeVendorPacks(depsRoot, depsHash, selectionMode, limit) {
   }
   packs.sort((a, b) => b.requestsSaved - a.requestsSaved || b.members - a.members || a.packFileName.localeCompare(b.packFileName));
   const slimGroups = [];
-  const files = fs8.existsSync(depsRoot) ? fs8.readdirSync(depsRoot) : [];
+  const files = fs9.existsSync(depsRoot) ? fs9.readdirSync(depsRoot) : [];
   const stateFiles = files.filter((f) => f.startsWith("vendor-pack.") && f.endsWith(".json"));
   for (const file of stateFiles) {
     if (file.endsWith(".slim.json")) continue;
-    const base = readJson(path7.join(depsRoot, file));
+    const base = readJson(path8.join(depsRoot, file));
     if (!base || base.version !== 1 || base.depsHash !== depsHash) continue;
     const slimFile = file.replace(/\.json$/, ".slim.json");
-    const slim = readJson(path7.join(depsRoot, slimFile));
+    const slim = readJson(path8.join(depsRoot, slimFile));
     if (!slim || slim.version !== 1 || slim.depsHash !== depsHash) continue;
     if (base.status !== "ready" || slim.status !== "ready") continue;
     const baseShared = typeof base.sharedFileName === "string" ? base.sharedFileName : null;
     const slimShared = typeof slim.sharedFileName === "string" ? slim.sharedFileName : null;
-    const baseBytes = baseShared ? statSize(path7.join(depsRoot, baseShared)) : null;
-    const slimBytes = slimShared ? statSize(path7.join(depsRoot, slimShared)) : null;
+    const baseBytes = baseShared ? statSize(path8.join(depsRoot, baseShared)) : null;
+    const slimBytes = slimShared ? statSize(path8.join(depsRoot, slimShared)) : null;
     const savedBytes = baseBytes !== null && slimBytes !== null && baseBytes > 0 && slimBytes > 0 ? baseBytes - slimBytes : null;
     const label = file.replace(/^vendor-pack\./, "").replace(/\.json$/, "");
     slimGroups.push({ label, baseSharedBytes: baseBytes, slimSharedBytes: slimBytes, savedBytes });
@@ -7975,7 +8488,7 @@ function buildRouteFirstRouteBytes(projectRoot, routeAssets, depsSelection) {
     if (asset.kind === "dep") {
       const fileName = getDepFileNameFromUrl(asset.url);
       if (fileName && depsSelection) {
-        bytes = statSize(path7.join(depsSelection.depsRoot, fileName));
+        bytes = statSize(path8.join(depsSelection.depsRoot, fileName));
       }
     } else {
       const filePath = resolveRouteSourceAssetPath(projectRoot, asset.url);
@@ -8063,7 +8576,7 @@ function buildRoutePackCoverage(options) {
     uncoveredDepAssets += 1;
     const manifestEntry = depsManifestIndex.get(asset.fileName);
     const usageEntry = depUsageIndex?.get(asset.fileName);
-    const bytes = manifestEntry?.sizeBytes ?? statSize(path7.join(depsSelection.depsRoot, asset.fileName));
+    const bytes = manifestEntry?.sizeBytes ?? statSize(path8.join(depsSelection.depsRoot, asset.fileName));
     const packageLabel = manifestEntry?.packageLabel ?? (usageEntry ? `${usageEntry.packageName}@${usageEntry.packageVersion}` : null);
     uncoveredHotDeps.push({
       url: asset.url,
@@ -8160,7 +8673,7 @@ function buildRoutePolicyVisibility(options) {
   };
 }
 function summarizeRoutes(routeHintStatePath, limit, options) {
-  if (!fs8.existsSync(routeHintStatePath)) return null;
+  if (!fs9.existsSync(routeHintStatePath)) return null;
   const raw = readJson(routeHintStatePath);
   if (!raw || raw.version !== 1 || !raw.routes || typeof raw.routes !== "object") return null;
   const index = new RouteHintIndex(routeHintStatePath);
@@ -8221,7 +8734,7 @@ function summarizeRoutes(routeHintStatePath, limit, options) {
     depsSelection: options?.depsSelection,
     limit
   });
-  const startupPolicyStatePath = path7.join(path7.dirname(routeHintStatePath), "startup-policy.v1.json");
+  const startupPolicyStatePath = path8.join(path8.dirname(routeHintStatePath), "startup-policy.v1.json");
   const startupPolicySnapshot = loadStartupPolicySnapshot(startupPolicyStatePath);
   const startupPolicyRoute = normalizedPrimaryRouteKey ? startupPolicySnapshot?.routes?.[normalizedPrimaryRouteKey] ?? null : null;
   const startupPolicy = startupPolicyRoute && normalizedPrimaryRouteKey ? {
@@ -8273,18 +8786,18 @@ function parsePackageLabel(label) {
 }
 var packageVersionCache = /* @__PURE__ */ new Map();
 function readPackageVersion(packageRoot) {
-  const normalizedRoot = path7.resolve(packageRoot);
+  const normalizedRoot = path8.resolve(packageRoot);
   if (packageVersionCache.has(normalizedRoot)) {
     return packageVersionCache.get(normalizedRoot) ?? null;
   }
-  const manifest = readJson(path7.join(normalizedRoot, "package.json"));
+  const manifest = readJson(path8.join(normalizedRoot, "package.json"));
   const version = typeof manifest?.version === "string" && manifest.version.length > 0 ? manifest.version : null;
   packageVersionCache.set(normalizedRoot, version);
   return version;
 }
 function extractPackageIdentityFromModuleId(moduleId) {
   const fsPath = moduleId.startsWith("ws://") ? moduleId.slice("ws://".length) : moduleId;
-  const marker = `${path7.sep}node_modules${path7.sep}`;
+  const marker = `${path8.sep}node_modules${path8.sep}`;
   const idx = fsPath.lastIndexOf(marker);
   if (idx < 0) return null;
   const packageRootBase = fsPath.slice(0, idx + marker.length);
@@ -8293,7 +8806,7 @@ function extractPackageIdentityFromModuleId(moduleId) {
   if (parts.length === 0) return null;
   const packageName = parts[0].startsWith("@") && parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
   if (!packageName) return null;
-  const pnpmMarker = `${path7.sep}.pnpm${path7.sep}`;
+  const pnpmMarker = `${path8.sep}.pnpm${path8.sep}`;
   const pnpmIdx = fsPath.indexOf(pnpmMarker);
   if (pnpmIdx >= 0) {
     const segment = fsPath.slice(pnpmIdx + pnpmMarker.length).split(/[\\/]/, 1)[0] ?? "";
@@ -8303,13 +8816,13 @@ function extractPackageIdentityFromModuleId(moduleId) {
       if (version2) return { packageName, packageVersion: version2 };
     }
   }
-  const packageRoot = parts[0].startsWith("@") && parts.length >= 2 ? path7.join(packageRootBase, parts[0], parts[1]) : path7.join(packageRootBase, parts[0]);
+  const packageRoot = parts[0].startsWith("@") && parts.length >= 2 ? path8.join(packageRootBase, parts[0], parts[1]) : path8.join(packageRootBase, parts[0]);
   const version = readPackageVersion(packageRoot);
   return version ? { packageName, packageVersion: version } : null;
 }
 function loadDepUsageIndex(depsRoot, depsHash) {
-  const depUsagePath = path7.join(depsRoot, "deps-usage.v2.json");
-  const legacyPath = path7.join(depsRoot, "deps-usage.v1.json");
+  const depUsagePath = path8.join(depsRoot, "deps-usage.v2.json");
+  const legacyPath = path8.join(depsRoot, "deps-usage.v1.json");
   const raw = readJson(depUsagePath) ?? readJson(legacyPath);
   if (!raw || raw.version !== 1 && raw.version !== 2 || raw.depsHash !== depsHash) return null;
   const entries = raw.deps && typeof raw.deps === "object" ? raw.deps : {};
@@ -8333,7 +8846,7 @@ function loadDepUsageIndex(depsRoot, depsHash) {
   return out;
 }
 function loadDepsManifestIndex2(depsRoot) {
-  const manifestPath = path7.join(depsRoot, "manifest.json");
+  const manifestPath = path8.join(depsRoot, "manifest.json");
   const raw = readJson(manifestPath);
   const entries = raw?.entries && typeof raw.entries === "object" ? raw.entries : {};
   const out = /* @__PURE__ */ new Map();
@@ -8363,7 +8876,7 @@ function loadDepsManifestIndex2(depsRoot) {
   return out;
 }
 function loadVendorPackRouting(depsRoot, depsHash) {
-  const raw = readJson(path7.join(depsRoot, "vendor-pack.v2.index.json"));
+  const raw = readJson(path8.join(depsRoot, "vendor-pack.v2.index.json"));
   if (!raw || raw.version !== 1 || raw.depsHash !== depsHash) return /* @__PURE__ */ new Map();
   const routing = raw.fileNameToPackFile && typeof raw.fileNameToPackFile === "object" ? raw.fileNameToPackFile : {};
   return new Map(
@@ -8445,8 +8958,8 @@ function summarizeDuplicateFindings(graphNodes, depUsageIndex, depsManifestIndex
   ).slice(0, Math.max(1, limit));
 }
 function summarizeChunkBloatFindings(outDir, limit) {
-  const manifest = readJson(path7.join(path7.resolve(outDir), "manifest.json"));
-  const stats = readJson(path7.join(path7.resolve(outDir), "build.stats.json"));
+  const manifest = readJson(path8.join(path8.resolve(outDir), "manifest.json"));
+  const stats = readJson(path8.join(path8.resolve(outDir), "build.stats.json"));
   const chunks = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
   if (!chunks.length || !stats) return [];
   return chunks.map((chunk) => {
@@ -8699,7 +9212,7 @@ function buildTopFindings(findings, limit) {
   ).slice(0, Math.max(1, limit));
 }
 function compactWorkspaceLabel(projectRoot) {
-  const base = path7.basename(projectRoot);
+  const base = path8.basename(projectRoot);
   return base || projectRoot;
 }
 function uniquePreservingOrder(values) {
@@ -9137,7 +9650,7 @@ async function runAnalyzeCommand(options = {}) {
   const limit = Math.max(1, options.limit ?? 10);
   const selected = getSelectedSurfaces(options);
   const ws = await withSuppressedConsole(!!options.json, () => resolveAnalyzeWorkspace());
-  const outDir = options.outDir ? path7.resolve(options.outDir) : path7.join(ws.projectRoot, "dist");
+  const outDir = options.outDir ? path8.resolve(options.outDir) : path8.join(ws.projectRoot, "dist");
   const needsGraphState = selected.includes("graph") || selected.includes("findings");
   const needsDepsState = selected.includes("packs") || selected.includes("findings") || selected.includes("routes");
   const nodes = needsGraphState ? await withSuppressedConsole(!!options.json, () => loadGraphSnapshot(ws.ionifyDir)) : null;
@@ -9177,7 +9690,7 @@ async function runAnalyzeCommand(options = {}) {
     summary.packs = depsInfo ? analyzeVendorPacks(depsInfo.depsRoot, depsInfo.depsHash, depsInfo.selectionMode, limit) : null;
   }
   if (selected.includes("routes")) {
-    const routeHintStatePath = path7.join(ws.ionifyDir, "route-hints.v1.json");
+    const routeHintStatePath = path8.join(ws.ionifyDir, "route-hints.v1.json");
     summary.routes = summarizeRoutes(routeHintStatePath, limit, {
       projectRoot: ws.projectRoot,
       depsSelection: depsInfo
@@ -9243,22 +9756,45 @@ async function runAnalyzeCommand(options = {}) {
 }
 
 // src/cli/commands/publish.ts
-import fs10 from "fs";
-import path9 from "path";
+import fs11 from "fs";
+import path10 from "path";
 
 // src/core/production-transform-publication.ts
-import fs9 from "fs";
-import path8 from "path";
+import fs10 from "fs";
+import path9 from "path";
+var CSS_CAS_META_VERSION = 2;
+function metaTailwindStampForRecipe2(cssMeta) {
+  const tw = cssMeta?.tailwindGraphContent;
+  return tw?.enabled === true && typeof tw.stamp === "string" && tw.stamp.length > 0 ? tw.stamp : "none";
+}
 async function publishProductionTransformCas(options) {
   const startedAt = Date.now();
   const moduleMetaById = collectModuleMeta(options.plan, options.workspaceRoot);
   const defineSignature = computeDefineSignature(options.defineConfig);
   const defineHash = defineSignature ? getCacheKey(defineSignature) : "";
-  const getArtifactHash = (baseHash, kind) => {
+  const getArtifactHash = (baseHash, kind, dh = defineHash) => {
     if (kind !== "js") return baseHash;
-    if (!defineHash) return baseHash;
-    return getCacheKey(`${baseHash}|define:${defineHash}`);
+    if (!dh) return baseHash;
+    return getCacheKey(`${baseHash}|define:${dh}`);
   };
+  const jsProofExpectation = (baseHash, artifactHash) => ({
+    sourceHash: baseHash,
+    recipeConfigHash: options.configHash,
+    defineHash,
+    artifactKind: "js",
+    variant: defineHash ? "define" : "base",
+    artifactHash,
+    recomputeArtifactHash: (sh, kind, dh) => getArtifactHash(sh, kind === "css" ? "css" : "js", dh)
+  });
+  const jsBaseProofExpectation = (baseHash) => ({
+    sourceHash: baseHash,
+    recipeConfigHash: options.configHash,
+    defineHash: "",
+    artifactKind: "js",
+    variant: "base",
+    artifactHash: baseHash,
+    recomputeArtifactHash: (sh, kind, dh) => getArtifactHash(sh, kind === "css" ? "css" : "js", dh)
+  });
   let hits = 0;
   let defineDerived = 0;
   const jobs = [];
@@ -9269,8 +9805,8 @@ async function publishProductionTransformCas(options) {
     let artifactHashFromPlan = baseHashFromPlan ? getArtifactHash(baseHashFromPlan, meta.kind) : null;
     if (meta.kind === "css" && baseHashFromPlan) {
       const baseDir = getCasArtifactPath(options.casRoot, options.configHash, baseHashFromPlan);
-      const cssMeta = readJsonFile4(path8.join(baseDir, "meta.json"));
-      if (cssMeta && cssMeta.version === 1 && cssMeta.baseHash === baseHashFromPlan && typeof cssMeta.pipelineHash === "string" && cssMeta.pipelineHash.length > 0) {
+      const cssMeta = readJsonFile4(path9.join(baseDir, "meta.json"));
+      if (cssMeta && cssMeta.version === CSS_CAS_META_VERSION && cssMeta.baseHash === baseHashFromPlan && typeof cssMeta.pipelineHash === "string" && cssMeta.pipelineHash.length > 0) {
         const depsAbs = Array.from(
           new Set(
             [...cssMeta.deps ?? [], ...cssMeta.urlDeps ?? []].filter(
@@ -9280,48 +9816,58 @@ async function publishProductionTransformCas(options) {
         );
         const depsStampHash = computeDepsContentStampHash(depsAbs, moduleMetaById, options.workspaceRoot);
         artifactHashFromPlan = getCacheKey(
-          `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}`
+          `css:v3:${id}:${baseHashFromPlan}:${cssMeta.pipelineHash}:${depsStampHash}:${cssNeedsJsWrapper ? 1 : 0}:${metaTailwindStampForRecipe2(cssMeta)}`
         );
       }
     }
     const casDir = artifactHashFromPlan ? getCasArtifactPath(options.casRoot, options.configHash, artifactHashFromPlan) : null;
-    const casJsFile = casDir ? path8.join(casDir, "transformed.js") : null;
-    const casCssFile = casDir ? path8.join(casDir, "transformed.css") : null;
+    const casJsFile = casDir ? path9.join(casDir, "transformed.js") : null;
+    const casCssFile = casDir ? path9.join(casDir, "transformed.css") : null;
     if (artifactHashFromPlan) {
       artifactHashById.set(id, artifactHashFromPlan);
     }
-    if (meta.kind === "js" && casJsFile && fs9.existsSync(casJsFile)) {
+    if (meta.kind === "js" && casDir && casJsFile && baseHashFromPlan && artifactHashFromPlan && fs10.existsSync(casJsFile) && admitTransformArtifact(casDir, jsProofExpectation(baseHashFromPlan, artifactHashFromPlan)).admissible) {
       hits++;
       continue;
     }
-    if (meta.kind === "css" && casCssFile && fs9.existsSync(casCssFile)) {
+    if (meta.kind === "css" && casCssFile && fs10.existsSync(casCssFile)) {
       hits++;
-      if (cssNeedsJsWrapper && casJsFile && !fs9.existsSync(casJsFile)) {
-        const tokens = readJsonFile4(path8.join(casDir, "tokens.json"));
-        if (tokens) writeTextFile(path8.join(casDir, "transformed.js"), renderCssTokensModule(tokens));
+      if (cssNeedsJsWrapper && casJsFile && !fs10.existsSync(casJsFile)) {
+        const tokens = readJsonFile4(path9.join(casDir, "tokens.json"));
+        if (tokens) writeTextFile(path9.join(casDir, "transformed.js"), renderCssTokensModule(tokens));
       }
       continue;
     }
     if (meta.kind === "js" && baseHashFromPlan && defineHash) {
       const baseDir = getCasArtifactPath(options.casRoot, options.configHash, baseHashFromPlan);
-      const baseFile = path8.join(baseDir, "transformed.js");
-      if (fs9.existsSync(baseFile)) {
+      const baseFile = path9.join(baseDir, "transformed.js");
+      if (fs10.existsSync(baseFile) && admitTransformArtifact(baseDir, jsBaseProofExpectation(baseHashFromPlan)).admissible) {
         const artifactHash = getArtifactHash(baseHashFromPlan, "js");
-        const artifactDir = getCasArtifactPath(options.casRoot, options.configHash, artifactHash);
-        writeTextFile(path8.join(artifactDir, "transformed.js"), applyDefineReplacements(fs9.readFileSync(baseFile, "utf8"), options.defineConfig));
+        writeTransformArtifact({
+          dir: getCasArtifactPath(options.casRoot, options.configHash, artifactHash),
+          bytes: applyDefineReplacements(fs10.readFileSync(baseFile, "utf8"), options.defineConfig),
+          map: null,
+          identity: {
+            sourceHash: baseHashFromPlan,
+            recipeConfigHash: options.configHash,
+            defineHash,
+            artifactKind: "js",
+            variant: "define"
+          }
+        });
         defineDerived++;
         continue;
       }
     }
-    if (!fs9.existsSync(meta.fsPath)) {
+    if (!fs10.existsSync(meta.fsPath)) {
       throw new Error(`Module missing on disk: ${meta.fsPath}`);
     }
-    const code = fs9.readFileSync(meta.fsPath, "utf8");
+    const code = fs10.readFileSync(meta.fsPath, "utf8");
     const baseHash = baseHashFromPlan ?? getCacheKey(code);
     jobs.push({
       id,
       filePath: meta.fsPath,
-      ext: path8.extname(meta.fsPath),
+      ext: path9.extname(meta.fsPath),
       code,
       kind: meta.kind,
       baseHash,
@@ -9337,14 +9883,32 @@ async function publishProductionTransformCas(options) {
       if (result.error) throw new Error(`Transform failed for ${result.filePath}: ${result.error}`);
       const isJs = (result.type ?? "js") === "js";
       if (isJs) {
-        const baseDir2 = getCasArtifactPath(options.casRoot, options.configHash, job.baseHash);
-        const artifactDir2 = getCasArtifactPath(options.casRoot, options.configHash, job.artifactHash);
-        writeTextFile(path8.join(baseDir2, "transformed.js"), result.code);
-        if (result.map) writeTextFile(path8.join(baseDir2, "transformed.js.map"), result.map);
+        writeTransformArtifact({
+          dir: getCasArtifactPath(options.casRoot, options.configHash, job.baseHash),
+          bytes: result.code,
+          map: result.map ?? null,
+          identity: {
+            sourceHash: job.baseHash,
+            recipeConfigHash: options.configHash,
+            defineHash: "",
+            artifactKind: "js",
+            variant: "base"
+          }
+        });
         const finalCode = applyDefineReplacements(result.code, options.defineConfig);
-        writeTextFile(path8.join(artifactDir2, "transformed.js"), finalCode);
-        if (result.map && finalCode === result.code) {
-          writeTextFile(path8.join(artifactDir2, "transformed.js.map"), result.map);
+        if (job.artifactHash !== job.baseHash) {
+          writeTransformArtifact({
+            dir: getCasArtifactPath(options.casRoot, options.configHash, job.artifactHash),
+            bytes: finalCode,
+            map: result.map && finalCode === result.code ? result.map : null,
+            identity: {
+              sourceHash: job.baseHash,
+              recipeConfigHash: options.configHash,
+              defineHash,
+              artifactKind: "js",
+              variant: "define"
+            }
+          });
         }
         artifactHashById.set(job.id, job.artifactHash);
         continue;
@@ -9352,31 +9916,31 @@ async function publishProductionTransformCas(options) {
       const deps = Array.isArray(result.deps) ? result.deps.filter((p) => typeof p === "string" && p.length > 0) : [];
       const urlDeps = Array.isArray(result.urlDeps) ? result.urlDeps.filter((p) => typeof p === "string" && p.length > 0) : [];
       const pipelineHash = typeof result.pipelineHash === "string" && result.pipelineHash.length > 0 ? result.pipelineHash : "0";
-      const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => path8.resolve(p))));
+      const depsAbs = Array.from(new Set([...deps, ...urlDeps].map((p) => path9.resolve(p))));
       const depsStampHash = computeDepsContentStampHash(depsAbs, moduleMetaById, options.workspaceRoot);
       const artifactHash = getCacheKey(
-        `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${job.cssNeedsJsWrapper ? 1 : 0}`
+        `css:v3:${job.id}:${job.baseHash}:${pipelineHash}:${depsStampHash}:${job.cssNeedsJsWrapper ? 1 : 0}:none`
       );
       artifactHashById.set(job.id, artifactHash);
       const baseDir = getCasArtifactPath(options.casRoot, options.configHash, job.baseHash);
-      writeJsonFile4(path8.join(baseDir, "meta.json"), {
-        version: 1,
+      writeJsonFile4(path9.join(baseDir, "meta.json"), {
+        version: CSS_CAS_META_VERSION,
         baseHash: job.baseHash,
         artifactHash,
         pipelineHash,
         depsStampHash,
         deps: depsAbs.sort(),
-        urlDeps: Array.from(new Set(urlDeps.map((p) => path8.resolve(p)))).sort(),
+        urlDeps: Array.from(new Set(urlDeps.map((p) => path9.resolve(p)))).sort(),
         depsProof: buildCssCasDepProof(depsAbs, moduleMetaById, options.workspaceRoot),
         modules: job.cssNeedsJsWrapper === true,
         generatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
       const artifactDir = getCasArtifactPath(options.casRoot, options.configHash, artifactHash);
-      writeTextFile(path8.join(artifactDir, "transformed.css"), result.code);
+      writeTextFile(path9.join(artifactDir, "transformed.css"), result.code);
       if (job.cssNeedsJsWrapper) {
         const tokens = result.tokens && typeof result.tokens === "object" ? result.tokens : {};
-        writeTextFile(path8.join(artifactDir, "transformed.js"), renderCssTokensModule(tokens));
-        writeJsonFile4(path8.join(artifactDir, "tokens.json"), tokens);
+        writeTextFile(path9.join(artifactDir, "transformed.js"), renderCssTokensModule(tokens));
+        writeJsonFile4(path9.join(artifactDir, "tokens.json"), tokens);
       }
     }
   }
@@ -9409,7 +9973,7 @@ function collectModuleMeta(plan, workspaceRoot) {
       if (!fsPath && typeof mod.id === "string" && mod.id.startsWith(WS_MODULE_PREFIX)) {
         fsPath = fromWsModuleId(mod.id, workspaceRoot);
       }
-      if (!fsPath || !path8.isAbsolute(fsPath)) continue;
+      if (!fsPath || !path9.isAbsolute(fsPath)) continue;
       if (out.has(mod.id)) continue;
       out.set(mod.id, {
         fsPath,
@@ -9476,13 +10040,13 @@ function computeDepsContentStampHash(depsAbs, moduleMetaById, workspaceRoot) {
   if (!depsAbs.length) return "0";
   const entries = [];
   for (const depAbs of depsAbs) {
-    const abs = path8.resolve(depAbs);
+    const abs = path9.resolve(depAbs);
     let hash = null;
     const depId = toWsModuleId(abs, workspaceRoot);
     if (depId) hash = moduleMetaById.get(depId)?.hash ?? null;
     if (!hash) {
       try {
-        hash = getCacheKey(fs9.readFileSync(abs));
+        hash = getCacheKey(fs10.readFileSync(abs));
       } catch {
         hash = "missing";
       }
@@ -9496,13 +10060,13 @@ function buildCssCasDepProof(depsAbs, moduleMetaById, workspaceRoot) {
   const proofs = [];
   const seen = /* @__PURE__ */ new Set();
   for (const depAbs of depsAbs) {
-    const abs = path8.resolve(depAbs);
+    const abs = path9.resolve(depAbs);
     if (seen.has(abs)) continue;
     seen.add(abs);
     const depId = toWsModuleId(abs, workspaceRoot);
     if (depId && moduleMetaById.has(depId)) continue;
     try {
-      const st = fs9.statSync(abs);
+      const st = fs10.statSync(abs);
       if (!st.isFile()) continue;
       proofs.push({
         filePath: abs,
@@ -9511,7 +10075,7 @@ function buildCssCasDepProof(depsAbs, moduleMetaById, workspaceRoot) {
         mtimeMs: st.mtimeMs,
         ctimeMs: st.ctimeMs,
         size: st.size,
-        hash: getCacheKey(fs9.readFileSync(abs))
+        hash: getCacheKey(fs10.readFileSync(abs))
       });
     } catch {
       proofs.push({
@@ -9528,21 +10092,21 @@ function buildCssCasDepProof(depsAbs, moduleMetaById, workspaceRoot) {
   return proofs.sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 function readJsonFile4(filePath) {
-  if (!fs9.existsSync(filePath)) return null;
+  if (!fs10.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs9.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs10.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
 }
 function writeJsonFile4(filePath, data) {
-  fs9.mkdirSync(path8.dirname(filePath), { recursive: true });
-  fs9.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}
+  fs10.mkdirSync(path9.dirname(filePath), { recursive: true });
+  fs10.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}
 `, "utf8");
 }
 function writeTextFile(filePath, contents) {
-  fs9.mkdirSync(path8.dirname(filePath), { recursive: true });
-  fs9.writeFileSync(filePath, contents, "utf8");
+  fs10.mkdirSync(path9.dirname(filePath), { recursive: true });
+  fs10.writeFileSync(filePath, contents, "utf8");
 }
 
 // src/core/production-chunk-publication.ts
@@ -9602,13 +10166,13 @@ async function runPublishCommand(options = {}) {
     process.env.MODE = mode;
     process.env.IONIFY_MODE = mode;
     const config = await loadIonifyConfig(process.cwd(), mode);
-    const projectRootOverride = config?.root ? path9.resolve(config.root) : null;
+    const projectRootOverride = config?.root ? path10.resolve(config.root) : null;
     const workspace = resolveWorkspace(projectRootOverride ?? process.cwd(), {
       projectRootOverride
     });
     const rootDir = workspace.projectRoot;
     const ionifyDir = workspace.ionifyDir;
-    fs10.mkdirSync(ionifyDir, { recursive: true });
+    fs11.mkdirSync(ionifyDir, { recursive: true });
     process.env.IONIFY_PROJECT_ROOT = rootDir;
     process.env.IONIFY_WORKSPACE_ROOT = workspace.workspaceRoot;
     process.env.IONIFY_STATE_DIR = ionifyDir;
@@ -9667,6 +10231,7 @@ async function runPublishCommand(options = {}) {
     });
     process.env.IONIFY_DEPS_HASH = depsHash;
     const identity = {
+      productionPlanOutputVersion: PRODUCTION_PLAN_OUTPUT_VERSION,
       mode,
       nodeEnv: "production",
       configHash,
@@ -9675,62 +10240,139 @@ async function runPublishCommand(options = {}) {
       entries: resolvedEntries.entries ?? [],
       entrySource: resolvedEntries.source
     };
+    const depsRoot = path10.join(ionifyDir, "deps", depsHash);
+    const casRoot = path10.join(ionifyDir, "cas");
+    const priorPublicationState = readProductionPublicationState(ionifyDir);
+    const priorPublishedPlan = readProductionPublicationPlan(ionifyDir, identity);
+    const priorPlanFreshness = priorPublishedPlan ? auditProductionSourceFreshness(
+      priorPublishedPlan,
+      ionifyDir,
+      workspace.workspaceRoot,
+      casRoot,
+      configHash
+    ) : null;
+    let dplGenerationCurrent = false;
+    if (priorPublishedPlan && priorPlanFreshness?.current === true) {
+      try {
+        dplGenerationCurrent = native?.depsVerifiedGenerationCurrent?.(depsRoot) === true;
+      } catch {
+        dplGenerationCurrent = false;
+      }
+    }
+    const reusableContractsPlan = priorPublishedPlan !== null && priorPlanFreshness?.current === true && dplGenerationCurrent && priorPublicationState?.state === "published" && priorPublicationState.tiers.deps.state === "published" && priorPublicationState.tiers.graph.state === "published" && priorPublicationState.tiers.plan.state === "published" && priorPublicationState.tiers.transforms.state === "published";
+    if (phase === "A" && reusableContractsPlan) {
+      clearProductionPublicationProgress(ionifyDir);
+      logInfo(
+        `[publish] Production Contracts are current (DPL generation, Planner identity, source proof, and Transform artifacts verified); no publication work required.`
+      );
+      return;
+    }
     const state = createProductionPublicationState(identity, phase, "publishing");
-    writeProductionPublicationState(ionifyDir, state);
+    if (reusableContractsPlan && priorPublicationState) {
+      state.planHash = priorPublicationState.planHash;
+      state.tiers.deps = {
+        ...priorPublicationState.tiers.deps,
+        state: "published",
+        ms: 0,
+        reason: "Reused identity- and source-verified Production Contracts publication"
+      };
+      state.tiers.graph = {
+        ...priorPublicationState.tiers.graph,
+        state: "published",
+        ms: 0,
+        reason: "Reused identity- and source-verified Production Contracts publication"
+      };
+      state.tiers.plan = {
+        ...priorPublicationState.tiers.plan,
+        state: "published",
+        ms: 0,
+        reason: "Reused identity- and source-verified Production Contracts publication"
+      };
+      state.timingsMs.deps = 0;
+      state.timingsMs.plan = 0;
+      state.timingsMs.pdc = 0;
+    }
+    writeProductionPublicationProgress(ionifyDir, state);
     logInfo(
       `[publish] Publishing ${targetLabel} (configHash=${configHash}, depsHash=${depsHash})`
     );
-    const depsStart = Date.now();
-    await runBuildCommand({ depsOnly: true, mode });
-    const depsRoot = path9.join(ionifyDir, "deps", depsHash);
-    state.tiers.deps = {
-      state: "published",
-      artifactCount: countManifestEntries(depsRoot),
-      ms: Date.now() - depsStart
-    };
-    state.timingsMs.deps = state.tiers.deps.ms ?? 0;
-    writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
-    const planStart = Date.now();
+    let plan;
+    let readinessPlanForIdentity;
     const federationExposeEntries = collectFederationExposeEntryPaths(config, rootDir);
-    const buildEntries = Array.from(/* @__PURE__ */ new Set([...resolvedEntries.entries ?? [], ...federationExposeEntries]));
-    const plan = await generateBuildPlan(
-      buildEntries.length > 0 ? buildEntries : void 0,
-      rawVersionInputs,
-      loadDepStopsFromManifest(depsRoot),
-      collectConfiguredExternalSpecifiers(config)
-    );
-    const casRoot = path9.join(ionifyDir, "cas");
-    const canonicalDeps = await prepareCanonicalProductionDependencyPlan({
-      plan,
-      rootDir,
-      depsRoot,
-      depsHash,
-      resolvedEntries: resolvedEntries.entries ?? [],
-      allowedRoots: workspace.allowedRoots,
-      casRoot,
-      configHash,
-      workspaceRoot: workspace.workspaceRoot
-    });
-    writeProductionPublicationPlan(
-      ionifyDir,
-      identity,
-      JSON.parse(JSON.stringify(plan))
-    );
+    if (reusableContractsPlan && priorPublishedPlan) {
+      readinessPlanForIdentity = JSON.parse(JSON.stringify(priorPublishedPlan));
+      plan = JSON.parse(JSON.stringify(priorPublishedPlan));
+      logInfo("[publish] Reusing source-verified Production Contracts for Production Artifacts");
+    } else {
+      if (phase === "B" && priorPublishedPlan) {
+        logInfo(
+          `[publish] Production Contracts reuse rejected (${priorPlanFreshness?.reason ?? "publication-tiers-incomplete"}); recomputing fail-closed`
+        );
+      }
+      const depsStart = Date.now();
+      const dependencyPreparation = await runBuildCommand({
+        depsOnly: true,
+        mode,
+        publicationContracts: true
+      });
+      state.tiers.deps = {
+        state: "published",
+        artifactCount: countManifestEntries(depsRoot),
+        ms: Date.now() - depsStart
+      };
+      state.timingsMs.deps = state.tiers.deps.ms ?? 0;
+      writeProductionPublicationProgress(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const planStart = Date.now();
+      if (dependencyPreparation?.canonicalPlan) {
+        plan = JSON.parse(JSON.stringify(dependencyPreparation.canonicalPlan));
+      } else {
+        const buildEntries = Array.from(/* @__PURE__ */ new Set([...resolvedEntries.entries ?? [], ...federationExposeEntries]));
+        plan = await generateBuildPlan(
+          buildEntries.length > 0 ? buildEntries : void 0,
+          rawVersionInputs,
+          loadDepStopsFromManifest(depsRoot),
+          collectConfiguredExternalSpecifiers(config)
+        );
+        await prepareCanonicalProductionDependencyPlan({
+          plan,
+          rootDir,
+          ionifyDir,
+          depsRoot,
+          depsHash,
+          resolvedEntries: resolvedEntries.entries ?? [],
+          allowedRoots: workspace.allowedRoots,
+          casRoot,
+          configHash,
+          workspaceRoot: workspace.workspaceRoot,
+          config,
+          // Publish MUST prepare the plan identically to `ionify build`, or the
+          // published plan (and its Tier-4 chunks) diverge from what build produces.
+          vendorMaxBytes: productionChunkPolicy.vendorMaxBytes
+        });
+      }
+      readinessPlanForIdentity = JSON.parse(JSON.stringify(plan));
+      state.planHash = writeProductionPublicationPlan(
+        ionifyDir,
+        identity,
+        readinessPlanForIdentity
+      );
+      const planSummary2 = summarizePlanForPublication(plan);
+      state.tiers.graph = {
+        state: "published",
+        artifactCount: planSummary2.modules,
+        ms: Date.now() - planStart
+      };
+      state.tiers.plan = {
+        state: "published",
+        artifactCount: planSummary2.chunks,
+        ms: state.tiers.graph.ms
+      };
+      state.timingsMs.plan = state.tiers.plan.ms ?? 0;
+      state.timingsMs.pdc = 0;
+    }
     const planSummary = summarizePlanForPublication(plan);
-    state.tiers.graph = {
-      state: "published",
-      artifactCount: planSummary.modules,
-      ms: Date.now() - planStart
-    };
-    state.tiers.plan = {
-      state: "published",
-      artifactCount: planSummary.chunks,
-      ms: state.tiers.graph.ms
-    };
-    state.timingsMs.plan = state.tiers.plan.ms ?? 0;
-    state.timingsMs.pdc = 0;
     state.tiers.transforms = { state: "publishing" };
-    writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    writeProductionPublicationProgress(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const transformResult = await publishProductionTransformCas({
       plan,
       casRoot,
@@ -9750,7 +10392,7 @@ async function runPublishCommand(options = {}) {
     if (phase === "B") {
       state.tiers.chunks = { state: "publishing" };
       state.tiers.compression = { state: "skipped", reason: "Compression artifact publication is not implemented yet" };
-      writeProductionPublicationState(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      writeProductionPublicationProgress(ionifyDir, { ...state, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       const buildMinifyRaw = config?.build?.minify;
       const minifyEnabled = buildMinifyRaw === false ? false : true;
       const federationExposeEntryIds = federationExposeEntries.map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
@@ -9781,8 +10423,9 @@ async function runPublishCommand(options = {}) {
     state.state = "published";
     state.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     writeProductionPublicationState(ionifyDir, state);
+    clearProductionPublicationProgress(ionifyDir);
     try {
-      writeProductionReadinessRecord(
+      const readinessWrite = writeProductionPublicationReadinessRecord(
         ionifyDir,
         createPartialProductionReadinessRecord({
           producer: phase === "B" ? "publish-artifacts" : "publish-contracts",
@@ -9790,11 +10433,14 @@ async function runPublishCommand(options = {}) {
           workspaceRoot: workspace.workspaceRoot,
           projectRoot: rootDir,
           depsHash,
-          plan,
+          plan: readinessPlanForIdentity,
           tier4ChunkManifestHash,
           depsOptimizerOutputVersion: DEPS_OPTIMIZER_OUTPUT_VERSION2
         })
       );
+      if (readinessWrite === "verified-preserved") {
+        logInfo("[PRA] Preserved exact deploy-ready proof; PAP published no dist mutation");
+      }
     } catch (err) {
       logWarn(`[PRA] Skipped partial deploy-ready.v1 emit during publish: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -9836,7 +10482,7 @@ function normalizePublicationPhase(phase) {
 }
 function countManifestEntries(depsRoot) {
   try {
-    const manifest = JSON.parse(fs10.readFileSync(path9.join(depsRoot, "manifest.json"), "utf8"));
+    const manifest = JSON.parse(fs11.readFileSync(path10.join(depsRoot, "manifest.json"), "utf8"));
     return Object.keys(manifest?.entries ?? {}).length;
   } catch {
     return 0;
@@ -9844,8 +10490,8 @@ function countManifestEntries(depsRoot) {
 }
 
 // src/cli/commands/add.ts
-import fs11 from "fs";
-import path10 from "path";
+import fs12 from "fs";
+import path11 from "path";
 
 // src/cli/components/registry.ts
 function normalizeNewlines(value) {
@@ -10078,21 +10724,21 @@ var IONIFY_COMPONENTS = {
 
 // src/cli/commands/add.ts
 function findProjectRoot(startDir) {
-  let dir = path10.resolve(startDir);
+  let dir = path11.resolve(startDir);
   for (let i = 0; i < 15; i++) {
-    const pkg = path10.join(dir, "package.json");
-    if (fs11.existsSync(pkg) && fs11.statSync(pkg).isFile()) return dir;
-    const parent = path10.dirname(dir);
+    const pkg = path11.join(dir, "package.json");
+    if (fs12.existsSync(pkg) && fs12.statSync(pkg).isFile()) return dir;
+    const parent = path11.dirname(dir);
     if (!parent || parent === dir) break;
     dir = parent;
   }
   return null;
 }
 function isTypeScriptProject(projectRoot) {
-  const tsconfig = path10.join(projectRoot, "tsconfig.json");
-  if (fs11.existsSync(tsconfig) && fs11.statSync(tsconfig).isFile()) return true;
+  const tsconfig = path11.join(projectRoot, "tsconfig.json");
+  if (fs12.existsSync(tsconfig) && fs12.statSync(tsconfig).isFile()) return true;
   try {
-    const pkg = JSON.parse(fs11.readFileSync(path10.join(projectRoot, "package.json"), "utf8"));
+    const pkg = JSON.parse(fs12.readFileSync(path11.join(projectRoot, "package.json"), "utf8"));
     const deps = { ...pkg?.dependencies ?? {}, ...pkg?.devDependencies ?? {} };
     return typeof deps.typescript === "string";
   } catch {
@@ -10125,31 +10771,31 @@ async function runAddCommand(componentName, options = {}) {
     return;
   }
   const ts = isTypeScriptProject(projectRoot);
-  const targetDir = path10.resolve(projectRoot, options.dir ?? "src/components/ui");
+  const targetDir = path11.resolve(projectRoot, options.dir ?? "src/components/ui");
   const ext = ts ? "tsx" : "jsx";
-  const outFile = path10.join(targetDir, `${template.fileBase}.${ext}`);
-  fs11.mkdirSync(targetDir, { recursive: true });
-  if (fs11.existsSync(outFile) && !force) {
+  const outFile = path11.join(targetDir, `${template.fileBase}.${ext}`);
+  fs12.mkdirSync(targetDir, { recursive: true });
+  if (fs12.existsSync(outFile) && !force) {
     logError(`File already exists: ${outFile} (use --force to overwrite)`);
     process.exitCode = 1;
     return;
   }
   const code = ts ? template.tsx : template.jsx;
-  fs11.writeFileSync(outFile, code, "utf8");
-  logInfo(`Added ${template.name} \u2192 ${path10.relative(projectRoot, outFile)}`);
+  fs12.writeFileSync(outFile, code, "utf8");
+  logInfo(`Added ${template.name} \u2192 ${path11.relative(projectRoot, outFile)}`);
 }
 
 // src/cli/commands/push.ts
-import fs14 from "fs";
-import path13 from "path";
+import fs15 from "fs";
+import path14 from "path";
 
 // src/cli/utils/cloud-binding.ts
 import childProcess from "child_process";
-import crypto2 from "crypto";
-import fs12 from "fs";
+import crypto3 from "crypto";
+import fs13 from "fs";
 import os2 from "os";
-import path11 from "path";
-var BINDINGS_FILE = path11.join(os2.homedir(), ".ionify", "bindings.json");
+import path12 from "path";
+var BINDINGS_FILE = path12.join(os2.homedir(), ".ionify", "bindings.json");
 function normalizeProjectSlug(input) {
   const cleaned = input.trim().replace(/^@/, "").replace(/\//g, "-").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-");
   return cleaned || "ionify-project";
@@ -10184,13 +10830,13 @@ remote=${parts.normalizedRemote}
 workspace=${parts.workspaceRelPath}
 slug=${normalizeProjectSlug(parts.projectSlug)}
 `;
-  return crypto2.createHash("sha256").update(canonical).digest("hex");
+  return crypto3.createHash("sha256").update(canonical).digest("hex");
 }
 function resolveBindingContext(workspace, opts = {}) {
   const git = readGitRepositoryInfo(workspace.projectRoot);
   const projectSlug = normalizeProjectSlug(opts.projectSlug ?? inferProjectSlug(workspace.projectRoot));
   const workspaceRelPath = normalizeWorkspaceRelPath(
-    git?.repositoryRoot ? path11.relative(git.repositoryRoot, workspace.projectRoot) : workspace.projectRelPath
+    git?.repositoryRoot ? path12.relative(git.repositoryRoot, workspace.projectRoot) : workspace.projectRelPath
   );
   const normalizedRemote = git?.normalizedRemote ?? null;
   const fingerprint = normalizedRemote ? computeFingerprintV1({ normalizedRemote, workspaceRelPath, projectSlug }) : null;
@@ -10284,8 +10930,8 @@ function bindingWarning(resolved) {
   return null;
 }
 function writeProjectBinding(binding) {
-  const dir = path11.dirname(BINDINGS_FILE);
-  fs12.mkdirSync(dir, { recursive: true });
+  const dir = path12.dirname(BINDINGS_FILE);
+  fs13.mkdirSync(dir, { recursive: true });
   const existing = readBindingsFile()?.bindings ?? [];
   const next = existing.filter((entry) => {
     if (binding.bindingType === "git_verified" && entry.fingerprint === binding.fingerprint) return false;
@@ -10293,16 +10939,16 @@ function writeProjectBinding(binding) {
     return true;
   });
   next.push(binding);
-  fs12.writeFileSync(
+  fs13.writeFileSync(
     BINDINGS_FILE,
     JSON.stringify({ bindings: next }, null, 2) + "\n",
     { encoding: "utf8", mode: 384 }
   );
 }
 function readBindingsFile() {
-  if (!fs12.existsSync(BINDINGS_FILE)) return null;
+  if (!fs13.existsSync(BINDINGS_FILE)) return null;
   try {
-    const raw = fs12.readFileSync(BINDINGS_FILE, "utf8");
+    const raw = fs13.readFileSync(BINDINGS_FILE, "utf8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -10313,7 +10959,7 @@ function readGitRepositoryInfo(startDir) {
   if (!repositoryRoot) return null;
   const remote = execGit(repositoryRoot, ["config", "--get", "remote.origin.url"]);
   return {
-    repositoryRoot: path11.resolve(repositoryRoot),
+    repositoryRoot: path12.resolve(repositoryRoot),
     normalizedRemote: remote ? normalizeGitRemoteUrl(remote) : null
   };
 }
@@ -10329,20 +10975,20 @@ function execGit(cwd, args) {
   }
 }
 function inferProjectSlug(projectRoot) {
-  const pkgPath = path11.join(projectRoot, "package.json");
+  const pkgPath = path12.join(projectRoot, "package.json");
   try {
-    const pkg = JSON.parse(fs12.readFileSync(pkgPath, "utf8"));
+    const pkg = JSON.parse(fs13.readFileSync(pkgPath, "utf8"));
     if (typeof pkg.name === "string" && pkg.name.trim()) return pkg.name;
   } catch {
   }
-  return path11.basename(projectRoot);
+  return path12.basename(projectRoot);
 }
 function normalizeWorkspaceRelPath(input) {
-  const normalized = input.split(path11.sep).join("/").replace(/^\.\/?$/, "");
+  const normalized = input.split(path12.sep).join("/").replace(/^\.\/?$/, "");
   return normalized && normalized !== "." ? normalized : "root";
 }
 function computeLocalPathHash(projectRoot) {
-  return crypto2.createHash("sha256").update(`ionify:local-binding:v1:${path11.resolve(projectRoot)}`).digest("hex");
+  return crypto3.createHash("sha256").update(`ionify:local-binding:v1:${path12.resolve(projectRoot)}`).digest("hex");
 }
 function stacklessError(message) {
   const error = new Error(message);
@@ -10354,7 +11000,7 @@ function stacklessError(message) {
 import https2 from "https";
 import http2 from "http";
 import { URL as URL2 } from "url";
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 var CloudApiError = class extends Error {
   constructor(statusCode, body, message, parsedBody = parseCloudApiErrorBody(body)) {
     super(message);
@@ -10655,7 +11301,7 @@ var CloudClient = class {
   }
 };
 function computeContentHash(bytes) {
-  return crypto3.createHash("sha256").update(bytes).digest("hex");
+  return crypto4.createHash("sha256").update(bytes).digest("hex");
 }
 function shouldRetryCloudRateLimit(statusCode, body, attempt, maxAttempts) {
   return statusCode === 429 && body.retryable === true && typeof body.retry_after_secs === "number" && body.retry_after_secs > 0 && body.retry_after_secs <= 30 && attempt < maxAttempts;
@@ -10745,8 +11391,8 @@ function readNodeEnv() {
 }
 
 // src/cli/utils/deps-identity.ts
-import fs13 from "fs";
-import path12 from "path";
+import fs14 from "fs";
+import path13 from "path";
 var DEPS_OPTIMIZER_OUTPUT_VERSION3 = getDepsOptimizerOutputVersion();
 async function computeStandaloneDepsIdentity(config, workspace, rootDir, nodeEnv) {
   const lockfile = readCanonicalLockfile(workspace, rootDir);
@@ -10789,12 +11435,12 @@ async function computeStandaloneDepsIdentity(config, workspace, rootDir, nodeEnv
 }
 function readCanonicalLockfile(workspace, rootDir) {
   const lockfileOrder = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb"];
-  const roots = [...new Set([workspace.workspaceRoot, rootDir].map((root) => path12.resolve(root)))];
+  const roots = [...new Set([workspace.workspaceRoot, rootDir].map((root) => path13.resolve(root)))];
   for (const root of roots) {
     for (const name of lockfileOrder) {
-      const filePath = path12.join(root, name);
-      if (fs13.existsSync(filePath)) {
-        return { contents: fs13.readFileSync(filePath) };
+      const filePath = path13.join(root, name);
+      if (fs14.existsSync(filePath)) {
+        return { contents: fs14.readFileSync(filePath) };
       }
     }
   }
@@ -10804,7 +11450,7 @@ function resolveConfiguredEntries(config, rootDir) {
   if (!config?.entry) return void 0;
   const entries = Array.isArray(config.entry) ? config.entry : [config.entry];
   return entries.map(
-    (entry) => entry.startsWith("/") ? path12.join(rootDir, entry) : path12.resolve(rootDir, entry)
+    (entry) => entry.startsWith("/") ? path13.join(rootDir, entry) : path13.resolve(rootDir, entry)
   );
 }
 function normalizeSharedChunksMode(sharedChunks) {
@@ -10865,49 +11511,6 @@ function inferTier1ModuleKind(moduleId) {
 function isTier1SourceTransformModule(moduleId, kind) {
   const resolvedKind = typeof kind === "string" && kind.length > 0 ? kind.toLowerCase() : inferTier1ModuleKind(moduleId);
   return resolvedKind === "js" || resolvedKind.startsWith("css");
-}
-function collectTier1ModulesFromBuildManifest(buildManifest) {
-  const modules = [];
-  const seen = /* @__PURE__ */ new Set();
-  let skippedNonWs = 0;
-  let skippedDeps = 0;
-  if (!buildManifest?.chunks) {
-    return { modules, skippedNonWs, skippedDeps };
-  }
-  for (const chunk of buildManifest.chunks) {
-    const chunkModules = Array.isArray(chunk?.modules) ? chunk.modules : [];
-    for (const mod of chunkModules) {
-      if (typeof mod?.artifactHash !== "string" || mod.artifactHash.length === 0) continue;
-      if (typeof mod?.id !== "string" || mod.id.length === 0 || seen.has(mod.id)) continue;
-      seen.add(mod.id);
-      if (mod.kind === "dep") {
-        skippedDeps++;
-        continue;
-      }
-      if (!mod.id.startsWith("ws://")) {
-        skippedNonWs++;
-        continue;
-      }
-      if (!isTier1SourceTransformModule(mod.id, mod.kind)) {
-        continue;
-      }
-      modules.push({
-        moduleId: mod.id,
-        artifactHash: mod.artifactHash,
-        kind: typeof mod.kind === "string" && mod.kind.length > 0 ? mod.kind : "js"
-      });
-    }
-  }
-  return { modules, skippedNonWs, skippedDeps };
-}
-function chooseTier1PublicationSource(graphModules, buildManifestModules) {
-  if (graphModules.length > 0) {
-    return { source: "graph", modules: graphModules };
-  }
-  if (buildManifestModules.length > 0) {
-    return { source: "build", modules: buildManifestModules };
-  }
-  return { source: "none", modules: [] };
 }
 
 // src/core/cloud/dev-tier1-manifest.ts
@@ -10984,7 +11587,7 @@ async function runPushCommand(options = {}) {
   const cloud = config?.cloud;
   const profile = resolveCloudProfile();
   const cwd = process.cwd();
-  const rootDir = config?.root ? path13.resolve(cwd, config.root) : cwd;
+  const rootDir = config?.root ? path14.resolve(cwd, config.root) : cwd;
   const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
   const resolvedBinding = resolveProjectBinding(workspace);
   const configuredProjectId = cloud?.projectId === EMPTY_PROJECT_ID ? void 0 : cloud?.projectId;
@@ -11055,7 +11658,7 @@ async function runPushCommand(options = {}) {
   const tier1Only = doTier1 && !doTier2;
   if (targets.length === 0 && !tier1Only) {
     const requested = options.env ? ` for env=${options.env}` : "";
-    const depsDir = path13.join(ionifyDir, "deps");
+    const depsDir = path14.join(ionifyDir, "deps");
     const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true && !process.env.CI;
     const partialCandidates = extractPartialTargets(targetProbes);
     const localSnapshotEvidence = hasLocalSnapshotEvidence(targetProbes);
@@ -11095,7 +11698,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-KVOOFVVO.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11116,7 +11719,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-KVOOFVVO.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11134,7 +11737,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-KVOOFVVO.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11214,7 +11817,7 @@ async function runPushCommand(options = {}) {
         break;
       }
     }
-    const outDir = path13.resolve(rootDir, config?.build?.outDir ?? "dist");
+    const outDir = path14.resolve(rootDir, config?.build?.outDir ?? "dist");
     const tier1Mode = targets.find((target) => target.nodeEnv === "production")?.nodeEnv ?? targets[0]?.nodeEnv ?? options.env ?? "production";
     tier1Result = await pushTier1({
       client,
@@ -11236,8 +11839,8 @@ async function resolvePushTargetProbes(config, workspace, rootDir, envFilter, cl
   const envConfigHash = process.env.IONIFY_CONFIG_HASH;
   const envNodeEnv = process.env.IONIFY_NODE_ENV;
   if (envDepsHash && envConfigHash && (envNodeEnv === "development" || envNodeEnv === "production")) {
-    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? path13.join(workspace.ionifyDir, "deps", envDepsHash);
-    if (!fs14.existsSync(path13.join(depsRoot, ".verified"))) {
+    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? path14.join(workspace.ionifyDir, "deps", envDepsHash);
+    if (!fs15.existsSync(path14.join(depsRoot, ".verified"))) {
       logError(
         `push: deps at ${depsRoot} are not verified (env=${envNodeEnv}).
   The build that invoked --push did not complete the deps optimizer.`
@@ -11269,9 +11872,9 @@ async function resolvePushTargetProbes(config, workspace, rootDir, envFilter, cl
       rootDir,
       nodeEnv
     );
-    const depsRoot = path13.join(workspace.ionifyDir, "deps", depsHash);
-    const hasVerified = fs14.existsSync(path13.join(depsRoot, ".verified"));
-    const hasDevStable = fs14.existsSync(path13.join(depsRoot, ".dev-stable"));
+    const depsRoot = path14.join(workspace.ionifyDir, "deps", depsHash);
+    const hasVerified = fs15.existsSync(path14.join(depsRoot, ".verified"));
+    const hasDevStable = fs15.existsSync(path14.join(depsRoot, ".dev-stable"));
     let hasCommittedCloudSession = false;
     let committedCloudSessionId = null;
     let committedCloudArtifactCount = null;
@@ -11332,10 +11935,10 @@ async function pushTier2(client, depsRoot, depsHash, nodeEnv, concurrency, proje
   logInfo(`[push:tier2] Creating snapshot session (env=${nodeEnv})\u2026`);
   const session = await client.createSession(depsHash, optimizerVersion, nodeEnv).catch((err) => throwPushCloudError(err, "create CDC session"));
   logInfo(`[push:tier2] Session ${session.session_id} (${session.status})`);
-  const manifestPath = path13.join(depsRoot, "manifest.json");
+  const manifestPath = path14.join(depsRoot, "manifest.json");
   let manifestRaw;
   try {
-    manifestRaw = JSON.parse(fs14.readFileSync(manifestPath, "utf8"));
+    manifestRaw = JSON.parse(fs15.readFileSync(manifestPath, "utf8"));
   } catch {
     logError(`[push:tier2] Failed to parse manifest.json at ${manifestPath}`);
     process.exit(1);
@@ -11345,35 +11948,35 @@ async function pushTier2(client, depsRoot, depsHash, nodeEnv, concurrency, proje
   authorizedFiles.add("manifest.json");
   for (const entry of Object.values(manifestEntries)) {
     const outFile = entry?.outFile ?? entry?.out_file;
-    if (typeof outFile === "string" && outFile.endsWith(".js") && fs14.existsSync(path13.join(depsRoot, outFile))) {
+    if (typeof outFile === "string" && outFile.endsWith(".js") && fs15.existsSync(path14.join(depsRoot, outFile))) {
       authorizedFiles.add(outFile);
     }
     const sharedImports = Array.isArray(entry?.sharedImports) ? entry.sharedImports : [];
     for (const shared of sharedImports) {
-      if (typeof shared === "string" && shared.endsWith(".js") && fs14.existsSync(path13.join(depsRoot, shared))) {
+      if (typeof shared === "string" && shared.endsWith(".js") && fs15.existsSync(path14.join(depsRoot, shared))) {
         authorizedFiles.add(shared);
       }
     }
   }
-  const packIndexPath = path13.join(depsRoot, "vendor-pack.v2.index.json");
-  if (fs14.existsSync(packIndexPath)) {
+  const packIndexPath = path14.join(depsRoot, "vendor-pack.v2.index.json");
+  if (fs15.existsSync(packIndexPath)) {
     authorizedFiles.add("vendor-pack.v2.index.json");
     try {
-      const packIndex = JSON.parse(fs14.readFileSync(packIndexPath, "utf8"));
+      const packIndex = JSON.parse(fs15.readFileSync(packIndexPath, "utf8"));
       const packToShared = packIndex?.packFileToSharedFile ?? {};
       const packToChunks = packIndex?.packFileToChunkFiles ?? {};
       for (const [packFile, sharedFile] of Object.entries(packToShared)) {
-        if (typeof packFile === "string" && packFile.endsWith(".js") && fs14.existsSync(path13.join(depsRoot, packFile))) {
+        if (typeof packFile === "string" && packFile.endsWith(".js") && fs15.existsSync(path14.join(depsRoot, packFile))) {
           authorizedFiles.add(packFile);
         }
-        if (typeof sharedFile === "string" && sharedFile.endsWith(".js") && fs14.existsSync(path13.join(depsRoot, sharedFile))) {
+        if (typeof sharedFile === "string" && sharedFile.endsWith(".js") && fs15.existsSync(path14.join(depsRoot, sharedFile))) {
           authorizedFiles.add(sharedFile);
         }
       }
       for (const chunkFiles of Object.values(packToChunks)) {
         if (!Array.isArray(chunkFiles)) continue;
         for (const chunkFile of chunkFiles) {
-          if (typeof chunkFile === "string" && chunkFile.endsWith(".js") && fs14.existsSync(path13.join(depsRoot, chunkFile))) {
+          if (typeof chunkFile === "string" && chunkFile.endsWith(".js") && fs15.existsSync(path14.join(depsRoot, chunkFile))) {
             authorizedFiles.add(chunkFile);
           }
         }
@@ -11396,14 +11999,14 @@ async function pushTier2(client, depsRoot, depsHash, nodeEnv, concurrency, proje
   let failed = 0;
   const uploadFile = (filename) => limit(async () => {
     const artifactType = classifyArtifact(filename);
-    const filePath = path13.join(depsRoot, filename);
+    const filePath = path14.join(depsRoot, filename);
     if (artifactType === "vendor_pack") {
       if (!validatePackHeader(filePath)) {
         logWarn(`[push:tier2] Skipping ${filename}: missing or invalid vendor-pack-v2 header (corrupt or partial file)`);
         return;
       }
     }
-    const bytes = fs14.readFileSync(filePath);
+    const bytes = fs15.readFileSync(filePath);
     const contentHash = computeContentHash(bytes);
     try {
       const linkedArtifact = await client.attachArtifact(session.session_id, artifactType, filename, contentHash);
@@ -11486,10 +12089,10 @@ async function pushTier2(client, depsRoot, depsHash, nodeEnv, concurrency, proje
 }
 function validatePackHeader(filePath) {
   try {
-    const fd = fs14.openSync(filePath, "r");
+    const fd = fs15.openSync(filePath, "r");
     const buf = Buffer.alloc(256);
-    const n = fs14.readSync(fd, buf, 0, 256, 0);
-    fs14.closeSync(fd);
+    const n = fs15.readSync(fd, buf, 0, 256, 0);
+    fs15.closeSync(fd);
     const firstLine = buf.subarray(0, n).toString("utf8").split("\n")[0];
     return /^\/\/ ionify:vendor-pack-v2 [0-9a-fA-F]{32,}$/.test(firstLine);
   } catch {
@@ -11510,47 +12113,22 @@ async function pushTier1(options) {
     config,
     nodeEnv
   } = options;
-  const casRoot = path13.join(ionifyDir, "cas");
-  const casVersionDir = path13.join(casRoot, configHash);
+  const casRoot = path14.join(ionifyDir, "cas");
+  const casVersionDir = path14.join(casRoot, configHash);
   const envSignature = "shared";
   const limiter = createConcurrencyLimiter(concurrency);
-  const manifestPath = path13.join(outDir, "manifest.json");
-  let buildManifest = null;
-  if (fs14.existsSync(manifestPath)) {
-    try {
-      buildManifest = JSON.parse(fs14.readFileSync(manifestPath, "utf8"));
-    } catch {
-      logWarn("[push:tier1] Failed to parse dist/manifest.json; build-guided candidates unavailable.");
-    }
-  }
-  const buildManifestResult = collectTier1ModulesFromBuildManifest(buildManifest);
   let graphModules = [];
   try {
     graphModules = enumerateTier1ModulesFromGraph({
-      graphDbPath: path13.join(ionifyDir, "graph.db"),
+      graphDbPath: path14.join(ionifyDir, "graph.db"),
       configHash
     });
   } catch (err) {
-    logWarn(`[push:tier1] Graph-walk failed: ${err.message}; falling back to build/CAS data.`);
+    logWarn(`[push:tier1] Graph-walk failed: ${err.message}; falling back to CAS recovery.`);
   }
-  const selection = chooseTier1PublicationSource(graphModules, buildManifestResult.modules);
-  let modules = selection.modules;
-  if (selection.source === "graph") {
+  let modules = graphModules;
+  if (modules.length > 0) {
     logInfo(`[push:tier1] Graph-authoritative mode: ${modules.length} source module(s) from .ionify/graph.db.`);
-    if (buildManifestResult.modules.length > 0) {
-      logInfo(
-        `[push:tier1] Ignoring ${buildManifestResult.modules.length} build-guided module(s) from dist/manifest.json because the persistent graph is authoritative.`
-      );
-    }
-  } else if (selection.source === "build") {
-    logInfo(`[push:tier1] Build-fallback mode: ${modules.length} source module(s) from dist/manifest.json.`);
-    if (buildManifestResult.skippedNonWs > 0 || buildManifestResult.skippedDeps > 0) {
-      logInfo(
-        `[push:tier1] Excluded from Tier-1: ${buildManifestResult.skippedDeps} dep artifact(s), ${buildManifestResult.skippedNonWs} non-ws:// module(s).`
-      );
-    }
-  }
-  if (selection.source === "graph" || selection.source === "build") {
     modules = await refreshTier1SourceTransforms({
       modules,
       casRoot,
@@ -11561,8 +12139,8 @@ async function pushTier1(options) {
       nodeEnv
     });
   }
-  if (selection.source === "none") {
-    if (!fs14.existsSync(casVersionDir)) {
+  if (modules.length === 0) {
+    if (!fs15.existsSync(casVersionDir)) {
       logWarn(
         `[push:tier1] No CAS found at ${casVersionDir}.
   Run \`ionify dev\` or \`ionify build\` to populate the CAS first.`
@@ -11575,7 +12153,7 @@ async function pushTier1(options) {
         manifestHash: null
       };
     }
-    const artifactDirs = fs14.readdirSync(casVersionDir).filter((d) => fs14.statSync(path13.join(casVersionDir, d)).isDirectory());
+    const artifactDirs = fs15.readdirSync(casVersionDir).filter((d) => fs15.statSync(path14.join(casVersionDir, d)).isDirectory());
     if (artifactDirs.length === 0) {
       logWarn("[push:tier1] CAS directory is empty. Nothing to push.");
       return {
@@ -11595,14 +12173,14 @@ async function pushTier1(options) {
     await Promise.all(
       artifactDirs.map(
         (artifactHash) => limiter(async () => {
-          const jsPath = path13.join(casVersionDir, artifactHash, "transformed.js");
-          const cssPath = path13.join(casVersionDir, artifactHash, "transformed.css");
-          const blobPath = fs14.existsSync(jsPath) ? jsPath : fs14.existsSync(cssPath) ? cssPath : null;
+          const jsPath = path14.join(casVersionDir, artifactHash, "transformed.js");
+          const cssPath = path14.join(casVersionDir, artifactHash, "transformed.css");
+          const blobPath = fs15.existsSync(jsPath) ? jsPath : fs15.existsSync(cssPath) ? cssPath : null;
           if (!blobPath) {
             skipped++;
             return;
           }
-          await client.putBlob(fs14.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
+          await client.putBlob(fs15.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
           uploaded++;
         })
       )
@@ -11621,10 +12199,10 @@ async function pushTier1(options) {
   await Promise.all(
     modules.map(
       (mod) => limiter(async () => {
-        const casDir = path13.join(casVersionDir, mod.artifactHash);
-        const jsPath = path13.join(casDir, "transformed.js");
-        const cssPath = path13.join(casDir, "transformed.css");
-        const blobPath = fs14.existsSync(jsPath) ? jsPath : fs14.existsSync(cssPath) ? cssPath : null;
+        const casDir = path14.join(casVersionDir, mod.artifactHash);
+        const jsPath = path14.join(casDir, "transformed.js");
+        const cssPath = path14.join(casDir, "transformed.css");
+        const blobPath = fs15.existsSync(jsPath) ? jsPath : fs15.existsSync(cssPath) ? cssPath : null;
         if (!blobPath) {
           logWarn(
             `[push:tier1] CAS miss: ${mod.moduleId} (${mod.artifactHash.slice(0, 8)}) \u2014 skipped.`
@@ -11632,7 +12210,7 @@ async function pushTier1(options) {
           cassMisses++;
           return;
         }
-        const { blob_hash } = await client.putBlob(fs14.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
+        const { blob_hash } = await client.putBlob(fs15.readFileSync(blobPath)).catch((err) => throwPushCloudError(err, "upload source blob"));
         results.push({ moduleId: mod.moduleId, artifactHash: mod.artifactHash, kind: mod.kind, blobHash: blob_hash });
       })
     )
@@ -11722,10 +12300,10 @@ async function pushTier1(options) {
 async function refreshTier1SourceTransforms(options) {
   const planModules = options.modules.map((mod) => {
     const fsPath = resolveTier1ModuleFsPath(mod.moduleId, options.workspaceRoot);
-    if (!fsPath || !fs14.existsSync(fsPath)) return null;
+    if (!fsPath || !fs15.existsSync(fsPath)) return null;
     const kind = normalizeTier1ModuleKind(mod.kind);
     if (kind !== "js" && kind !== "css") return null;
-    const sourceHash = getCacheKey(fs14.readFileSync(fsPath, "utf8"));
+    const sourceHash = getCacheKey(fs15.readFileSync(fsPath, "utf8"));
     return {
       id: mod.moduleId,
       fsPath,
@@ -11788,8 +12366,8 @@ function normalizeTier1ModuleKind(kind) {
   return "asset";
 }
 function configurePushTransformEnvironment(options) {
-  const ionifyDir = path13.dirname(options.casRoot);
-  fs14.mkdirSync(ionifyDir, { recursive: true });
+  const ionifyDir = path14.dirname(options.casRoot);
+  fs15.mkdirSync(ionifyDir, { recursive: true });
   process.env.IONIFY_PROJECT_ROOT = options.rootDir;
   process.env.IONIFY_WORKSPACE_ROOT = options.workspaceRoot;
   process.env.IONIFY_STATE_DIR = ionifyDir;
@@ -11830,7 +12408,7 @@ async function resolveTier1Namespace(args) {
   if (args.fixedConfigNamespace) return args.fixedConfigNamespace;
   const gitBranch = await resolveGitBranch();
   if (gitBranch) return gitBranch;
-  const fallback = sanitizeNamespace(path13.basename(args.rootDir));
+  const fallback = sanitizeNamespace(path14.basename(args.rootDir));
   if (fallback) {
     logInfo(
       `[push:tier1] No named git branch found. Using workspace namespace "${fallback}".`
@@ -12010,14 +12588,14 @@ function logPartialPushBanner() {
   );
 }
 function detectPackageManager(cwd) {
-  if (fs14.existsSync(path13.join(cwd, "pnpm-lock.yaml"))) return "pnpm";
-  if (fs14.existsSync(path13.join(cwd, "yarn.lock"))) return "yarn";
-  if (fs14.existsSync(path13.join(cwd, "bun.lockb"))) return "bun";
+  if (fs15.existsSync(path14.join(cwd, "pnpm-lock.yaml"))) return "pnpm";
+  if (fs15.existsSync(path14.join(cwd, "yarn.lock"))) return "yarn";
+  if (fs15.existsSync(path14.join(cwd, "bun.lockb"))) return "bun";
   return "npm";
 }
 function readPackageScripts(rootDir) {
   try {
-    const raw = fs14.readFileSync(path13.join(rootDir, "package.json"), "utf8");
+    const raw = fs15.readFileSync(path14.join(rootDir, "package.json"), "utf8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" && parsed.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {};
   } catch {
@@ -12074,8 +12652,8 @@ async function runDevInteractiveAndWait(rootDir) {
 }
 
 // src/cli/commands/hydrate.ts
-import fs15 from "fs";
-import path14 from "path";
+import fs16 from "fs";
+import path15 from "path";
 var DEPS_OPTIMIZER_OUTPUT_VERSION5 = getDepsOptimizerOutputVersion();
 var EMPTY_PROJECT_ID2 = "00000000-0000-0000-0000-000000000000";
 function createConcurrencyLimiter2(limit) {
@@ -12112,7 +12690,7 @@ async function runHydrateCommand(options = {}) {
   const cloud = config?.cloud;
   const profile = resolveCloudProfile();
   const cwd = process.cwd();
-  const rootDir = config?.root ? path14.resolve(cwd, config.root) : cwd;
+  const rootDir = config?.root ? path15.resolve(cwd, config.root) : cwd;
   loadEnv(process.env.MODE, rootDir);
   const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
   const resolvedBinding = resolveProjectBinding(workspace);
@@ -12153,7 +12731,7 @@ async function runHydrateCommand(options = {}) {
   if (envHandoff) {
     const depsHash = process.env.IONIFY_DEPS_HASH;
     const configHash = process.env.IONIFY_CONFIG_HASH;
-    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? path14.join(ionifyDir, "deps", depsHash);
+    const depsRoot = process.env.IONIFY_DEPS_ROOT ?? path15.join(ionifyDir, "deps", depsHash);
     targets.push({ nodeEnv: envHandoff, depsHash, configHash, depsRoot });
     configHashForTier1 = configHash;
     logInfo(`[hydrate] Using handoff from build: env=${envHandoff} depsHash=${depsHash}`);
@@ -12174,7 +12752,7 @@ async function runHydrateCommand(options = {}) {
         nodeEnv
       );
       configHashForTier1 = configHash;
-      const depsRoot = path14.join(ionifyDir, "deps", depsHash);
+      const depsRoot = path15.join(ionifyDir, "deps", depsHash);
       targets.push({ nodeEnv, depsHash, configHash, depsRoot });
       logInfo(`[hydrate] env=${nodeEnv} depsHash=${depsHash}`);
     }
@@ -12185,8 +12763,8 @@ async function runHydrateCommand(options = {}) {
     let missingSessions = 0;
     for (const target of targets) {
       if (cloudHydrationBlocked) break;
-      const verifiedSentinel = path14.join(target.depsRoot, ".verified");
-      if (fs15.existsSync(verifiedSentinel)) {
+      const verifiedSentinel = path15.join(target.depsRoot, ".verified");
+      if (fs16.existsSync(verifiedSentinel)) {
         logInfo(
           `[hydrate] env=${target.nodeEnv}: deps already verified locally (depsHash=${target.depsHash}). Skipping Tier-2.`
         );
@@ -12251,7 +12829,7 @@ async function runHydrateCommand(options = {}) {
     logInfo(
       `[hydrate] env=${target.nodeEnv}: found session ${session.session_id} with ${session.artifact_count} artifact(s). Downloading\u2026`
     );
-    fs15.mkdirSync(target.depsRoot, { recursive: true });
+    fs16.mkdirSync(target.depsRoot, { recursive: true });
     const limit = createConcurrencyLimiter2(concurrency2);
     let downloaded = 0;
     let failed = 0;
@@ -12260,8 +12838,8 @@ async function runHydrateCommand(options = {}) {
         (artifact) => limit(async () => {
           const { cache_key } = artifact;
           const localFilename = cache_key.split(":").slice(3).join(":");
-          const destPath = path14.join(target.depsRoot, localFilename);
-          if (fs15.existsSync(destPath)) {
+          const destPath = path15.join(target.depsRoot, localFilename);
+          if (fs16.existsSync(destPath)) {
             downloaded++;
             return;
           }
@@ -12272,8 +12850,8 @@ async function runHydrateCommand(options = {}) {
               cache_key
             );
             const tmpPath = destPath + ".tmp";
-            fs15.writeFileSync(tmpPath, bytes);
-            fs15.renameSync(tmpPath, destPath);
+            fs16.writeFileSync(tmpPath, bytes);
+            fs16.renameSync(tmpPath, destPath);
             downloaded++;
             if (downloaded % 50 === 0) {
               logInfo(
@@ -12301,8 +12879,8 @@ async function runHydrateCommand(options = {}) {
       logWarn(`[hydrate] env=${target.nodeEnv}: will run deps optimizer locally.`);
       return "failed";
     }
-    fs15.writeFileSync(
-      path14.join(target.depsRoot, ".verified"),
+    fs16.writeFileSync(
+      path15.join(target.depsRoot, ".verified"),
       (/* @__PURE__ */ new Date()).toISOString() + "\n",
       "utf8"
     );
@@ -12358,7 +12936,7 @@ async function hydrateTier1(client, ionifyDir, configHash, namespace, concurrenc
     }
     throw err;
   }
-  const casRoot = path14.join(ionifyDir, "cas");
+  const casRoot = path15.join(ionifyDir, "cas");
   const entries = manifest.entries.filter((e) => e.artifact_type === "source_transform");
   logInfo(`[hydrate:tier1] ${entries.length} source transform(s) to hydrate.`);
   if (entries.length === 0) return;
@@ -12370,18 +12948,18 @@ async function hydrateTier1(client, ionifyDir, configHash, namespace, concurrenc
   await Promise.all(
     entries.map(
       (entry) => limit(async () => {
-        const casDir = path14.join(casRoot, entry.config_hash, entry.artifact_hash);
-        const destPath = path14.join(casDir, "transformed.js");
-        if (fs15.existsSync(destPath)) {
+        const casDir = path15.join(casRoot, entry.config_hash, entry.artifact_hash);
+        const destPath = path15.join(casDir, "transformed.js");
+        if (fs16.existsSync(destPath)) {
           skipped++;
           return;
         }
         try {
           const bytes = await client.getBlobBytes(entry.blob_hash);
-          fs15.mkdirSync(casDir, { recursive: true });
+          fs16.mkdirSync(casDir, { recursive: true });
           const tmpPath = destPath + ".tmp";
-          fs15.writeFileSync(tmpPath, bytes);
-          fs15.renameSync(tmpPath, destPath);
+          fs16.writeFileSync(tmpPath, bytes);
+          fs16.renameSync(tmpPath, destPath);
           hydrated++;
         } catch (err) {
           failed++;
@@ -12436,16 +13014,16 @@ function logHydrateQuotaSkip(action, err) {
 }
 function cleanupPartialHydration(depsRoot) {
   try {
-    const files = fs15.readdirSync(depsRoot);
+    const files = fs16.readdirSync(depsRoot);
     for (const file of files) {
-      fs15.rmSync(path14.join(depsRoot, file), { force: true });
+      fs16.rmSync(path15.join(depsRoot, file), { force: true });
     }
   } catch {
   }
 }
 
 // src/cli/commands/bind.ts
-import path15 from "path";
+import path16 from "path";
 async function runBindCommand(options = {}) {
   const projectId = options.projectId?.trim();
   if (!projectId) {
@@ -12465,7 +13043,7 @@ async function runBindCommand(options = {}) {
   }
   await verifyProjectAccess(apiUrl, token, projectId);
   const cwd = process.cwd();
-  const rootDir = config?.root ? path15.resolve(cwd, config.root) : cwd;
+  const rootDir = config?.root ? path16.resolve(cwd, config.root) : cwd;
   const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
   let binding;
   try {
@@ -12506,7 +13084,7 @@ async function verifyProjectAccess(apiUrl, token, projectId) {
 }
 
 // src/cli/commands/status.ts
-import path16 from "path";
+import path17 from "path";
 var EMPTY_PROJECT_ID3 = "00000000-0000-0000-0000-000000000000";
 async function runStatusCommand(options = {}) {
   const config = await loadIonifyConfig();
@@ -12514,7 +13092,7 @@ async function runStatusCommand(options = {}) {
   const profile = resolveCloudProfile();
   const token = resolveCloudToken();
   const cwd = process.cwd();
-  const rootDir = config?.root ? path16.resolve(cwd, config.root) : cwd;
+  const rootDir = config?.root ? path17.resolve(cwd, config.root) : cwd;
   const workspace = resolveWorkspace(rootDir, { projectRootOverride: rootDir });
   const resolvedBinding = resolveProjectBinding(workspace);
   const binding = resolvedBinding?.binding ?? null;
@@ -12611,8 +13189,8 @@ async function runStatusCommand(options = {}) {
 }
 
 // src/cli/commands/migrate.ts
-import fs16 from "fs";
-import path17 from "path";
+import fs17 from "fs";
+import path18 from "path";
 var VITE_CONFIG_NAMES = [
   "vite.config.ts",
   "vite.config.mts",
@@ -12622,10 +13200,10 @@ var VITE_CONFIG_NAMES = [
   "vite.config.cjs"
 ];
 async function runMigrateCommand(options = {}) {
-  const cwd = options.cwd ? path17.resolve(options.cwd) : process.cwd();
+  const cwd = options.cwd ? path18.resolve(options.cwd) : process.cwd();
   const report = [];
-  const viteConfigPath = VITE_CONFIG_NAMES.map((name) => path17.join(cwd, name)).find((p) => fs16.existsSync(p)) ?? null;
-  const pkgPath = path17.join(cwd, "package.json");
+  const viteConfigPath = VITE_CONFIG_NAMES.map((name) => path18.join(cwd, name)).find((p) => fs17.existsSync(p)) ?? null;
+  const pkgPath = path18.join(cwd, "package.json");
   const pkg = readJson2(pkgPath);
   const hasViteDep = !!(pkg && (pkg.dependencies && pkg.dependencies.vite || pkg.devDependencies && pkg.devDependencies.vite));
   if (!viteConfigPath && !hasViteDep) {
@@ -12634,8 +13212,8 @@ async function runMigrateCommand(options = {}) {
     );
     process.exit(1);
   }
-  const ionifyConfigOut = path17.join(cwd, "ionify.config.ts");
-  if (fs16.existsSync(ionifyConfigOut) && !options.force) {
+  const ionifyConfigOut = path18.join(cwd, "ionify.config.ts");
+  if (fs17.existsSync(ionifyConfigOut) && !options.force) {
     logError(
       "ionify.config.ts already exists. Re-run with --force to overwrite (a .bak copy is kept)."
     );
@@ -12646,29 +13224,29 @@ async function runMigrateCommand(options = {}) {
   if (viteConfigPath) {
     try {
       viteConfig = await loadViteConfig(viteConfigPath);
-      logInfo(`Resolved ${path17.basename(viteConfigPath)}`);
+      logInfo(`Resolved ${path18.basename(viteConfigPath)}`);
     } catch (err) {
       logWarn(
-        `Could not execute ${path17.basename(viteConfigPath)} (${String(
+        `Could not execute ${path18.basename(viteConfigPath)} (${String(
           err?.message ?? err
         )}); using best-effort static parse.`
       );
       report.push(
-        `\u26A0 The Vite config could not be executed; values were extracted by static parse. Review the generated ionify.config.ts against ${path17.basename(viteConfigPath)}.`
+        `\u26A0 The Vite config could not be executed; values were extracted by static parse. Review the generated ionify.config.ts against ${path18.basename(viteConfigPath)}.`
       );
-      viteConfig = staticParseViteConfig(fs16.readFileSync(viteConfigPath, "utf8"));
+      viteConfig = staticParseViteConfig(fs17.readFileSync(viteConfigPath, "utf8"));
     }
   } else {
     report.push("\u26A0 No vite.config.* found \u2014 generated a minimal ionify.config.ts from package.json.");
   }
   const { ionifyConfig, notes } = mapViteToIonify(viteConfig, cwd);
   report.push(...notes);
-  if (fs16.existsSync(ionifyConfigOut)) backupFile(ionifyConfigOut);
-  fs16.writeFileSync(ionifyConfigOut, serializeIonifyConfig(ionifyConfig), "utf8");
+  if (fs17.existsSync(ionifyConfigOut)) backupFile(ionifyConfigOut);
+  fs17.writeFileSync(ionifyConfigOut, serializeIonifyConfig(ionifyConfig), "utf8");
   logInfo("Wrote ionify.config.ts");
   if (viteConfigPath) {
     backupFile(viteConfigPath);
-    report.push(`\u2022 Backed up ${path17.basename(viteConfigPath)} \u2192 ${path17.basename(viteConfigPath)}.bak`);
+    report.push(`\u2022 Backed up ${path18.basename(viteConfigPath)} \u2192 ${path18.basename(viteConfigPath)}.bak`);
   }
   if (pkg) {
     backupFile(pkgPath);
@@ -12792,12 +13370,12 @@ function pluginName(plugin) {
   return null;
 }
 function toRootRelative(p, cwd) {
-  if (!path17.isAbsolute(p)) {
+  if (!path18.isAbsolute(p)) {
     return "/" + p.replace(/^\.\//, "").replace(/^\/+/, "");
   }
-  const rel = path17.relative(cwd, p);
+  const rel = path18.relative(cwd, p);
   if (rel.startsWith("..")) return p;
-  return "/" + rel.split(path17.sep).join("/");
+  return "/" + rel.split(path18.sep).join("/");
 }
 function updatePackageJson(pkg, pkgPath) {
   const notes = [];
@@ -12819,7 +13397,7 @@ function updatePackageJson(pkg, pkgPath) {
     pkg.devDependencies.ionify = "latest";
     notes.push("\u2022 Added `ionify@latest` to devDependencies \u2014 run your package manager's install.");
   }
-  fs16.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+  fs17.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
   notes.push("\u2022 package.json scripts rewritten (vite \u2192 ionify); original saved as package.json.bak.");
   return notes;
 }
@@ -12834,7 +13412,7 @@ export default defineConfig(${body});
 function writeReport(cwd, viteConfigPath, ionifyConfig, notes) {
   const lines = [];
   lines.push("# Ionify Migration Report", "");
-  lines.push(`Migrated from: \`${viteConfigPath ? path17.basename(viteConfigPath) : "(no vite.config)"}\``);
+  lines.push(`Migrated from: \`${viteConfigPath ? path18.basename(viteConfigPath) : "(no vite.config)"}\``);
   lines.push("Generated: `ionify.config.ts` + updated `package.json` scripts", "");
   lines.push("## Mapped configuration", "");
   lines.push("```ts");
@@ -12850,17 +13428,17 @@ function writeReport(cwd, viteConfigPath, ionifyConfig, notes) {
   lines.push("- `.env` files load in Vite order; `%VITE_*%` placeholders in `index.html` are substituted.");
   lines.push("- `index.html` is the entry document as in Vite \u2014 no change needed.");
   lines.push("- `vite` is left installed so you can revert via the `.bak` files if needed.");
-  fs16.writeFileSync(path17.join(cwd, "MIGRATION_REPORT.md"), lines.join("\n") + "\n", "utf8");
+  fs17.writeFileSync(path18.join(cwd, "MIGRATION_REPORT.md"), lines.join("\n") + "\n", "utf8");
 }
 function backupFile(filePath) {
   try {
-    fs16.copyFileSync(filePath, `${filePath}.bak`);
+    fs17.copyFileSync(filePath, `${filePath}.bak`);
   } catch {
   }
 }
 function readJson2(filePath) {
   try {
-    return JSON.parse(fs16.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs17.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
@@ -12870,6 +13448,15 @@ function readJson2(filePath) {
 if (!process.env.NODE_COMPILE_CACHE) {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
   if (home) process.env.NODE_COMPILE_CACHE = home + "/.ionify/global/compile-cache";
+}
+function resolveCliVersion() {
+  try {
+    const here = dirname(fileURLToPath2(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf8"));
+    return typeof pkg?.version === "string" && pkg.version.length > 0 ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 var program = new Command();
 function validateEnvFlag(cmd, value) {
@@ -12899,7 +13486,7 @@ function logHydrateCommandError(err) {
   }
   logError("Hydrate failed", err);
 }
-program.name("ionify").description("Ionify \u2013 Instant, Intelligent, Unified Build Engine").version("0.0.1");
+program.name("ionify").description("Ionify \u2013 Instant, Intelligent, Unified Build Engine").version(resolveCliVersion());
 program.command("dev").description("Start Ionify development server").option("-p, --port <port>", "Port to run the server on", "5173").option("-m, --mode <mode>", "Environment mode, loads .env.<mode> file (default: development)").option("--hydrate", "Hydrate deps from Ionify Cloud CDC before starting (Tier-2)").option("--hydrate-tier1", "Also hydrate Tier-1 source transforms before starting").option("--namespace <name>", "Tier-1 namespace for hydration (overrides config.cloud.namespace)").option("--concurrency <n>", "Upload/download concurrency for cloud ops", parseInt).action(async (options) => {
   try {
     if (options.hydrate || options.hydrateTier1) {
@@ -12976,7 +13563,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-ZV7XRZBR.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-KVOOFVVO.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);
