@@ -23647,7 +23647,7 @@ ${refreshCode}
           } else {
             ensureVendorPackFile();
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
-            if (sharedPreload) preloadUrl(sharedPreload);
+            if (sharedPreload) preloadDepsUrl(sharedPreload);
             const vendorPackUrl = getVendorPackUrl();
             if (vendorPackUrl) preloadUrl(vendorPackUrl);
           }

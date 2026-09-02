@@ -8,12 +8,12 @@ export type LockfileInfo = {
   packageCount: number | null;
 };
 
-export const LOCKFILE_ORDER = [
+const LOCKFILE_ORDER = [
   "pnpm-lock.yaml",
   "package-lock.json",
   "yarn.lock",
   "bun.lockb",
-] as const;
+];
 
 export function readLockfile(workspaceRoot: string, projectRoot: string): LockfileInfo | null {
   const roots = [workspaceRoot, projectRoot].filter(Boolean);

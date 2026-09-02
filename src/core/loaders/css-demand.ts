@@ -3,7 +3,7 @@ import path from "path";
 import { getCacheKey } from "@core/cache";
 
 export const CSS_DEMAND_PROOF_VERSION = 1;
-export const CSS_CLASS_EXTRACTOR_VERSION = 2;
+export const CSS_CLASS_EXTRACTOR_VERSION = 1;
 
 export type CssDemandSourceFact = {
   version: number;
@@ -56,43 +56,6 @@ const EMPTY_PROFILE: CssDemandProfile = {
 
 const inMemorySourceFacts = new Map<string, CssDemandSourceFact>();
 const graphSourceFilesByRoot = new Map<string, string[]>();
-
-// Stat-keyed content-hash memo: reuse a proven content hash while the file's
-// stat identity (dev/ino/size/mtime/ctime) is unchanged, so demand freshness
-// checks cost one stat per file instead of one full read+hash per file.
-// Same per-source proof strategy as the build source-freshness scan.
-const statKeyedContentHashes = new Map<string, { statKey: string; contentHash: string }>();
-
-function statIdentityKey(stat: fs.Stats): string {
-  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
-}
-
-function getSourceContentHash(filePath: string): string | null {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(filePath);
-  } catch {
-    statKeyedContentHashes.delete(filePath);
-    return null;
-  }
-  if (!stat.isFile()) {
-    statKeyedContentHashes.delete(filePath);
-    return null;
-  }
-  const statKey = statIdentityKey(stat);
-  const memo = statKeyedContentHashes.get(filePath);
-  if (memo && memo.statKey === statKey) return memo.contentHash;
-  let raw: Buffer;
-  try {
-    raw = fs.readFileSync(filePath);
-  } catch {
-    statKeyedContentHashes.delete(filePath);
-    return null;
-  }
-  const contentHash = getCacheKey(raw);
-  statKeyedContentHashes.set(filePath, { statKey, contentHash });
-  return contentHash;
-}
 
 function nowMs(): number {
   return Date.now();
@@ -180,17 +143,6 @@ function addTokensFromClassString(value: string, tokens: Set<string>): void {
   }
 }
 
-function dynamicTemplateCanAffectClassDemand(code: string, templateStart: number): boolean {
-  const prefix = code.slice(Math.max(0, templateStart - 160), templateStart);
-  const jsxAttribute = prefix.match(/\b([A-Za-z_:][-A-Za-z0-9_:]*)\s*=\s*\{\s*$/);
-  if (!jsxAttribute) return true;
-  const attribute = jsxAttribute[1]!.toLowerCase();
-  // These attributes publish accessibility/media text, never a class token.
-  // Unknown attributes remain fail-closed because a component may interpret
-  // their value as styling demand.
-  return attribute !== "alt" && attribute !== "src" && !attribute.startsWith("aria-");
-}
-
 function extractClassDemandTokens(code: string): { tokens: string[]; uncertain: boolean; reasons: string[] } {
   const tokens = new Set<string>();
   const reasons = new Set<string>();
@@ -218,12 +170,9 @@ function extractClassDemandTokens(code: string): { tokens: string[]; uncertain: 
     uncertain = true;
     reasons.add("dynamic-class-expression");
   }
-  const dynamicTemplateRe = /`[^`]*\$\{/g;
-  while ((match = dynamicTemplateRe.exec(code))) {
-    if (!dynamicTemplateCanAffectClassDemand(code, match.index)) continue;
+  if (/`[^`]*\$\{/.test(code)) {
     uncertain = true;
     reasons.add("dynamic-template-literal");
-    break;
   }
 
   return {
@@ -235,8 +184,14 @@ function extractClassDemandTokens(code: string): { tokens: string[]; uncertain: 
 
 function loadOrExtractSourceFact(rootDir: string, filePath: string, profile: CssDemandProfile): CssDemandSourceFact | null {
   if (!isCssDemandSourceFile(filePath)) return null;
-  const contentHash = getSourceContentHash(filePath);
-  if (!contentHash) return null;
+  let raw: Buffer;
+  try {
+    raw = fs.readFileSync(filePath);
+  } catch {
+    return null;
+  }
+
+  const contentHash = getCacheKey(raw);
   const canonical = canonicalPath(filePath);
   const cacheKey = `${canonical}:${contentHash}`;
   const memory = inMemorySourceFacts.get(cacheKey);
@@ -262,17 +217,8 @@ function loadOrExtractSourceFact(rootDir: string, filePath: string, profile: Css
     return disk;
   }
 
-  // Extraction miss: only now read the full content (the stat-memo hash above
-  // guarantees the bytes match contentHash unless the file races a write, in
-  // which case the next stat-key change re-extracts).
-  let code: string;
-  try {
-    code = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
   const started = nowMs();
-  const extracted = extractClassDemandTokens(code);
+  const extracted = extractClassDemandTokens(raw.toString("utf8"));
   const fact: CssDemandSourceFact = {
     version: CSS_DEMAND_PROOF_VERSION,
     extractorVersion: CSS_CLASS_EXTRACTOR_VERSION,
@@ -365,26 +311,7 @@ export function buildCssDemandAnalysis(options: {
   return { proof, profile };
 }
 
-export function registerCssDemandGraphSourceFiles(
-  rootDir: string,
-  files: string[],
-  options?: { stableTopology?: boolean },
-): string[] {
-  if (options?.stableTopology) {
-    const persisted = readJson<CssDemandGraphStampIndex>(graphStampIndexPath(rootDir));
-    const persistedPaths =
-      persisted?.version === 2 && persisted.extractorVersion === CSS_CLASS_EXTRACTOR_VERSION
-        ? Object.keys(persisted.entries)
-        : [];
-    if (persistedPaths.length > 0) {
-      const canonicalRoot = canonicalPath(rootDir);
-      const stableFiles = persistedPaths
-        .sort()
-        .map((relative) => path.join(canonicalRoot, relative));
-      graphSourceFilesByRoot.set(canonicalRoot, stableFiles);
-      return stableFiles;
-    }
-  }
+export function registerCssDemandGraphSourceFiles(rootDir: string, files: string[]): string[] {
   const canonicalFiles = files
     .map((item) => canonicalPath(item))
     .filter((item) => isCssDemandSourceFile(item))
@@ -408,254 +335,6 @@ export function prewarmCssDemandSourceFacts(rootDir: string, files: string[]): C
 
 export function getCssDemandGraphSourceFiles(rootDir: string): string[] {
   return graphSourceFilesByRoot.get(canonicalPath(rootDir))?.slice() ?? [];
-}
-
-export type CssDemandGraphContentStamp = {
-  files: number;
-  stamp: string;
-  changed: boolean;
-};
-
-type CssDemandGraphStampIndex = {
-  version: 2;
-  extractorVersion: number;
-  /** CSSA-owned aggregate identity for `entries`; absent only on legacy v2 indexes. */
-  stamp?: string;
-  files?: number;
-  entries: Record<string, { statKey: string; demandEntry: string }>;
-};
-
-function graphStampIndexPath(rootDir: string): string {
-  return path.join(cssDemandRoot(rootDir), "graph-stamp.v2.json");
-}
-
-function computePersistedStableTopologyStamp(
-  rootDir: string,
-  changedFiles: readonly string[],
-  persisted: CssDemandGraphStampIndex,
-): CssDemandGraphContentStamp | null {
-  const rootCanonical = canonicalPath(rootDir);
-  const previousEntries = persisted.entries;
-  const persistedFileCount =
-    Number.isInteger(persisted.files) && persisted.files! > 0
-      ? persisted.files!
-      : Object.keys(previousEntries).length;
-  if (persistedFileCount === 0) return null;
-  let previousStamp =
-    typeof persisted.stamp === "string" && persisted.stamp.length > 0
-      ? persisted.stamp
-      : null;
-  if (!previousStamp) {
-    const previousDemandEntries = Object.values(previousEntries)
-      .map((entry) => entry.demandEntry)
-      .sort();
-    if (previousDemandEntries.length === 0) return null;
-    previousStamp = getCacheKey(
-      `css-demand-graph-stamp:v2\n${previousDemandEntries.join("\n")}`,
-    );
-  }
-  const profile = createCssDemandProfile();
-  const changedEntries = new Map<string, CssDemandGraphStampIndex["entries"][string]>();
-  for (const changedFile of changedFiles) {
-    const canonical = canonicalPath(changedFile);
-    const rel = path.relative(rootCanonical, canonical).split(path.sep).join("/");
-    if (rel.startsWith("../")) return null;
-    if (!previousEntries[rel]) {
-      // Planner proved graph topology stable and CSSA's persisted index owns
-      // the content membership. A changed non-member cannot affect CSS demand.
-      continue;
-    }
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(canonical);
-    } catch {
-      return null;
-    }
-    if (!stat.isFile()) return null;
-    const fact = loadOrExtractSourceFact(rootDir, canonical, profile);
-    if (!fact) return null;
-    const demandIdentity = fact.uncertain
-      ? `content:${fact.contentHash}`
-      : `demand:${getCacheKey(fact.tokens.join("\n"))}`;
-    const nextEntry = {
-      statKey: statIdentityKey(stat),
-      demandEntry: `${rel}:extractor=${fact.extractorVersion}:uncertain=${fact.uncertain ? 1 : 0}:reasons=${fact.uncertaintyReasons.join(",")}:${demandIdentity}`,
-    };
-    if (previousEntries[rel].demandEntry !== nextEntry.demandEntry) {
-      changedEntries.set(rel, nextEntry);
-    }
-  }
-  if (changedEntries.size === 0) {
-    if (persisted.stamp !== previousStamp || persisted.files !== persistedFileCount) {
-      try {
-        writeJson(graphStampIndexPath(rootDir), {
-          ...persisted,
-          stamp: previousStamp,
-          files: persistedFileCount,
-        } satisfies CssDemandGraphStampIndex);
-      } catch {
-        // Local aggregate index is an accelerator only.
-      }
-    }
-    return {
-      files: persistedFileCount,
-      stamp: previousStamp,
-      changed: false,
-    };
-  }
-  const nextEntries = { ...previousEntries };
-  for (const [relative, entry] of changedEntries) nextEntries[relative] = entry;
-  const entries = Object.values(nextEntries).map((entry) => entry.demandEntry).sort();
-  const stamp = getCacheKey(`css-demand-graph-stamp:v2\n${entries.join("\n")}`);
-  try {
-    writeJson(graphStampIndexPath(rootDir), {
-      version: 2,
-      extractorVersion: CSS_CLASS_EXTRACTOR_VERSION,
-      stamp,
-      files: entries.length,
-      entries: nextEntries,
-    } satisfies CssDemandGraphStampIndex);
-  } catch {
-    // Local aggregate index is an accelerator only.
-  }
-  return {
-    files: entries.length,
-    stamp,
-    changed: previousStamp !== stamp,
-  };
-}
-
-/**
- * CSSA-owned compact refresh for a Planner-proven topology-stable mutation.
- * Missing, incompatible, or incomplete CSSA state returns null so the caller
- * can rebuild the authoritative content set from the canonical plan.
- */
-export function refreshCssDemandGraphContentStamp(
-  rootDir: string,
-  changedFiles: readonly string[],
-): CssDemandGraphContentStamp | null {
-  const persisted = readJson<CssDemandGraphStampIndex>(graphStampIndexPath(rootDir));
-  if (
-    persisted?.version !== 2 ||
-    persisted.extractorVersion !== CSS_CLASS_EXTRACTOR_VERSION
-  ) {
-    return null;
-  }
-  return computePersistedStableTopologyStamp(rootDir, changedFiles, persisted);
-}
-
-export type CssDemandGraphContentAuthorityFact = {
-  enabled: boolean;
-  files: number;
-};
-
-/**
- * CSSA is the sole authority for whether emitted CSS consumes graph-admitted
- * source content. Missing facts fail closed because the next CSS compile may
- * discover a Tailwind content pipeline.
- */
-export function requiresCssDemandGraphContentStamp(
-  facts: Array<CssDemandGraphContentAuthorityFact | null>,
-): boolean {
-  if (facts.length === 0) return false;
-  return facts.some((fact) => fact === null || (fact.enabled === true && fact.files > 0));
-}
-
-/**
- * One CSSA-owned aggregated demand stamp over the graph-admitted Tailwind
- * content set. Proven static sources contribute their extracted utility demand,
- * so unrelated source edits do not invalidate CSS. Uncertain sources contribute
- * their complete content identity and therefore fail closed.
- *
- * Paths inside the stamp are workspace-relative (posix) so identical trees
- * produce identical stamps across machines (global CSS artifact cache).
- * Cost: one stat per registered file plus extraction for changed source facts.
- */
-export function computeCssDemandGraphContentStamp(
-  rootDir: string,
-  options?: {
-    /**
-     * Planner has proven that graph topology is unchanged and the build source
-     * audit has identified the complete changed-file set. CSSA still computes
-     * demand identity; it may reuse its own entries for every other source.
-     */
-    stableTopologyChangedFiles?: string[];
-  },
-): CssDemandGraphContentStamp | null {
-  const files = getCssDemandGraphSourceFiles(rootDir);
-  if (files.length === 0) return null;
-  const rootCanonical = canonicalPath(rootDir);
-  const profile = createCssDemandProfile();
-  const indexPath = graphStampIndexPath(rootDir);
-  const persisted = readJson<CssDemandGraphStampIndex>(indexPath);
-  const previousEntries =
-    persisted?.version === 2 && persisted.extractorVersion === CSS_CLASS_EXTRACTOR_VERSION
-      ? persisted.entries
-      : {};
-  const previousStamp =
-    typeof persisted?.stamp === "string" && persisted.stamp.length > 0
-      ? persisted.stamp
-      : (() => {
-          const previousDemandEntries = Object.values(previousEntries)
-            .map((entry) => entry.demandEntry)
-            .sort();
-          return previousDemandEntries.length > 0
-            ? getCacheKey(`css-demand-graph-stamp:v2\n${previousDemandEntries.join("\n")}`)
-            : null;
-        })();
-  const stableChangedFiles = options?.stableTopologyChangedFiles;
-  if (
-    stableChangedFiles &&
-    previousStamp &&
-    Object.keys(previousEntries).length === files.length
-  ) {
-    return computePersistedStableTopologyStamp(rootDir, stableChangedFiles, persisted!);
-  }
-  const nextEntries: CssDemandGraphStampIndex["entries"] = {};
-  const entries: string[] = [];
-  for (const file of files) {
-    const rel = path.relative(rootCanonical, file).split(path.sep).join("/");
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      continue; // deleted files leave the content set
-    }
-    if (!stat.isFile()) continue;
-    const statKey = statIdentityKey(stat);
-    const previous = previousEntries[rel];
-    if (previous?.statKey === statKey && typeof previous.demandEntry === "string") {
-      nextEntries[rel] = previous;
-      entries.push(previous.demandEntry);
-      continue;
-    }
-    const fact = loadOrExtractSourceFact(rootDir, file, profile);
-    if (!fact) continue;
-    const demandIdentity = fact.uncertain
-      ? `content:${fact.contentHash}`
-      : `demand:${getCacheKey(fact.tokens.join("\n"))}`;
-    const demandEntry = `${rel}:extractor=${fact.extractorVersion}:uncertain=${fact.uncertain ? 1 : 0}:reasons=${fact.uncertaintyReasons.join(",")}:${demandIdentity}`;
-    nextEntries[rel] = { statKey, demandEntry };
-    entries.push(demandEntry);
-  }
-  entries.sort();
-  const stamp = getCacheKey(`css-demand-graph-stamp:v2\n${entries.join("\n")}`);
-  try {
-    writeJson(indexPath, {
-      version: 2,
-      extractorVersion: CSS_CLASS_EXTRACTOR_VERSION,
-      stamp,
-      files: entries.length,
-      entries: nextEntries,
-    } satisfies CssDemandGraphStampIndex);
-  } catch {
-    // Local aggregate index is an accelerator only; per-source facts remain authoritative.
-  }
-  return {
-    files: entries.length,
-    stamp,
-    changed: previousStamp !== stamp,
-  };
 }
 
 export function mergeCssDemandProfile(into: CssDemandProfile, from: CssDemandProfile | null | undefined): void {

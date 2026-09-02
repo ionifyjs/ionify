@@ -25,7 +25,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: npm run build
       - run: npm run verify:release
-      - run: pnpm exec vitest run tests/native-distribution.test.ts tests/deps-runtime-url.test.ts
+      - run: pnpm exec vitest run tests/native-distribution.test.ts tests/deps-runtime-url.test.ts tests/publish-all.test.ts
       - run: node --check scripts/publish-all.mjs
       - run: node --check scripts/real-registry-smoke.mjs
       - run: node --check scripts/release-local-registry.mjs

@@ -133,56 +133,14 @@ function normalizeResolveAlias(alias: unknown): Array<[string, string[]]> | null
   return entries.length > 0 ? entries : null;
 }
 
-function normalizeBuiltinFallback(value: unknown): Array<[string, string | false]> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(
-      (entry): entry is [string, string | false] =>
-        entry[0].length > 0 &&
-        (entry[1] === false || (typeof entry[1] === "string" && entry[1].length > 0)),
-    )
-    .sort(([left], [right]) => left.localeCompare(right));
-  return entries.length > 0 ? entries : null;
-}
-
-function normalizeRuntimeGlobals(
-  value: unknown,
-): Array<[string, string | [string, string]]> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const entries: Array<[string, string | [string, string]]> = [];
-  for (const [globalName, provider] of Object.entries(value as Record<string, unknown>)) {
-    if (globalName.length === 0) continue;
-    if (typeof provider === "string" && provider.length > 0) {
-      entries.push([globalName, provider]);
-      continue;
-    }
-    if (
-      Array.isArray(provider) &&
-      provider.length === 2 &&
-      typeof provider[0] === "string" &&
-      provider[0].length > 0 &&
-      typeof provider[1] === "string" &&
-      provider[1].length > 0
-    ) {
-      entries.push([globalName, [provider[0], provider[1]]]);
-    }
-  }
-  entries.sort(([left], [right]) => left.localeCompare(right));
-  return entries.length > 0 ? entries : null;
-}
-
 function normalizeResolveOptions(resolveOptions: any): CanonicalVersionInputs["resolveOptions"] {
   if (!resolveOptions || typeof resolveOptions !== "object") return null;
   const normalized: Record<string, unknown> = {};
   const alias = normalizeResolveAlias(resolveOptions.alias);
-  const builtinFallback = normalizeBuiltinFallback(resolveOptions.builtinFallback);
-  const runtimeGlobals = normalizeRuntimeGlobals(resolveOptions.runtimeGlobals);
   const extensions = normalizeStringArray(resolveOptions.extensions);
   const conditions = normalizeStringArray(resolveOptions.conditions);
   const mainFields = normalizeStringArray(resolveOptions.mainFields);
   if (alias) normalized.alias = alias;
-  if (builtinFallback) normalized.builtinFallback = builtinFallback;
-  if (runtimeGlobals) normalized.runtimeGlobals = runtimeGlobals;
   if (extensions) normalized.extensions = extensions;
   if (conditions) normalized.conditions = conditions;
   if (mainFields) normalized.mainFields = mainFields;

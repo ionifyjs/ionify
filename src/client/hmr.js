@@ -166,16 +166,6 @@ source.addEventListener("peer-dep-warning", (event) => {
   });
 });
 
-source.addEventListener("dependency-generation", (event) => {
-  try {
-    const payload = JSON.parse(event.data);
-    log(`dependency generation activated ${payload?.previous ?? "unknown"} -> ${payload?.current ?? "unknown"}`);
-  } catch (_) {
-    log("dependency generation activated");
-  }
-  location.reload();
-});
-
 source.addEventListener("update", async (event) => {
   let summary;
   try {

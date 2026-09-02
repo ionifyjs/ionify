@@ -6046,7 +6046,13 @@ export async function startDevServer({
           } else {
             ensureVendorPackFile();
             const sharedPreload = vendorPackSharedUrl || vendorCoreSharedUrl;
-            if (sharedPreload) preloadUrl(sharedPreload);
+            // The native chunker is the artifact authority for the emitted shared
+            // filename. A stable-id prediction can differ from the optimizer's
+            // actual chunk group, especially on the first cold request while
+            // prewarm is still running. Never advertise a predicted file that
+            // does not exist; the browser would otherwise retain a failed module
+            // request for the active DPL generation.
+            if (sharedPreload) preloadDepsUrl(sharedPreload);
             const vendorPackUrl = getVendorPackUrl();
             if (vendorPackUrl) preloadUrl(vendorPackUrl);
           }

@@ -2,13 +2,6 @@ export interface IonifyResolveConfig {
   baseUrl?: string;
   paths?: Record<string, string[]>;
   alias?: Record<string, string>;
-  /** Browser replacements for Node builtins. DPL resolves string targets; false emits an empty module. */
-  builtinFallback?: Record<string, string | false>;
-  /**
-   * Browser runtime globals published as real DPL dependency edges.
-   * A string consumes the provider module value; a tuple consumes one named export.
-   */
-  runtimeGlobals?: Record<string, string | [string, string]>;
   /**
    * File extensions to try when resolving imports.
    * @default ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']

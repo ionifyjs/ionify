@@ -30,12 +30,12 @@ export class IonifyWatcher extends EventEmitter {
     return this.watchers.has(abs) || this.polled.has(abs);
   }
 
-  watchFile(filePath: string, options: { allowMissing?: boolean } = {}) {
+  watchFile(filePath: string) {
     // Normalize to absolute path so map lookups are consistent.
     const abs = path.resolve(filePath);
     if (this.isWatched(abs)) return;
     if (/(node_modules|\.git|\.ionify|dist)/.test(abs)) return;
-    if (!fs.existsSync(abs) && !options.allowMissing) return;
+    if (!fs.existsSync(abs)) return;
 
     try {
       const dir = path.dirname(abs);
@@ -49,28 +49,22 @@ export class IonifyWatcher extends EventEmitter {
         const stat = exists ? fs.statSync(abs) : null;
         this.emitChange(abs, exists ? "changed" : "deleted", stat);
       });
-      watcher.on("error", () => {
-        watcher.close();
-        this.watchers.delete(abs);
-      });
 
       this.watchers.set(abs, watcher);
       this.polled.add(abs);
 
       // Lightweight polling fallback keeps the file in sync on platforms where fs.watch drops events.
-      fs.watchFile(abs, { interval: options.allowMissing ? 500 : 5000 }, (curr, prev) => {
-        if (curr.mtimeMs !== prev.mtimeMs || curr.nlink !== prev.nlink) {
-          const status: WatchEvent = curr.nlink === 0 ? "deleted" : prev.nlink === 0 ? "added" : "changed";
-          this.emitChange(abs, status, curr.nlink === 0 ? null : curr);
+      fs.watchFile(abs, { interval: 5000 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) {
+          this.emitChange(abs, "changed", curr);
         }
       });
     } catch {
       // fallback polling only
       this.polled.add(abs);
-      fs.watchFile(abs, { interval: options.allowMissing ? 500 : 8000 }, (curr, prev) => {
-        if (curr.mtimeMs !== prev.mtimeMs || curr.nlink !== prev.nlink) {
-          const status: WatchEvent = curr.nlink === 0 ? "deleted" : prev.nlink === 0 ? "added" : "changed";
-          this.emitChange(abs, status, curr.nlink === 0 ? null : curr);
+      fs.watchFile(abs, { interval: 8000 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) {
+          this.emitChange(abs, "changed", curr);
         }
       });
     }

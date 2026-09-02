@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { getCacheKey } from "@core/cache";
-import { PRODUCTION_PLAN_OUTPUT_VERSION } from "@core/production-artifact-publishing";
 import type { BuildPlan } from "../types/plan";
 
 export const PRODUCTION_READINESS_AUTHORITY_VERSION = 1;
@@ -29,7 +28,6 @@ export type ProductionReadinessPublicAsset = {
 export type ProductionReadinessIdentity = {
   praVersion: typeof PRODUCTION_READINESS_AUTHORITY_VERSION;
   kind: typeof PRODUCTION_READINESS_RECORD_KIND;
-  productionPlanOutputVersion: typeof PRODUCTION_PLAN_OUTPUT_VERSION;
   configHash: string;
   workspaceHash: string;
   depsHash: string;
@@ -246,7 +244,6 @@ export function createProductionReadinessRecord(
   const identity: ProductionReadinessIdentity = {
     praVersion: PRODUCTION_READINESS_AUTHORITY_VERSION,
     kind: PRODUCTION_READINESS_RECORD_KIND,
-    productionPlanOutputVersion: PRODUCTION_PLAN_OUTPUT_VERSION,
     configHash: input.configHash,
     workspaceHash,
     depsHash: input.depsHash,
@@ -304,7 +301,6 @@ export function createPartialProductionReadinessRecord(
   const identity: ProductionReadinessIdentity = {
     praVersion: PRODUCTION_READINESS_AUTHORITY_VERSION,
     kind: PRODUCTION_READINESS_RECORD_KIND,
-    productionPlanOutputVersion: PRODUCTION_PLAN_OUTPUT_VERSION,
     configHash: input.configHash,
     workspaceHash,
     depsHash: input.depsHash,
@@ -353,70 +349,11 @@ export function createPartialProductionReadinessRecord(
 }
 
 export function writeProductionReadinessRecord(ionifyDir: string, record: ProductionReadinessRecord): void {
-  writeProductionReadinessRecordAtomic(ionifyDir, record);
-}
-
-export type ProductionPublicationReadinessWriteResult =
-  | "partial-published"
-  | "verified-preserved";
-
-/**
- * Admit readiness evidence produced by PAP. PAP owns no deploy-ready `dist`
- * bytes, so a partial publication must not downgrade a verified record for the
- * exact same production contract. A changed config/workspace/dependency/plan/
- * engine identity replaces the old record with partial evidence and therefore
- * still fails closed until build verifies the new output.
- */
-export function writeProductionPublicationReadinessRecord(
-  ionifyDir: string,
-  record: ProductionReadinessRecord,
-): ProductionPublicationReadinessWriteResult {
-  if (
-    record.state !== "partial" ||
-    (record.metadata.producer !== "publish-contracts" &&
-      record.metadata.producer !== "publish-artifacts")
-  ) {
-    throw new Error("PRA publication admission requires a PAP-owned partial record");
-  }
-
-  const current = readProductionReadinessRecord(ionifyDir);
-  if (
-    current?.state === "verified" &&
-    sameProductionContractIdentity(current.identity, record.identity)
-  ) {
-    return "verified-preserved";
-  }
-  writeProductionReadinessRecordAtomic(ionifyDir, record);
-  return "partial-published";
-}
-
-function writeProductionReadinessRecordAtomic(
-  ionifyDir: string,
-  record: ProductionReadinessRecord,
-): void {
   const recordPath = resolveProductionReadinessRecordPath(ionifyDir);
   fs.mkdirSync(path.dirname(recordPath), { recursive: true });
   const tmpPath = `${recordPath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, recordPath);
-}
-
-function sameProductionContractIdentity(
-  left: ProductionReadinessIdentity,
-  right: ProductionReadinessIdentity,
-): boolean {
-  return (
-    left.praVersion === right.praVersion &&
-    left.kind === right.kind &&
-    left.productionPlanOutputVersion === right.productionPlanOutputVersion &&
-    left.configHash === right.configHash &&
-    left.workspaceHash === right.workspaceHash &&
-    left.depsHash === right.depsHash &&
-    left.productionPlanHash === right.productionPlanHash &&
-    left.integrityPolicyHash === right.integrityPolicyHash &&
-    left.engineVersion === right.engineVersion &&
-    left.depsOptimizerOutputVersion === right.depsOptimizerOutputVersion
-  );
 }
 
 export function readProductionReadinessRecord(ionifyDir: string): ProductionReadinessRecord | null {
@@ -436,7 +373,6 @@ export function isVerifiedProductionReadinessForPlan(
 ): boolean {
   if (!record || record.state !== "verified") return false;
   const identity = record.identity;
-  if (identity.productionPlanOutputVersion !== PRODUCTION_PLAN_OUTPUT_VERSION) return false;
   if (identity.configHash !== input.configHash) return false;
   if (identity.depsHash !== input.depsHash) return false;
   if (identity.depsOptimizerOutputVersion !== String(input.depsOptimizerOutputVersion)) return false;

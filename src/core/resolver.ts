@@ -18,10 +18,7 @@ import { createRequire } from "module";
 import { pathToFileURL, fileURLToPath } from "url";
 import { native, tryParseImports, tryParseModuleMetadata } from "@native/index";
 
-// A1/B.1 single authority: `resolveImport`'s file lookup consumes the canonical
-// local-source extension list from the native resolver (adds .mts/.cts/.css; mjs
-// before json) instead of an independent TS array. See local-source-extensions.ts.
-import { localSourceExtensions } from "@core/resolver/local-source-extensions";
+const SUPPORTED_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 const CONFIG_FILES = ["tsconfig.json", "jsconfig.json"];
 
 type SWCModule = {
@@ -173,7 +170,7 @@ function tryWithExt(p: string): string | null {
   if (tryFile(p)) return p;
 
   // Try adding extensions
-  for (const ext of localSourceExtensions()) {
+  for (const ext of SUPPORTED_EXTS) {
     const cand = p.endsWith(ext) ? p : p + ext;
     const found = tryFile(cand);
     if (found) return found;
@@ -202,7 +199,7 @@ function tryWithExt(p: string): string | null {
     }
 
     // Try index files
-    for (const ext of localSourceExtensions()) {
+    for (const ext of SUPPORTED_EXTS) {
       const idx = path.join(p, "index" + ext);
       const found = tryFile(idx);
       if (found) return found;

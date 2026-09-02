@@ -91,8 +91,6 @@ export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Prom
     cachedConfig = { root: projectRoot };
     configureResolverAliases(undefined, projectRoot);
     delete process.env.IONIFY_RESOLVE_ALIAS;
-    delete process.env.IONIFY_BROWSER_BUILTIN_FALLBACK;
-    delete process.env.IONIFY_BROWSER_RUNTIME_GLOBALS;
     return cachedConfig;
   }
 
@@ -156,18 +154,6 @@ export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Prom
         configureResolverAliases(undefined, baseDir);
         delete process.env.IONIFY_RESOLVE_ALIAS;
       }
-      const builtinFallback = resolved?.resolve?.builtinFallback;
-      if (builtinFallback && typeof builtinFallback === "object" && !Array.isArray(builtinFallback)) {
-        process.env.IONIFY_BROWSER_BUILTIN_FALLBACK = JSON.stringify(builtinFallback);
-      } else {
-        delete process.env.IONIFY_BROWSER_BUILTIN_FALLBACK;
-      }
-      const runtimeGlobals = resolved?.resolve?.runtimeGlobals;
-      if (runtimeGlobals && typeof runtimeGlobals === "object" && !Array.isArray(runtimeGlobals)) {
-        process.env.IONIFY_BROWSER_RUNTIME_GLOBALS = JSON.stringify(runtimeGlobals);
-      } else {
-        delete process.env.IONIFY_BROWSER_RUNTIME_GLOBALS;
-      }
       logInfo(`Loaded ionify config from ${path.relative(cwd, configPath)}`);
     } else {
       throw new Error("Config did not export an object");
@@ -177,8 +163,6 @@ export async function loadIonifyConfig(cwd = process.cwd(), mode?: string): Prom
     cachedConfig = null;
     configureResolverAliases(undefined, cwd);
     delete process.env.IONIFY_RESOLVE_ALIAS;
-    delete process.env.IONIFY_BROWSER_BUILTIN_FALLBACK;
-    delete process.env.IONIFY_BROWSER_RUNTIME_GLOBALS;
   }
   return cachedConfig;
 }
