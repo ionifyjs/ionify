@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -42,49 +43,124 @@ if (Object.keys(pkg.optionalDependencies ?? {}).length !== expectedTargets.lengt
 }
 
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-const quickStart = `## Quick Start
+const expectedWhatsNew = `## What's New
 
-Create a new project:
+### 0.1.36 — Cross-platform native runtime
 
-\`\`\`bash
-pnpm create ionify
-\`\`\`\`
+Fixed #6: Ionify could fail to load its native engine on environments that
+didn't match the binary distributed with the package.
 
-Or add Ionify to an existing project:
-
-\`\`\`bash
-pnpm add -D @ionify/ionify
-\`\`\`
-
-Create \`ionify.config.ts\`:
-
-\`\`\`typescript
-import { defineConfig } from "@ionify/ionify";
-
-export default defineConfig({
-  entry: "/src/main.ts",
-  outDir: "dist",
-});
-\`\`\`
-
-Then:
-
-\`\`\`bash
-pnpm ionify dev
-pnpm ionify build
-\`\`\`
+Ionify now automatically selects the correct native runtime for supported
+macOS, Windows, and Linux environments, with no platform configuration
+required.
 
 `;
-const quickStartBegin = readme.indexOf("## Quick Start\n");
-const quickStartEnd = readme.indexOf("\n---", quickStartBegin);
-if (quickStartBegin < 0 || quickStartEnd < 0 || readme.slice(quickStartBegin, quickStartEnd + 1) !== quickStart) {
-  throw new Error("Quick Start differs from the frozen pre-0.1.36 byte contract");
+const expectedBuiltIn = `## Built-in Support
+
+Ionify handles common frontend capabilities directly, without requiring
+Ionify-specific plugins:
+
+- React and Fast Refresh
+- JavaScript, TypeScript, JSX, and TSX
+- ES modules and CommonJS dependency interop
+- CSS and CSS Modules
+- Static assets
+- Dynamic imports and code splitting
+- Hot Module Replacement
+- Environment files and \`import.meta.env\`
+- Workspace and monorepo discovery
+- Sass and Less when the corresponding compiler package is installed
+
+### Integrated Tooling
+
+Ionify also integrates directly with project-level tooling such as Tailwind CSS
+and PostCSS when their normal project packages and configuration are present.
+
+`;
+
+function sectionRange(text, heading) {
+  const marker = `${heading}\n`;
+  const start = text.indexOf(marker);
+  if (start < 0 || text.indexOf(marker, start + marker.length) >= 0) {
+    throw new Error(`README must contain exactly one ${heading} section`);
+  }
+  const next = text.indexOf("\n## ", start + marker.length);
+  return { start, end: next < 0 ? text.length : next + 1 };
 }
-const whatsNew = readme.match(/^## What's New$/gm) ?? [];
-const currentReleaseEntry = readme.match(/^### 0\.1\.37 — Isolated dependency generations$/gm) ?? [];
-const nativeReleaseEntry = readme.match(/^### 0\.1\.36 — Cross-platform native runtime$/gm) ?? [];
-if (whatsNew.length !== 1 || currentReleaseEntry.length !== 1 || nativeReleaseEntry.length !== 1) {
-  throw new Error("README must contain exactly one 0.1.37 and one 0.1.36 What's New entry");
+
+function readSection(text, heading) {
+  const { start, end } = sectionRange(text, heading);
+  return text.slice(start, end);
+}
+
+function removeSection(text, heading, required = true) {
+  if (!text.includes(`${heading}\n`)) {
+    if (required) throw new Error(`README is missing ${heading}`);
+    return text;
+  }
+  const { start, end } = sectionRange(text, heading);
+  return text.slice(0, start) + text.slice(end);
+}
+
+function replaceSection(text, heading, replacement) {
+  const { start, end } = sectionRange(text, heading);
+  return text.slice(0, start) + replacement + text.slice(end);
+}
+
+if (readSection(readme, "## What's New") !== expectedWhatsNew) {
+  throw new Error("README What's New must contain only the exact 0.1.36 release note");
+}
+if (readSection(readme, "## Built-in Support") !== expectedBuiltIn) {
+  throw new Error("README Built-in Support differs from the audited built-in capability section");
+}
+if (/^### 0\.1\.37\b/m.test(readme)) {
+  throw new Error("README must not contain a 0.1.37 release note");
+}
+
+const readmeBaseRef = process.env.IONIFY_README_BASE_REF || "origin/main";
+const baselineResult = spawnSync("git", ["show", `${readmeBaseRef}:README.md`], {
+  cwd: root,
+  encoding: "utf8",
+});
+if (baselineResult.status !== 0) {
+  throw new Error(
+    `unable to read authoritative README baseline ${readmeBaseRef}: ${baselineResult.stderr.trim()}`,
+  );
+}
+const baselineReadme = baselineResult.stdout;
+const quickStart = readSection(readme, "## Quick Start");
+const baselineQuickStart = readSection(baselineReadme, "## Quick Start");
+const baselinePackageCommand = "pnpm add -D ionify";
+const packageCommandOccurrences = baselineQuickStart.split(baselinePackageCommand).length - 1;
+if (packageCommandOccurrences !== 1) {
+  throw new Error(
+    `authoritative README baseline must contain exactly one '${baselinePackageCommand}' in Quick Start`,
+  );
+}
+const expectedQuickStart = baselineQuickStart.replace(
+  baselinePackageCommand,
+  "pnpm add -D @ionify/ionify",
+);
+if (quickStart !== expectedQuickStart) {
+  throw new Error(
+    `README Quick Start must differ from ${readmeBaseRef} only by the @ionify/ionify package-name correction`,
+  );
+}
+const candidateOutsideAuthorizedSections = removeSection(
+  removeSection(
+    replaceSection(readme, "## Quick Start", baselineQuickStart),
+    "## Built-in Support",
+  ),
+  "## What's New",
+);
+const baselineOutsideAuthorizedSections = removeSection(
+  removeSection(baselineReadme, "## Built-in Support", false),
+  "## What's New",
+);
+if (candidateOutsideAuthorizedSections !== baselineOutsideAuthorizedSections) {
+  throw new Error(
+    `README contains byte changes outside What's New, Built-in Support, and the Quick Start package name relative to ${readmeBaseRef}`,
+  );
 }
 for (const script of ["publish-all.mjs", "real-registry-smoke.mjs", "release-local-registry.mjs"]) {
   if (!fs.existsSync(path.join(root, "scripts", script))) throw new Error(`missing release script: ${script}`);
