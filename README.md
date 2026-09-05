@@ -13,7 +13,7 @@ Ionify is a build engine that **remembers**: a persistent dependency graph, a co
 ## Quick Start
 
 ```bash
-pnpm add -D ionify
+pnpm add -D @ionify/ionify
 ```
 
 Create `ionify.config.ts`:
@@ -113,8 +113,35 @@ export default defineConfig(({ mode, env }) => ({
 
 ## What's New
 
-- CSSA: the one CSS authority shared by dev,
-build, worker execution, CAS, and CSS artifact restore.
+### 0.1.36 — Cross-platform native runtime
+
+Fixed #6: Ionify could fail to load its native engine on environments that
+didn't match the binary distributed with the package.
+
+Ionify now automatically selects the correct native runtime for supported
+macOS, Windows, and Linux environments, with no platform configuration
+required.
+
+## Built-in Support
+
+Ionify handles common frontend capabilities directly, without requiring
+Ionify-specific plugins:
+
+- React and Fast Refresh
+- JavaScript, TypeScript, JSX, and TSX
+- ES modules and CommonJS dependency interop
+- CSS and CSS Modules
+- Static assets
+- Dynamic imports and code splitting
+- Hot Module Replacement
+- Environment files and `import.meta.env`
+- Workspace and monorepo discovery
+- Sass and Less when the corresponding compiler package is installed
+
+### Integrated Tooling
+
+Ionify also integrates directly with project-level tooling such as Tailwind CSS
+and PostCSS when their normal project packages and configuration are present.
 
 ## Links
 

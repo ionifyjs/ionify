@@ -2,6 +2,13 @@ interface IonifyResolveConfig {
     baseUrl?: string;
     paths?: Record<string, string[]>;
     alias?: Record<string, string>;
+    /** Browser replacements for Node builtins. DPL resolves string targets; false emits an empty module. */
+    builtinFallback?: Record<string, string | false>;
+    /**
+     * Browser runtime globals published as real DPL dependency edges.
+     * A string consumes the provider module value; a tuple consumes one named export.
+     */
+    runtimeGlobals?: Record<string, string | [string, string]>;
     /**
      * File extensions to try when resolving imports.
      * @default ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']
@@ -380,32 +387,54 @@ interface IonifyConfig {
     };
 }
 
-interface BuildChunkAsset {
-    source: string;
-    fileName: string;
+/** "dep" = pre-built Tier-2 dep optimizer artifact (T19 dep-leaf graph node) */
+type BuildPlanModuleKind = "js" | "css" | "asset" | "dep";
+interface BuildPlanDependencyImportAbi {
+    outFile: string;
+    mode: string;
+    names: string[];
+    hasDefault: boolean;
+    hasNamespace: boolean;
+    hasSideEffect: boolean;
+    hasExportStar: boolean;
+    uncertain: boolean;
 }
-interface BuildChunkArtifact {
-    id: string;
-    fileName: string;
-    code: string;
-    map?: string;
-    assets: BuildChunkAsset[];
-    code_bytes: number;
-    map_bytes: number;
+interface BuildPlanDependencyAbi {
+    version: number;
+    names: string[];
+    hasDefault: boolean;
+    uncertain: boolean;
+    abiHash: string;
+    imports: BuildPlanDependencyImportAbi[];
+}
+interface BuildPlanRuntimeLink {
+    specifier: string;
+    targetId: string;
+    isDynamic: boolean;
 }
 interface BuildPlanModule {
     id: string;
-    hash?: string;
-    kind: string;
+    fsPath?: string | null;
+    hash?: string | null;
+    kind: BuildPlanModuleKind;
     deps: string[];
     dynamicDeps: string[];
-    fsPath?: string | null;
     dependencyFormat?: "esm" | "cjs" | "unknown" | null;
     usedExports?: string[] | null;
     dependencyAbiHash?: string | null;
+    dependencyAbi?: BuildPlanDependencyAbi | null;
     sideEffects?: "none" | "present" | "unknown" | null;
     artifactTopology?: "wrapper" | "esm-native" | "esm-native-slim" | null;
+    runtimeDemandHash?: string | null;
+    runtimeMutationVerified?: boolean;
+    runtimeLinks?: BuildPlanRuntimeLink[] | null;
+    admittedOutputHash?: string | null;
+    proofKind?: ProofKind | null;
 }
+/** admission-contract discriminant. Invariant: each value maps to exactly
+ * one authority-owned admission contract (and thus one owning authority).
+ * Consumers dispatch SOLELY on this value. */
+type ProofKind = "DplContentHash" | "TransformArtifactProof";
 interface BuildPlanChunk {
     id: string;
     modules: BuildPlanModule[];
@@ -418,6 +447,20 @@ interface BuildPlanChunk {
 interface BuildPlan {
     entries: string[];
     chunks: BuildPlanChunk[];
+}
+
+interface BuildChunkAsset {
+    source: string;
+    fileName: string;
+}
+interface BuildChunkArtifact {
+    id: string;
+    fileName: string;
+    code: string;
+    map?: string;
+    assets: BuildChunkAsset[];
+    code_bytes: number;
+    map_bytes: number;
 }
 
 type IonifyChunkFiles = {
@@ -572,4 +615,4 @@ declare function loadRemoteModule<TModule = Record<string, unknown>>(moduleUrl: 
 declare function defineConfig(config: IonifyConfig): IonifyConfig;
 declare function defineConfig(config: (env: IonifyConfigEnv) => IonifyConfig | Promise<IonifyConfig>): (env: IonifyConfigEnv) => IonifyConfig | Promise<IonifyConfig>;
 
-export { type BuildChunkArtifact, type BuildChunkAsset, type BuildPlan, type BuildPlanChunk, type BuildPlanModule, type IonifyBuildConfig, type IonifyBuildManifest, type IonifyCSSConfig, type IonifyChunkFiles, type IonifyConfig, type IonifyConfigEnv, type IonifyFederationBuildSection, type IonifyFederationConfig, type IonifyFederationContainerLoadOptions, type IonifyFederationContainerModule, type IonifyFederationExposeEntry, type IonifyFederationFetchOptions, type IonifyFederationHostRuntime, type IonifyFederationRemoteConfig, type IonifyFederationRemoteEntry, type IonifyFederationShareScopes, type IonifyFederationSharedConfig, type IonifyFederationSharedEntry, type IonifyFederationSharedModule, type IonifyFederationSharedRegistration, type IonifyProductionPublishingConfig, type IonifyProductionPublishingLevel, type IonifyRemoteContainerHandle, type IonifyRemoteExposeHandle, type IonifyRemoteManifestHandle, type IonifyResolveConfig, type IonifyScopeHoistConfig, type IonifyServerConfig, type IonifyStartupPolicyConfig, type IonifyStartupPolicyMode, type IonifyTreeShakeConfig, type IonifyTreeShakeMode, createFederationHostRuntime, defineConfig, fetchRemoteContainer, fetchRemoteManifest, loadRemoteExposeModule, loadRemoteModule, preloadRemoteExpose, resolveRemoteExpose };
+export { type BuildChunkArtifact, type BuildChunkAsset, type BuildPlan, type BuildPlanChunk, type BuildPlanDependencyAbi, type BuildPlanDependencyImportAbi, type BuildPlanModule, type BuildPlanModuleKind, type BuildPlanRuntimeLink, type IonifyBuildConfig, type IonifyBuildManifest, type IonifyCSSConfig, type IonifyChunkFiles, type IonifyConfig, type IonifyConfigEnv, type IonifyFederationBuildSection, type IonifyFederationConfig, type IonifyFederationContainerLoadOptions, type IonifyFederationContainerModule, type IonifyFederationExposeEntry, type IonifyFederationFetchOptions, type IonifyFederationHostRuntime, type IonifyFederationRemoteConfig, type IonifyFederationRemoteEntry, type IonifyFederationShareScopes, type IonifyFederationSharedConfig, type IonifyFederationSharedEntry, type IonifyFederationSharedModule, type IonifyFederationSharedRegistration, type IonifyProductionPublishingConfig, type IonifyProductionPublishingLevel, type IonifyRemoteContainerHandle, type IonifyRemoteExposeHandle, type IonifyRemoteManifestHandle, type IonifyResolveConfig, type IonifyScopeHoistConfig, type IonifyServerConfig, type IonifyStartupPolicyConfig, type IonifyStartupPolicyMode, type IonifyTreeShakeConfig, type IonifyTreeShakeMode, type ProofKind, createFederationHostRuntime, defineConfig, fetchRemoteContainer, fetchRemoteManifest, loadRemoteExposeModule, loadRemoteModule, preloadRemoteExpose, resolveRemoteExpose };
