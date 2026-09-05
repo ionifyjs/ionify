@@ -3,6 +3,7 @@ import {
   auditProductionSourceFreshness,
   checkVerifiedDepsSnapshotFreshness,
   collectNativeExternalModules,
+  ensureDplDerivedArtifactSlot,
   precompressBuildOutputs,
   prepareCanonicalProductionDependencyPlan,
   publishDepArtifactsSnapshot,
@@ -11,16 +12,18 @@ import {
   resolveDplChunkedPackPublication,
   restoreDepArtifactsSnapshot,
   runBuildCommand,
+  stampWorkspaceTransformProofKinds,
   validateDepsManifestEntryTopology,
   verifyRestoredDepsSnapshot
-} from "./chunk-KKRT54KD.js";
+} from "./chunk-DDE1B75E.js";
 import "./chunk-PQP3Y562.js";
 import "./chunk-SNACSSNX.js";
-import "./chunk-FHXXO743.js";
+import "./chunk-F84D9131.js";
 export {
   auditProductionSourceFreshness,
   checkVerifiedDepsSnapshotFreshness,
   collectNativeExternalModules,
+  ensureDplDerivedArtifactSlot,
   precompressBuildOutputs,
   prepareCanonicalProductionDependencyPlan,
   publishDepArtifactsSnapshot,
@@ -29,6 +32,7 @@ export {
   resolveDplChunkedPackPublication,
   restoreDepArtifactsSnapshot,
   runBuildCommand,
+  stampWorkspaceTransformProofKinds,
   validateDepsManifestEntryTopology,
   verifyRestoredDepsSnapshot
 };

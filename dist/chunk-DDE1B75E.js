@@ -16,7 +16,7 @@ import {
 } from "./chunk-SNACSSNX.js";
 import {
   __filename
-} from "./chunk-FHXXO743.js";
+} from "./chunk-F84D9131.js";
 
 // src/cli/commands/build.ts
 import fs23 from "fs";
@@ -2745,7 +2745,7 @@ function normalizeModules(rawModules) {
     const id = typeof raw.id === "string" ? raw.id : null;
     if (!id) continue;
     const rawKind = typeof raw.kind === "string" ? raw.kind : classifyModuleKind(id);
-    const kind = rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
+    const kind = rawKind === "dep" ? "dep" : rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
     const deps = Array.isArray(raw.deps) ? raw.deps.filter(isNonEmptyString) : [];
     const dynamicSource = Array.isArray(raw.dynamicDeps) ? raw.dynamicDeps : Array.isArray(raw.dynamic_deps) ? raw.dynamic_deps : [];
     const dynamicDeps = dynamicSource.filter(isNonEmptyString);
@@ -2801,7 +2801,9 @@ function normalizeModules(rawModules) {
         };
       })(),
       sideEffects: raw.sideEffects === "none" || raw.sideEffects === "present" || raw.sideEffects === "unknown" ? raw.sideEffects : raw.side_effects === "none" || raw.side_effects === "present" || raw.side_effects === "unknown" ? raw.side_effects : void 0,
-      artifactTopology: raw.artifactTopology === "wrapper" || raw.artifactTopology === "esm-native" || raw.artifactTopology === "esm-native-slim" ? raw.artifactTopology : raw.artifact_topology === "wrapper" || raw.artifact_topology === "esm-native" || raw.artifact_topology === "esm-native-slim" ? raw.artifact_topology : void 0
+      artifactTopology: raw.artifactTopology === "wrapper" || raw.artifactTopology === "esm-native" || raw.artifactTopology === "esm-native-slim" ? raw.artifactTopology : raw.artifact_topology === "wrapper" || raw.artifact_topology === "esm-native" || raw.artifact_topology === "esm-native-slim" ? raw.artifact_topology : void 0,
+      admittedOutputHash: typeof raw.admittedOutputHash === "string" && raw.admittedOutputHash.length ? raw.admittedOutputHash : typeof raw.admitted_output_hash === "string" && raw.admitted_output_hash.length ? raw.admitted_output_hash : void 0,
+      proofKind: raw.proofKind === "DplContentHash" || raw.proofKind === "TransformArtifactProof" ? raw.proofKind : raw.proof_kind === "DplContentHash" || raw.proof_kind === "TransformArtifactProof" ? raw.proof_kind : void 0
     });
   }
   return modules;
@@ -9898,6 +9900,32 @@ function collectNativeExternalModules(plan, configuredExternals) {
   }
   return Array.from(externals).sort();
 }
+function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
+  const root = path26.resolve(workspaceRoot);
+  let stamped = 0;
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js") continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, root);
+      } else if (!fsPath && path26.isAbsolute(mod.id)) {
+        fsPath = mod.id;
+      }
+      if (!fsPath) continue;
+      const absolute = path26.resolve(fsPath);
+      const relative = path26.relative(root, absolute);
+      const insideWorkspace = relative === "" || !relative.startsWith(`..${path26.sep}`) && relative !== ".." && !path26.isAbsolute(relative);
+      if (!insideWorkspace) continue;
+      const segments = relative.split(path26.sep);
+      if (segments.includes("node_modules") || segments.includes(".ionify")) continue;
+      if (mod.proofKind && mod.proofKind !== "TransformArtifactProof") continue;
+      if (mod.proofKind !== "TransformArtifactProof") stamped += 1;
+      mod.proofKind = "TransformArtifactProof";
+    }
+  }
+  return stamped;
+}
 function rerouteDepsArtifacts(options) {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
   const depsArtifactsByEntry = /* @__PURE__ */ new Map();
@@ -10063,7 +10091,6 @@ function rerouteDepsArtifacts(options) {
       const artifact = canonical ? depsArtifactsByEntry.get(canonical) : null;
       const isNodeModules = fsPath ? fsPath.includes("node_modules") : mod.id.includes("node_modules");
       if (!artifact && !isNodeModules) {
-        if (mod.kind === "js") mod.proofKind = "TransformArtifactProof";
         keptModules.push(mod);
         continue;
       }
@@ -10573,6 +10600,7 @@ function rebalanceCanonicalVendorChunks(options) {
   };
 }
 async function prepareCanonicalProductionDependencyPlan(options) {
+  stampWorkspaceTransformProofKinds(options.plan, options.workspaceRoot);
   const coverageRepairStart = Date.now();
   if (!options.skipDependencyCoverageRepair) {
     await repairMissingPlanDependencyArtifacts({
@@ -10732,6 +10760,20 @@ function casTextFileMatchesHash(filePath, expectedHash) {
   } catch {
     return false;
   }
+}
+function ensureDplDerivedArtifactSlot(options) {
+  let bytes;
+  try {
+    bytes = fs23.readFileSync(options.sourceFile, "utf8");
+  } catch {
+    return false;
+  }
+  if (getCacheKey(bytes) !== options.contentHash) return false;
+  if (path26.resolve(options.sourceFile) === path26.resolve(options.derivedFile)) return true;
+  if (!casTextFileMatchesHash(options.derivedFile, options.contentHash)) {
+    writeTextMarkerAtomic(options.derivedFile, bytes);
+  }
+  return casTextFileMatchesHash(options.derivedFile, options.contentHash);
 }
 function computeBuildSlimmingSavedPercent(depsRoot, depsHash) {
   let entries = [];
@@ -12120,7 +12162,7 @@ async function runBuildCommand(options = {}) {
     }) : null;
     const sourceOnlyCanonicalPlan = sourceOnlyCanonicalMutation?.plan ?? null;
     const sourceMutationPlannerChunkIds = sourceOnlyCanonicalMutation?.affectedChunkIds ?? null;
-    const sourceMutationPublicationContext = sourceOnlyCanonicalMutation?.publicationContext ?? null;
+    let sourceMutationPublicationContext = null;
     const skipDepsAuthorityForSourceOnlyEdit = sourceOnlyCanonicalPlan !== null;
     const skipDepsAuthorityForPublishedPlan = !options.depsOnly && earlyPublishedPlan !== null && earlySourceFreshnessAudit?.current === true && earlyPublishedDplGenerationCurrent;
     const skipDepsAuthorityForCanonicalPlan = skipDepsAuthorityForSourceOnlyEdit || skipDepsAuthorityForPublishedPlan;
@@ -12980,16 +13022,34 @@ ${fp}`;
           if (baseHashFromPlan) {
             const dplDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
             const dplFile = path26.join(dplDir, "transformed.js");
-            for (const ref of refs) ref.hash = baseHashFromPlan;
+            const dplArtifactHash = artifactHashFromPlan ?? baseHashFromPlan;
+            for (const ref of refs) ref.hash = dplArtifactHash;
+            const artFile = path26.join(
+              getCasArtifactPath(casRoot, configHash, dplArtifactHash),
+              "transformed.js"
+            );
             if (fs23.existsSync(dplFile) && casTextFileMatchesHash(dplFile, baseHashFromPlan)) {
+              if (!ensureDplDerivedArtifactSlot({
+                sourceFile: dplFile,
+                contentHash: baseHashFromPlan,
+                derivedFile: artFile
+              })) {
+                throw new Error(`Failed to repair DPL derived artifact slot for '${id}'`);
+              }
               casHits += 1;
               continue;
             }
             if (fs23.existsSync(meta.fsPath)) {
               const bytes = fs23.readFileSync(meta.fsPath, "utf8");
               if (getCacheKey(bytes) === baseHashFromPlan) {
-                fs23.mkdirSync(dplDir, { recursive: true });
-                fs23.writeFileSync(dplFile, bytes, "utf8");
+                writeTextMarkerAtomic(dplFile, bytes);
+                if (!ensureDplDerivedArtifactSlot({
+                  sourceFile: dplFile,
+                  contentHash: baseHashFromPlan,
+                  derivedFile: artFile
+                })) {
+                  throw new Error(`Failed to materialize DPL derived artifact slot for '${id}'`);
+                }
                 casHits += 1;
                 continue;
               }
@@ -13453,16 +13513,21 @@ ${fp}`;
     const nativeExternalModules = collectNativeExternalModules(plan, buildExternalSpecifiers);
     const federationExposeEntryIds = collectFederationExposeEntryPaths(config, rootDir).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
     const hostEntryIds = (entries ?? []).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
-    const incrementalChunkIdSet = skipDepsAuthorityForSourceOnlyEdit && sourceMutationOutputBase && sourceMutationPlannerChunkIds && !config?.federation ? new Set(sourceMutationPlannerChunkIds) : null;
-    if (incrementalChunkIdSet && cssJobs.length > 0) {
-      const changedCssIds = new Set(cssJobs.map((job) => job.id));
-      for (const chunk of plan.chunks) {
-        if (chunk.css.some((cssId) => changedCssIds.has(cssId))) {
-          incrementalChunkIdSet.add(chunk.id);
-        }
-      }
+    const incrementalEligible = skipDepsAuthorityForSourceOnlyEdit && sourceMutationOutputBase && sourceMutationPlannerChunkIds && !config?.federation;
+    let incrementalChunkIds = null;
+    if (incrementalEligible && sourceMutationPlannerChunkIds && sourceOnlyCanonicalPlan && native?.plannerPublishPublicationContext) {
+      const published = native.plannerPublishPublicationContext(
+        // `plan` is the same canonical Planner topology after Transform/DPL
+        // hydration has pinned the exact admitted bytes. Passing the earlier
+        // source-only snapshot erased those pins on incremental publication.
+        plan,
+        Array.from(sourceMutationPlannerChunkIds),
+        cssJobs.map((job) => job.id)
+      );
+      sourceMutationPublicationContext = published.handle > 0 ? published.handle : null;
+      incrementalChunkIds = Array.from(new Set(published.affectedChunkIds)).sort();
     }
-    const incrementalChunkIds = incrementalChunkIdSet ? Array.from(incrementalChunkIdSet).sort() : null;
+    const incrementalChunkIdSet = incrementalChunkIds ? new Set(incrementalChunkIds) : null;
     const changedCssModuleIds = new Set(
       incrementalHydrationModuleIds ? Array.from(incrementalHydrationModuleIds).filter(
         (moduleId) => moduleMetaById.get(moduleId)?.kind === "css"
@@ -13586,7 +13651,7 @@ ${fp}`;
     const manifestStart = Date.now();
     const outputHashHints = collectOutputHashHints(combinedStats);
     const buildManifestStart = Date.now();
-    const reusableRoutingManifest = incrementalChunkIds && sourceMutationOutputBase && !federationManifest ? sourceMutationOutputBase.routingManifest : null;
+    const reusableRoutingManifest = incrementalChunkIds && sourceMutationOutputBase && !federationManifest && incrementalChunkIds.every((chunkId) => verifiedResourceStableChunkIds.includes(chunkId)) ? sourceMutationOutputBase.routingManifest : null;
     const buildManifestInfo = reusableRoutingManifest ?? await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
       federation: federationManifest
     });
@@ -14184,6 +14249,28 @@ function replaceSnapshotFileAtomic(src, dst, copyOnly = false) {
     } catch {
       if (!removeSnapshotMarker(dst)) throw new Error(`Cannot replace snapshot file: ${dst}`);
       fs23.renameSync(tempPath, dst);
+    }
+  } finally {
+    try {
+      fs23.unlinkSync(tempPath);
+    } catch {
+    }
+  }
+}
+function writeTextMarkerAtomic(markerPath, value) {
+  fs23.mkdirSync(path26.dirname(markerPath), { recursive: true });
+  const sequence = globalDepSnapshotSequence++;
+  const tempPath = path26.join(
+    path26.dirname(markerPath),
+    `.${path26.basename(markerPath)}.tmp-${process.pid}-${sequence}`
+  );
+  try {
+    fs23.writeFileSync(tempPath, value);
+    try {
+      fs23.renameSync(tempPath, markerPath);
+    } catch {
+      if (!removeSnapshotMarker(markerPath)) throw new Error(`Cannot replace snapshot marker: ${markerPath}`);
+      fs23.renameSync(tempPath, markerPath);
     }
   } finally {
     try {
@@ -15212,9 +15299,11 @@ export {
   checkVerifiedDepsSnapshotFreshness,
   verifyRestoredDepsSnapshot,
   collectNativeExternalModules,
+  stampWorkspaceTransformProofKinds,
   rerouteDepsArtifacts,
   rebalanceCanonicalVendorChunks,
   prepareCanonicalProductionDependencyPlan,
+  ensureDplDerivedArtifactSlot,
   resolveDplChunkedPackPublication,
   runBuildCommand,
   restoreDepArtifactsSnapshot,

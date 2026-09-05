@@ -30,10 +30,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js
+// tsup/assets/cjs_shims.js
 var getImportMetaUrl, importMetaUrl;
 var init_cjs_shims = __esm({
-  "node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js"() {
+  "tsup/assets/cjs_shims.js"() {
     "use strict";
     getImportMetaUrl = () => typeof document === "undefined" ? new URL(`file:${__filename}`).href : document.currentScript && document.currentScript.src || new URL("main.js", document.baseURI).href;
     importMetaUrl = /* @__PURE__ */ getImportMetaUrl();
@@ -7232,7 +7232,7 @@ function normalizeModules(rawModules) {
     const id = typeof raw.id === "string" ? raw.id : null;
     if (!id) continue;
     const rawKind = typeof raw.kind === "string" ? raw.kind : classifyModuleKind(id);
-    const kind = rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
+    const kind = rawKind === "dep" ? "dep" : rawKind === "asset" ? "asset" : rawKind.startsWith("css") ? "css" : "js";
     const deps = Array.isArray(raw.deps) ? raw.deps.filter(isNonEmptyString) : [];
     const dynamicSource = Array.isArray(raw.dynamicDeps) ? raw.dynamicDeps : Array.isArray(raw.dynamic_deps) ? raw.dynamic_deps : [];
     const dynamicDeps = dynamicSource.filter(isNonEmptyString);
@@ -7288,7 +7288,9 @@ function normalizeModules(rawModules) {
         };
       })(),
       sideEffects: raw.sideEffects === "none" || raw.sideEffects === "present" || raw.sideEffects === "unknown" ? raw.sideEffects : raw.side_effects === "none" || raw.side_effects === "present" || raw.side_effects === "unknown" ? raw.side_effects : void 0,
-      artifactTopology: raw.artifactTopology === "wrapper" || raw.artifactTopology === "esm-native" || raw.artifactTopology === "esm-native-slim" ? raw.artifactTopology : raw.artifact_topology === "wrapper" || raw.artifact_topology === "esm-native" || raw.artifact_topology === "esm-native-slim" ? raw.artifact_topology : void 0
+      artifactTopology: raw.artifactTopology === "wrapper" || raw.artifactTopology === "esm-native" || raw.artifactTopology === "esm-native-slim" ? raw.artifactTopology : raw.artifact_topology === "wrapper" || raw.artifact_topology === "esm-native" || raw.artifact_topology === "esm-native-slim" ? raw.artifact_topology : void 0,
+      admittedOutputHash: typeof raw.admittedOutputHash === "string" && raw.admittedOutputHash.length ? raw.admittedOutputHash : typeof raw.admitted_output_hash === "string" && raw.admitted_output_hash.length ? raw.admitted_output_hash : void 0,
+      proofKind: raw.proofKind === "DplContentHash" || raw.proofKind === "TransformArtifactProof" ? raw.proofKind : raw.proof_kind === "DplContentHash" || raw.proof_kind === "TransformArtifactProof" ? raw.proof_kind : void 0
     });
   }
   return modules;
@@ -9359,6 +9361,7 @@ __export(build_exports, {
   auditProductionSourceFreshness: () => auditProductionSourceFreshness,
   checkVerifiedDepsSnapshotFreshness: () => checkVerifiedDepsSnapshotFreshness,
   collectNativeExternalModules: () => collectNativeExternalModules,
+  ensureDplDerivedArtifactSlot: () => ensureDplDerivedArtifactSlot,
   precompressBuildOutputs: () => precompressBuildOutputs,
   prepareCanonicalProductionDependencyPlan: () => prepareCanonicalProductionDependencyPlan,
   publishDepArtifactsSnapshot: () => publishDepArtifactsSnapshot,
@@ -9367,6 +9370,7 @@ __export(build_exports, {
   resolveDplChunkedPackPublication: () => resolveDplChunkedPackPublication,
   restoreDepArtifactsSnapshot: () => restoreDepArtifactsSnapshot,
   runBuildCommand: () => runBuildCommand,
+  stampWorkspaceTransformProofKinds: () => stampWorkspaceTransformProofKinds,
   validateDepsManifestEntryTopology: () => validateDepsManifestEntryTopology,
   verifyRestoredDepsSnapshot: () => verifyRestoredDepsSnapshot
 });
@@ -10725,6 +10729,32 @@ function collectNativeExternalModules(plan, configuredExternals) {
   }
   return Array.from(externals).sort();
 }
+function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
+  const root = import_path36.default.resolve(workspaceRoot);
+  let stamped = 0;
+  for (const chunk of plan.chunks) {
+    for (const mod of chunk.modules) {
+      if (mod.kind !== "js") continue;
+      let fsPath = typeof mod.fsPath === "string" && mod.fsPath.length > 0 ? mod.fsPath : null;
+      if (!fsPath && mod.id.startsWith(WS_MODULE_PREFIX)) {
+        fsPath = fromWsModuleId(mod.id, root);
+      } else if (!fsPath && import_path36.default.isAbsolute(mod.id)) {
+        fsPath = mod.id;
+      }
+      if (!fsPath) continue;
+      const absolute = import_path36.default.resolve(fsPath);
+      const relative = import_path36.default.relative(root, absolute);
+      const insideWorkspace = relative === "" || !relative.startsWith(`..${import_path36.default.sep}`) && relative !== ".." && !import_path36.default.isAbsolute(relative);
+      if (!insideWorkspace) continue;
+      const segments = relative.split(import_path36.default.sep);
+      if (segments.includes("node_modules") || segments.includes(".ionify")) continue;
+      if (mod.proofKind && mod.proofKind !== "TransformArtifactProof") continue;
+      if (mod.proofKind !== "TransformArtifactProof") stamped += 1;
+      mod.proofKind = "TransformArtifactProof";
+    }
+  }
+  return stamped;
+}
 function rerouteDepsArtifacts(options) {
   const { plan, depsRoot, casRoot, configHash, workspaceRoot } = options;
   const depsArtifactsByEntry = /* @__PURE__ */ new Map();
@@ -10890,7 +10920,6 @@ function rerouteDepsArtifacts(options) {
       const artifact = canonical ? depsArtifactsByEntry.get(canonical) : null;
       const isNodeModules = fsPath ? fsPath.includes("node_modules") : mod.id.includes("node_modules");
       if (!artifact && !isNodeModules) {
-        if (mod.kind === "js") mod.proofKind = "TransformArtifactProof";
         keptModules.push(mod);
         continue;
       }
@@ -11400,6 +11429,7 @@ function rebalanceCanonicalVendorChunks(options) {
   };
 }
 async function prepareCanonicalProductionDependencyPlan(options) {
+  stampWorkspaceTransformProofKinds(options.plan, options.workspaceRoot);
   const coverageRepairStart = Date.now();
   if (!options.skipDependencyCoverageRepair) {
     await repairMissingPlanDependencyArtifacts({
@@ -11559,6 +11589,20 @@ function casTextFileMatchesHash(filePath, expectedHash) {
   } catch {
     return false;
   }
+}
+function ensureDplDerivedArtifactSlot(options) {
+  let bytes;
+  try {
+    bytes = import_fs34.default.readFileSync(options.sourceFile, "utf8");
+  } catch {
+    return false;
+  }
+  if (getCacheKey(bytes) !== options.contentHash) return false;
+  if (import_path36.default.resolve(options.sourceFile) === import_path36.default.resolve(options.derivedFile)) return true;
+  if (!casTextFileMatchesHash(options.derivedFile, options.contentHash)) {
+    writeTextMarkerAtomic(options.derivedFile, bytes);
+  }
+  return casTextFileMatchesHash(options.derivedFile, options.contentHash);
 }
 function computeBuildSlimmingSavedPercent(depsRoot, depsHash) {
   let entries = [];
@@ -12945,7 +12989,7 @@ async function runBuildCommand(options = {}) {
     }) : null;
     const sourceOnlyCanonicalPlan = sourceOnlyCanonicalMutation?.plan ?? null;
     const sourceMutationPlannerChunkIds = sourceOnlyCanonicalMutation?.affectedChunkIds ?? null;
-    const sourceMutationPublicationContext = sourceOnlyCanonicalMutation?.publicationContext ?? null;
+    let sourceMutationPublicationContext = null;
     const skipDepsAuthorityForSourceOnlyEdit = sourceOnlyCanonicalPlan !== null;
     const skipDepsAuthorityForPublishedPlan = !options.depsOnly && earlyPublishedPlan !== null && earlySourceFreshnessAudit?.current === true && earlyPublishedDplGenerationCurrent;
     const skipDepsAuthorityForCanonicalPlan = skipDepsAuthorityForSourceOnlyEdit || skipDepsAuthorityForPublishedPlan;
@@ -13805,16 +13849,34 @@ ${fp}`;
           if (baseHashFromPlan) {
             const dplDir = getCasArtifactPath(casRoot, configHash, baseHashFromPlan);
             const dplFile = import_path36.default.join(dplDir, "transformed.js");
-            for (const ref of refs) ref.hash = baseHashFromPlan;
+            const dplArtifactHash = artifactHashFromPlan ?? baseHashFromPlan;
+            for (const ref of refs) ref.hash = dplArtifactHash;
+            const artFile = import_path36.default.join(
+              getCasArtifactPath(casRoot, configHash, dplArtifactHash),
+              "transformed.js"
+            );
             if (import_fs34.default.existsSync(dplFile) && casTextFileMatchesHash(dplFile, baseHashFromPlan)) {
+              if (!ensureDplDerivedArtifactSlot({
+                sourceFile: dplFile,
+                contentHash: baseHashFromPlan,
+                derivedFile: artFile
+              })) {
+                throw new Error(`Failed to repair DPL derived artifact slot for '${id}'`);
+              }
               casHits += 1;
               continue;
             }
             if (import_fs34.default.existsSync(meta.fsPath)) {
               const bytes = import_fs34.default.readFileSync(meta.fsPath, "utf8");
               if (getCacheKey(bytes) === baseHashFromPlan) {
-                import_fs34.default.mkdirSync(dplDir, { recursive: true });
-                import_fs34.default.writeFileSync(dplFile, bytes, "utf8");
+                writeTextMarkerAtomic(dplFile, bytes);
+                if (!ensureDplDerivedArtifactSlot({
+                  sourceFile: dplFile,
+                  contentHash: baseHashFromPlan,
+                  derivedFile: artFile
+                })) {
+                  throw new Error(`Failed to materialize DPL derived artifact slot for '${id}'`);
+                }
                 casHits += 1;
                 continue;
               }
@@ -14278,16 +14340,21 @@ ${fp}`;
     const nativeExternalModules = collectNativeExternalModules(plan, buildExternalSpecifiers);
     const federationExposeEntryIds = collectFederationExposeEntryPaths(config, rootDir).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
     const hostEntryIds = (entries ?? []).map((entry) => toWsModuleId(entry, workspace.workspaceRoot)).filter((entryId) => typeof entryId === "string" && entryId.length > 0);
-    const incrementalChunkIdSet = skipDepsAuthorityForSourceOnlyEdit && sourceMutationOutputBase && sourceMutationPlannerChunkIds && !config?.federation ? new Set(sourceMutationPlannerChunkIds) : null;
-    if (incrementalChunkIdSet && cssJobs.length > 0) {
-      const changedCssIds = new Set(cssJobs.map((job) => job.id));
-      for (const chunk of plan.chunks) {
-        if (chunk.css.some((cssId) => changedCssIds.has(cssId))) {
-          incrementalChunkIdSet.add(chunk.id);
-        }
-      }
+    const incrementalEligible = skipDepsAuthorityForSourceOnlyEdit && sourceMutationOutputBase && sourceMutationPlannerChunkIds && !config?.federation;
+    let incrementalChunkIds = null;
+    if (incrementalEligible && sourceMutationPlannerChunkIds && sourceOnlyCanonicalPlan && native?.plannerPublishPublicationContext) {
+      const published = native.plannerPublishPublicationContext(
+        // `plan` is the same canonical Planner topology after Transform/DPL
+        // hydration has pinned the exact admitted bytes. Passing the earlier
+        // source-only snapshot erased those pins on incremental publication.
+        plan,
+        Array.from(sourceMutationPlannerChunkIds),
+        cssJobs.map((job) => job.id)
+      );
+      sourceMutationPublicationContext = published.handle > 0 ? published.handle : null;
+      incrementalChunkIds = Array.from(new Set(published.affectedChunkIds)).sort();
     }
-    const incrementalChunkIds = incrementalChunkIdSet ? Array.from(incrementalChunkIdSet).sort() : null;
+    const incrementalChunkIdSet = incrementalChunkIds ? new Set(incrementalChunkIds) : null;
     const changedCssModuleIds = new Set(
       incrementalHydrationModuleIds ? Array.from(incrementalHydrationModuleIds).filter(
         (moduleId) => moduleMetaById.get(moduleId)?.kind === "css"
@@ -14411,7 +14478,7 @@ ${fp}`;
     const manifestStart = Date.now();
     const outputHashHints = collectOutputHashHints(combinedStats);
     const buildManifestStart = Date.now();
-    const reusableRoutingManifest = incrementalChunkIds && sourceMutationOutputBase && !federationManifest ? sourceMutationOutputBase.routingManifest : null;
+    const reusableRoutingManifest = incrementalChunkIds && sourceMutationOutputBase && !federationManifest && incrementalChunkIds.every((chunkId) => verifiedResourceStableChunkIds.includes(chunkId)) ? sourceMutationOutputBase.routingManifest : null;
     const buildManifestInfo = reusableRoutingManifest ?? await writeBuildManifest(absOutDir, emittedPlan, artifacts, {
       federation: federationManifest
     });
@@ -14995,6 +15062,28 @@ function replaceSnapshotFileAtomic(src, dst, copyOnly = false) {
     } catch {
       if (!removeSnapshotMarker(dst)) throw new Error(`Cannot replace snapshot file: ${dst}`);
       import_fs34.default.renameSync(tempPath, dst);
+    }
+  } finally {
+    try {
+      import_fs34.default.unlinkSync(tempPath);
+    } catch {
+    }
+  }
+}
+function writeTextMarkerAtomic(markerPath, value) {
+  import_fs34.default.mkdirSync(import_path36.default.dirname(markerPath), { recursive: true });
+  const sequence = globalDepSnapshotSequence++;
+  const tempPath = import_path36.default.join(
+    import_path36.default.dirname(markerPath),
+    `.${import_path36.default.basename(markerPath)}.tmp-${process.pid}-${sequence}`
+  );
+  try {
+    import_fs34.default.writeFileSync(tempPath, value);
+    try {
+      import_fs34.default.renameSync(tempPath, markerPath);
+    } catch {
+      if (!removeSnapshotMarker(markerPath)) throw new Error(`Cannot replace snapshot marker: ${markerPath}`);
+      import_fs34.default.renameSync(tempPath, markerPath);
     }
   } finally {
     try {

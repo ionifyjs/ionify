@@ -28,6 +28,7 @@
     "publish:all": "node scripts/publish-all.mjs",
     "smoke:registry": "node scripts/real-registry-smoke.mjs",
     "verify:release": "node scripts/verify-release-surface.mjs",
+    "prepack": "node scripts/sanitize-release-surface.mjs",
     "prepublishOnly": "pnpm build",
     "test": "vitest run",
     "bench:minifier": "node scripts/bench-minifier.mjs",

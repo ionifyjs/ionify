@@ -95,7 +95,7 @@ import {
   writeProductionPublicationReadinessRecord,
   writeProductionPublicationState,
   writeTransformArtifact
-} from "../chunk-KKRT54KD.js";
+} from "../chunk-DDE1B75E.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -118,7 +118,7 @@ import {
   logInfo,
   logWarn
 } from "../chunk-SNACSSNX.js";
-import "../chunk-FHXXO743.js";
+import "../chunk-F84D9131.js";
 
 // src/cli/index.ts
 import { readFileSync } from "fs";
@@ -1478,7 +1478,7 @@ var TransformEngine = class {
     this.loaders.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
   async run(ctx) {
-    const { getCacheKey: getCacheKey2 } = await import("../cache-IXXFJLZC.js");
+    const { getCacheKey: getCacheKey2 } = await import("../cache-GE7HHBPC.js");
     const path19 = await import("path");
     const fs18 = await import("fs");
     const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
@@ -11627,7 +11627,7 @@ async function runPushCommand(options = {}) {
         logInfo(chalk2.dim("[push] Cancelled \u2014 no token."));
         return;
       }
-      const { runLoginCommand: runLoginCommand2 } = await import("../login-BSPQELJH.js");
+      const { runLoginCommand: runLoginCommand2 } = await import("../login-N4CZT6CR.js");
       await runLoginCommand2();
       logInfo(chalk2.dim("[push] Login complete. Re-run `ionify bind --project <project-id>` if this folder is not bound yet."));
       token = resolveCloudToken();
@@ -11698,7 +11698,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-S27TGKYB.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11719,7 +11719,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-S27TGKYB.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11737,7 +11737,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-S27TGKYB.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -13563,7 +13563,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-S27TGKYB.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);
