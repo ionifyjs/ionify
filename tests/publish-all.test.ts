@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = process.cwd();
 const version = "0.1.37";
+const creatorVersion = "0.1.1";
+const enginePrivateGitSha = "9395b846fd63d966720ca9ec336001d413a62b47";
+const creatorSourceGitSha = "343112837f8cae510b2dbe9c9a5a4585dc422bdf";
+const publicCandidateGitSha = "b7ca112537fc1b3562c6ce4f1503039292ee017b";
+const publicReadmeSha256 = "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c";
 const targets = [
   "darwin-arm64", "darwin-x64", "win32-arm64-msvc", "win32-x64-msvc",
   "linux-arm64-gnu", "linux-x64-gnu", "linux-arm64-musl", "linux-x64-musl",
@@ -15,16 +20,24 @@ const targets = [
 const roots: string[] = [];
 const sha256 = (bytes: Buffer | string) => crypto.createHash("sha256").update(bytes).digest("hex");
 
-type Artifact = { packageName: string; version: string; tarball: string; bytes: Buffer; sha256: string; main?: boolean };
+type Artifact = {
+  packageName: string;
+  version: string;
+  tarball: string;
+  bytes: Buffer;
+  sha256: string;
+  main?: boolean;
+  creator?: boolean;
+};
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ionify-publish-contract-"));
   roots.push(root);
-  const privateGitSha = "private-source-sha-0137";
-  const publicCandidateGitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+  const publicationToolingGitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
   const proofRoot = path.join(root, "candidate");
   fs.mkdirSync(path.join(proofRoot, "native"), { recursive: true });
   fs.mkdirSync(path.join(proofRoot, "main"), { recursive: true });
+  fs.mkdirSync(path.join(proofRoot, "creator"), { recursive: true });
   fs.mkdirSync(path.join(proofRoot, "proofs"), { recursive: true });
   const artifacts: Artifact[] = [];
   const natives = targets.map((target) => {
@@ -38,10 +51,38 @@ function fixture() {
       status: "VERIFIED",
       packageTarget: target,
       engineVersion: version,
-      privateGitSha,
+      privateGitSha: enginePrivateGitSha,
+      enginePrivateGitSha,
+      creatorSourceGitSha,
       publicCandidateGitSha,
+      publicReadmeSha256,
+      creator: {
+        name: "create-ionify",
+        version: creatorVersion,
+        sourceGitSha: creatorSourceGitSha,
+        sha256: "CREATOR_SHA_PLACEHOLDER",
+      },
       sourceAudit: { private: { status: "VERIFIED" }, public: { status: "VERIFIED" } },
       packageSurfaceAudit: { status: "VERIFIED" },
+      fixtureProofs: ["npm", "pnpm", "yarn"].flatMap((packageManager) =>
+        ["build", "dev"].map((mode) => ({
+          packageManager,
+          mode,
+          generatedProject: "VERIFIED",
+          resolvedCandidateVersion: version,
+          selectedNativePackage: packageName,
+          nativeImport: "VERIFIED",
+          generatedTests: "VERIFIED",
+          firstRun: "VERIFIED",
+          ...(mode === "dev" ? {
+            devDependencyGraph: {
+              status: "VERIFIED",
+              html: { status: 200 },
+              dependencies: [{ status: 200, generation: `${packageManager}-${target}` }],
+            },
+          } : {}),
+        })),
+      ),
       native: {
         sha256: sha256(bytes),
         addonSha256: `addon-${target}`,
@@ -69,15 +110,77 @@ function fixture() {
   const mainBytes = Buffer.from(`main:${version}`);
   fs.writeFileSync(mainTarball, mainBytes);
   artifacts.push({ packageName: "@ionify/ionify", version, tarball: mainTarball, bytes: mainBytes, sha256: sha256(mainBytes), main: true });
+  const creatorTarball = path.join(proofRoot, "creator", `create-ionify-${creatorVersion}.tgz`);
+  const creatorBytes = Buffer.from(`creator:${creatorVersion}`);
+  const creatorSha256 = sha256(creatorBytes);
+  fs.writeFileSync(creatorTarball, creatorBytes);
+  artifacts.push({
+    packageName: "create-ionify",
+    version: creatorVersion,
+    tarball: creatorTarball,
+    bytes: creatorBytes,
+    sha256: creatorSha256,
+    creator: true,
+  });
+  for (const native of natives) {
+    const targetProofPath = path.join(proofRoot, native.targetProof);
+    const targetProof = JSON.parse(fs.readFileSync(targetProofPath, "utf8"));
+    targetProof.creator.sha256 = creatorSha256;
+    fs.writeFileSync(targetProofPath, `${JSON.stringify(targetProof, null, 2)}\n`);
+    native.targetProofSha256 = sha256(fs.readFileSync(targetProofPath));
+  }
   const browserPath = path.join(proofRoot, "proofs", "browser-generation-proof.json");
-  fs.writeFileSync(browserPath, `${JSON.stringify({ kind: "ionify.browser-dependency-generation-proof", status: "VERIFIED" })}\n`);
+  const browserOrder = (order: string[]) => ({
+    order,
+    status: "VERIFIED",
+    browserContext: "same-context",
+    first: {
+      etagRevalidation: [{ status: 304, requestedEtag: "first-etag", responseEtag: "first-etag", cacheControl: "no-cache" }],
+    },
+    second: {
+      etagRevalidation: [{ status: 304, requestedEtag: "second-etag", responseEtag: "second-etag", cacheControl: "no-cache" }],
+    },
+    currentContract: {
+      noMixedSingletonGraph: true,
+      noUseContextFailure: true,
+      noStaleWrapperReuse: true,
+      noDiskCacheReuse: true,
+      noServiceWorkerReuse: true,
+      etagRevalidation: true,
+    },
+  });
+  fs.writeFileSync(browserPath, `${JSON.stringify({
+    kind: "ionify.browser-dependency-generation-proof",
+    status: "VERIFIED",
+    execution: "host Chromium semantic proof",
+    orders: [browserOrder(["npm", "pnpm"]), browserOrder(["pnpm", "npm"])],
+  })}\n`);
   const proof = {
     kind: "ionify.release-publication-proof",
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: "VERIFIED_RELEASE_CANDIDATE",
     releaseVersion: version,
-    privateGitSha,
+    privateGitSha: enginePrivateGitSha,
+    enginePrivateGitSha,
+    creatorSourceGitSha,
     publicCandidateGitSha,
+    publicationToolingGitSha,
+    publicReadmeSha256,
+    createVersion: creatorVersion,
+    creator: {
+      packageName: "create-ionify",
+      version: creatorVersion,
+      sourceGitSha: creatorSourceGitSha,
+      tarball: path.relative(proofRoot, creatorTarball),
+      sha256: creatorSha256,
+    },
+    creatorConsensus: {
+      status: "VERIFIED",
+      targetCount: 8,
+      version: creatorVersion,
+      sourceGitSha: creatorSourceGitSha,
+      sha256: creatorSha256,
+    },
     browserSemanticProof: {
       status: "VERIFIED",
       proof: path.relative(proofRoot, browserPath),
@@ -90,7 +193,7 @@ function fixture() {
       sha256: sha256(mainBytes),
     },
     natives,
-    publicationOrder: [...natives.map((item) => item.packageName), "@ionify/ionify"],
+    publicationOrder: [...natives.map((item) => item.packageName), "@ionify/ionify", "create-ionify"],
   };
   const proofPath = path.join(proofRoot, "release-proof.json");
   fs.writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`);
@@ -198,7 +301,9 @@ describe("publish:all immutable admission transaction", () => {
       const result = await runPublish(value.proofPath, registry.registry, { dryRun: true });
       expect(result.status).toBe(0);
       expect(result.output).toContain(`admit existing ${value.artifacts[0].packageName}@${version}`);
-      expect(result.output.lastIndexOf("@ionify/ionify@0.1.37")).toBeGreaterThan(result.output.indexOf(targets.at(-1)!));
+      const mainIndex = result.output.lastIndexOf("@ionify/ionify@0.1.37");
+      expect(mainIndex).toBeGreaterThan(result.output.indexOf(targets.at(-1)!));
+      expect(result.output.lastIndexOf("create-ionify@0.1.1")).toBeGreaterThan(mainIndex);
     } finally { registry.server.close(); }
   });
 
@@ -227,14 +332,18 @@ describe("publish:all immutable admission transaction", () => {
     expect(result.output).toContain(expected);
   });
 
-  it("publishes all eight natives before main and tolerates bounded not-visible propagation", async () => {
+  it("publishes all eight natives before main and creator and tolerates bounded not-visible propagation", async () => {
     const value = fixture();
     const registry = await registryHarness(value);
     registry.delayed.set(value.artifacts[0].packageName, 2);
     try {
       const result = await runPublish(value.proofPath, registry.registry, { fakeNpm: registry.fakeNpm });
       expect(result.status).toBe(0);
-      expect(registry.published).toEqual([...value.proof.natives.map((item) => item.packageName), "@ionify/ionify"]);
+      expect(registry.published).toEqual([
+        ...value.proof.natives.map((item) => item.packageName),
+        "@ionify/ionify",
+        "create-ionify",
+      ]);
       expect(registry.requests.get(value.artifacts[0].packageName)).toBeGreaterThanOrEqual(3);
     } finally { registry.server.close(); }
   });
@@ -248,6 +357,35 @@ describe("publish:all immutable admission transaction", () => {
       expect(result.status).not.toBe(0);
       expect(result.output).toContain("not visible after bounded retry");
       expect(registry.published).not.toContain("@ionify/ionify");
+      expect(registry.published).not.toContain("create-ionify");
+    } finally { registry.server.close(); }
+  });
+
+  it("fails closed when a target disagrees on the creator artifact", async () => {
+    const value = fixture();
+    const targetProofPath = path.join(value.proofRoot, value.proof.natives[0].targetProof);
+    const targetProof = JSON.parse(fs.readFileSync(targetProofPath, "utf8"));
+    targetProof.creator.sha256 = "0".repeat(64);
+    fs.writeFileSync(targetProofPath, `${JSON.stringify(targetProof, null, 2)}\n`);
+    value.proof.natives[0].targetProofSha256 = sha256(fs.readFileSync(targetProofPath));
+    writeProof(value.proofPath, value.proof);
+    const registry = await registryHarness(value);
+    try {
+      const result = await runPublish(value.proofPath, registry.registry, { dryRun: true });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("target proof is inconsistent");
+    } finally { registry.server.close(); }
+  });
+
+  it("fails closed when the README authority differs", async () => {
+    const value = fixture();
+    value.proof.publicReadmeSha256 = "0".repeat(64);
+    writeProof(value.proofPath, value.proof);
+    const registry = await registryHarness(value);
+    try {
+      const result = await runPublish(value.proofPath, registry.registry, { dryRun: true });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("README does not match");
     } finally { registry.server.close(); }
   });
 });

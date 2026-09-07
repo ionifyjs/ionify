@@ -14,7 +14,9 @@ const arg = (name, fallback) => {
 };
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const expectedVersion = arg("--version", packageJson.version);
+const expectedCreatorVersion = arg("--creator-version");
 const registry = String(arg("--registry", "https://registry.npmjs.org")).replace(/\/+$/, "");
+if (!expectedCreatorVersion) throw new Error("--creator-version is required");
 const outputPath = path.resolve(arg("--output", `release-smoke-evidence-${expectedVersion}.json`));
 const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), `ionify-registry-smoke-${expectedVersion}-`));
 
@@ -175,6 +177,9 @@ const initializers = [
 
 const createMetadata = await registryMetadata("create-ionify", "latest");
 const engineMetadata = await registryMetadata("@ionify/ionify", expectedVersion);
+if (createMetadata.version !== expectedCreatorVersion) {
+  throw new Error(`create-ionify@latest is ${createMetadata.version}, expected ${expectedCreatorVersion}`);
+}
 const results = [];
 try {
   for (let index = 0; index < initializers.length; index += 1) {
@@ -309,6 +314,7 @@ try {
     status: violations.length === 0 ? "GREEN" : "RED",
     registry,
     expectedVersion,
+    expectedCreatorVersion,
     createContract: {
       name: createMetadata.name,
       version: createMetadata.version,
