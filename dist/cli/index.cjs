@@ -9360,6 +9360,7 @@ var build_exports = {};
 __export(build_exports, {
   auditProductionSourceFreshness: () => auditProductionSourceFreshness,
   checkVerifiedDepsSnapshotFreshness: () => checkVerifiedDepsSnapshotFreshness,
+  classifyWorkspacePathMembership: () => classifyWorkspacePathMembership,
   collectNativeExternalModules: () => collectNativeExternalModules,
   ensureDplDerivedArtifactSlot: () => ensureDplDerivedArtifactSlot,
   precompressBuildOutputs: () => precompressBuildOutputs,
@@ -10729,6 +10730,13 @@ function collectNativeExternalModules(plan, configuredExternals) {
   }
   return Array.from(externals).sort();
 }
+function classifyWorkspacePathMembership(workspaceRoot, modulePath, pathApi = import_path36.default) {
+  const comparisonRoot = pathApi.toNamespacedPath(pathApi.resolve(workspaceRoot));
+  const comparisonModule = pathApi.toNamespacedPath(pathApi.resolve(modulePath));
+  const relative = pathApi.relative(comparisonRoot, comparisonModule);
+  const inside = relative === "" || !relative.startsWith(`..${pathApi.sep}`) && relative !== ".." && !pathApi.isAbsolute(relative);
+  return { inside, relative };
+}
 function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
   const root = import_path36.default.resolve(workspaceRoot);
   let stamped = 0;
@@ -10743,8 +10751,7 @@ function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
       }
       if (!fsPath) continue;
       const absolute = import_path36.default.resolve(fsPath);
-      const relative = import_path36.default.relative(root, absolute);
-      const insideWorkspace = relative === "" || !relative.startsWith(`..${import_path36.default.sep}`) && relative !== ".." && !import_path36.default.isAbsolute(relative);
+      const { inside: insideWorkspace, relative } = classifyWorkspacePathMembership(root, absolute);
       if (!insideWorkspace) continue;
       const segments = relative.split(import_path36.default.sep);
       if (segments.includes("node_modules") || segments.includes(".ionify")) continue;

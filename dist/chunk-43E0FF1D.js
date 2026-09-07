@@ -9900,6 +9900,13 @@ function collectNativeExternalModules(plan, configuredExternals) {
   }
   return Array.from(externals).sort();
 }
+function classifyWorkspacePathMembership(workspaceRoot, modulePath, pathApi = path26) {
+  const comparisonRoot = pathApi.toNamespacedPath(pathApi.resolve(workspaceRoot));
+  const comparisonModule = pathApi.toNamespacedPath(pathApi.resolve(modulePath));
+  const relative = pathApi.relative(comparisonRoot, comparisonModule);
+  const inside = relative === "" || !relative.startsWith(`..${pathApi.sep}`) && relative !== ".." && !pathApi.isAbsolute(relative);
+  return { inside, relative };
+}
 function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
   const root = path26.resolve(workspaceRoot);
   let stamped = 0;
@@ -9914,8 +9921,7 @@ function stampWorkspaceTransformProofKinds(plan, workspaceRoot) {
       }
       if (!fsPath) continue;
       const absolute = path26.resolve(fsPath);
-      const relative = path26.relative(root, absolute);
-      const insideWorkspace = relative === "" || !relative.startsWith(`..${path26.sep}`) && relative !== ".." && !path26.isAbsolute(relative);
+      const { inside: insideWorkspace, relative } = classifyWorkspacePathMembership(root, absolute);
       if (!insideWorkspace) continue;
       const segments = relative.split(path26.sep);
       if (segments.includes("node_modules") || segments.includes(".ionify")) continue;
@@ -15299,6 +15305,7 @@ export {
   checkVerifiedDepsSnapshotFreshness,
   verifyRestoredDepsSnapshot,
   collectNativeExternalModules,
+  classifyWorkspacePathMembership,
   stampWorkspaceTransformProofKinds,
   rerouteDepsArtifacts,
   rebalanceCanonicalVendorChunks,

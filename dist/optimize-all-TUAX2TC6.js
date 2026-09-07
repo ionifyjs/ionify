@@ -14,7 +14,7 @@ async function runOptimizeAllCommand(options = {}) {
   process.env.IONIFY_NODE_ENV = requestedEnv;
   try {
     logInfo(`[optimize-all] Optimizing every dep for env=${requestedEnv}\u2026`);
-    const { runBuildCommand } = await import("./build-EFTGBC2E.js");
+    const { runBuildCommand } = await import("./build-JVXFO3RN.js");
     await runBuildCommand({ depsOnly: true });
     logInfo(`[optimize-all] Done. .verified snapshot written for env=${requestedEnv}.`);
   } catch (err) {

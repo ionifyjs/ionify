@@ -95,7 +95,7 @@ import {
   writeProductionPublicationReadinessRecord,
   writeProductionPublicationState,
   writeTransformArtifact
-} from "../chunk-DDE1B75E.js";
+} from "../chunk-43E0FF1D.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -11698,7 +11698,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11719,7 +11719,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11737,7 +11737,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -13563,7 +13563,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-QSJEDG5K.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);
