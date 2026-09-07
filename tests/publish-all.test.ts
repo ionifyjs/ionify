@@ -9,9 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 const repoRoot = process.cwd();
 const version = "0.1.37";
 const creatorVersion = "0.1.1";
-const enginePrivateGitSha = "9395b846fd63d966720ca9ec336001d413a62b47";
+const enginePrivateGitSha = "036adaead64d049ae6a616c7962c54baa6d46bb4";
 const creatorSourceGitSha = "343112837f8cae510b2dbe9c9a5a4585dc422bdf";
-const publicCandidateGitSha = "b7ca112537fc1b3562c6ce4f1503039292ee017b";
+const publicCandidateGitSha = "1554c44d54fe37a834c8c6452f35600b1de801aa";
 const publicReadmeSha256 = "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c";
 const targets = [
   "darwin-arm64", "darwin-x64", "win32-arm64-msvc", "win32-x64-msvc",
