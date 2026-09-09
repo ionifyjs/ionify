@@ -276,6 +276,16 @@ async function browserProof() {
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
     }
+    if (child.exitCode === null && child.signalCode === null && process.platform !== "win32") {
+      child.kill("SIGKILL");
+      await Promise.race([
+        new Promise((resolve) => child.once("exit", resolve)),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      throw new Error(`dev server ${child.pid} did not stop cleanly`);
+    }
     fs.closeSync(log);
   };
   const browser = await chromium.launch({ headless: true });

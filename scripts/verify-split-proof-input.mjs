@@ -21,9 +21,16 @@ if (!process.argv[2]) throw new Error("proof input directory is required");
 const manifestPath = path.join(root, "split-proof-input.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+const normalizeMember = (relative) => {
+  if (
+    typeof relative !== "string" || !relative || path.isAbsolute(relative) || relative.includes("\\") ||
+    relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) throw new Error(`unsafe proof-input path: ${relative}`);
+  return relative;
+};
 const resolveFile = (relative) => {
-  if (!relative || path.isAbsolute(relative)) throw new Error(`unsafe proof-input path: ${relative}`);
-  const file = path.resolve(root, relative);
+  const member = normalizeMember(relative);
+  const file = path.resolve(root, ...member.split("/"));
   if (path.relative(root, file).startsWith("..") || path.relative(root, file) === "") {
     throw new Error(`proof-input path escapes its root: ${relative}`);
   }
@@ -43,12 +50,23 @@ if (
   manifest.publicCandidateGitSha !== "1554c44d54fe37a834c8c6452f35600b1de801aa" ||
   manifest.publicReadmeSha256 !== "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c" ||
   manifest.main?.sha256 !== "781e066d4d664b8489ba39e1f7b864791123e2fa4dd9df06c15b4c11b088934e" ||
+  typeof manifest.main?.manifest !== "string" ||
   manifest.creator?.sha256 !== "885c497705b858753db045812c24b208ab31fab51e09437529c763b23b04704c" ||
   !/^[0-9a-f]{40}$/.test(manifest.candidateProofToolingPrivateGitSha ?? "") ||
   !Array.isArray(manifest.natives) || manifest.natives.length !== TARGETS.length
 ) {
   throw new Error("split proof input does not match the frozen 0.1.37 authority");
 }
+const mainReceipt = JSON.parse(fs.readFileSync(resolveFile(manifest.main.manifest), "utf8"));
+if (
+  mainReceipt.kind !== "ionify.main-release-candidate" || mainReceipt.schemaVersion !== 1 ||
+  mainReceipt.status !== "VERIFIED" || mainReceipt.packageName !== "@ionify/ionify" ||
+  mainReceipt.version !== manifest.releaseVersion ||
+  mainReceipt.publicCandidateGitSha !== manifest.publicCandidateGitSha ||
+  mainReceipt.publicReadmeSha256 !== manifest.publicReadmeSha256 ||
+  mainReceipt.sha256 !== manifest.main.sha256 ||
+  mainReceipt.tarball !== path.posix.basename(manifest.main.tarball)
+) throw new Error("canonical main receipt disagrees with the sealed generation");
 for (const [relative, expected] of [
   [manifest.main.tarball, manifest.main.sha256],
   [manifest.creator.tarball, manifest.creator.sha256],
@@ -87,4 +105,36 @@ for (const native of manifest.natives) {
   ) throw new Error(`${native.packageTarget} private build proof is incomplete or divergent`);
 }
 if (seen.size !== TARGETS.length) throw new Error("split proof input is missing a native target");
+
+const expectedMembers = new Set([
+  "split-proof-input.json",
+  normalizeMember(manifest.main.manifest),
+  normalizeMember(manifest.main.tarball),
+  normalizeMember(manifest.creator.tarball),
+  ...manifest.natives.flatMap((native) => [
+    normalizeMember(native.tarball),
+    normalizeMember(native.privateBuildProof),
+  ]),
+]);
+const actualMembers = [];
+function inventory(directory) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    const relative = path.relative(root, absolute).split(path.sep).join("/");
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink()) throw new Error(`proof input contains a symbolic link: ${relative}`);
+    if (stat.isDirectory()) inventory(absolute);
+    else if (stat.isFile()) actualMembers.push(relative);
+    else throw new Error(`proof input contains a non-file member: ${relative}`);
+  }
+}
+inventory(root);
+const unexpected = actualMembers.filter((member) => !expectedMembers.has(member));
+const absent = [...expectedMembers].filter((member) => !actualMembers.includes(member));
+if (unexpected.length || absent.length || actualMembers.length !== expectedMembers.size) {
+  throw new Error(
+    `proof input inventory is not sealed; unexpected: ${unexpected.join(", ") || "none"}; ` +
+    `missing: ${absent.join(", ") || "none"}`,
+  );
+}
 console.log(`[ionify-release] verified sealed split-proof input ${manifest.candidateProofToolingPrivateGitSha}`);

@@ -58,6 +58,13 @@ function verify(root) {
 
 const cases = [
   {
+    name: "unexpected-proof-input-member",
+    mutate(root) {
+      fs.writeFileSync(path.join(root, "input", "unsealed-private-material.txt"), "must not cross boundary\n");
+    },
+    run: verify,
+  },
+  {
     name: "wrong-native-package",
     mutate(root) {
       const file = one(path.join(root, "consumers"), /^consumer-proof-darwin-arm64\.json$/);
