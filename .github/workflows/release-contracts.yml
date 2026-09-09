@@ -5,12 +5,27 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      proof_mode:
+        description: Release proof execution mode
+        required: false
+        default: surface
+        type: choice
+        options:
+          - surface
+          - split
+      bundle_path:
+        description: Absolute sealed bundle path on the one-shot local relay
+        required: false
+        default: /private/tmp/ionify-split-proof-input-0.1.37
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   release-surface:
+    if: github.event_name == 'pull_request' || inputs.proof_mode != 'split'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -31,3 +46,208 @@ jobs:
       - run: node --check scripts/publish-all.mjs
       - run: node --check scripts/real-registry-smoke.mjs
       - run: node --check scripts/release-local-registry.mjs
+
+  stage-sealed-input:
+    if: github.event_name == 'workflow_dispatch' && inputs.proof_mode == 'split'
+    name: relay sealed public-safe proof input
+    runs-on: [self-hosted, macOS, ARM64, ionify-release-stager]
+    timeout-minutes: 10
+    steps:
+      - name: Restrict the one-shot relay authority
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ inputs.bundle_path }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.actor }}" != "khaledM-salem" ]]; then
+            echo "Only the release owner may invoke the local artifact relay." >&2
+            exit 1
+          fi
+          case "$BUNDLE_PATH" in
+            /private/tmp/ionify-split-proof-input-*) ;;
+            *) echo "Refusing bundle outside the dedicated proof-input prefix: $BUNDLE_PATH" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the sealed input before it leaves the local boundary
+        run: node scripts/verify-split-proof-input.mjs "${{ inputs.bundle_path }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: split-proof-input-0.1.37
+          path: ${{ inputs.bundle_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  public-consumer:
+    if: github.event_name == 'workflow_dispatch' && inputs.proof_mode == 'split'
+    name: public artifact consumer (${{ matrix.package_target }})
+    needs: stage-sealed-input
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            package_target: darwin-arm64
+          - runner: macos-15-intel
+            package_target: darwin-x64
+          - runner: windows-11-arm
+            package_target: win32-arm64-msvc
+          - runner: windows-2025
+            package_target: win32-x64-msvc
+          - runner: ubuntu-24.04-arm
+            package_target: linux-arm64-gnu
+          - runner: ubuntu-24.04
+            package_target: linux-x64-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        env:
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: "false"
+        with:
+          ref: 1554c44d54fe37a834c8c6452f35600b1de801aa
+          path: public-candidate
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - run: npm install --global yarn@1.22.22
+      - uses: actions/download-artifact@v4
+        with:
+          name: split-proof-input-0.1.37
+          path: ${{ runner.temp }}/split-proof-input
+      - run: node scripts/verify-split-proof-input.mjs "${{ runner.temp }}/split-proof-input"
+      - name: Install Chromium for the single browser authority
+        if: matrix.package_target == 'linux-x64-gnu'
+        run: |
+          npm install --no-save --ignore-scripts @playwright/test@1.60.0
+          npx playwright install --with-deps chromium
+      - name: Prove packed artifacts in a clean real target consumer
+        shell: bash
+        run: |
+          browser_arg=""
+          if [[ "${{ matrix.package_target }}" == "linux-x64-gnu" ]]; then browser_arg="--browser"; fi
+          node scripts/prove-split-release-consumer.mjs \
+            --input "${{ runner.temp }}/split-proof-input" \
+            --public-candidate public-candidate \
+            --package-target "${{ matrix.package_target }}" \
+            --output "${{ runner.temp }}/consumer-${{ matrix.package_target }}" \
+            $browser_arg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: split-consumer-${{ matrix.package_target }}-0.1.37
+          path: |
+            ${{ runner.temp }}/consumer-${{ matrix.package_target }}/*.json
+            ${{ runner.temp }}/consumer-${{ matrix.package_target }}/*.log
+          if-no-files-found: error
+          retention-days: 7
+
+  public-musl-consumer:
+    if: github.event_name == 'workflow_dispatch' && inputs.proof_mode == 'split'
+    name: public artifact consumer (${{ matrix.package_target }})
+    needs: stage-sealed-input
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            package_target: linux-arm64-musl
+          - runner: ubuntu-24.04
+            package_target: linux-x64-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: 1554c44d54fe37a834c8c6452f35600b1de801aa
+          path: public-candidate
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: split-proof-input-0.1.37
+          path: ${{ runner.temp }}/split-proof-input
+      - name: Prove packed artifacts inside target-native Alpine
+        shell: bash
+        env:
+          PACKAGE_TARGET: ${{ matrix.package_target }}
+        run: |
+          docker run --rm \
+            -e PACKAGE_TARGET \
+            -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP:/runner-temp" \
+            -w /workspace node:22-alpine sh -lc '
+              set -eu
+              apk add --no-cache git
+              git config --global --add safe.directory /workspace
+              git config --global --add safe.directory /workspace/public-candidate
+              npm install --global --force pnpm@10.18.3 yarn@1.22.22
+              node scripts/verify-split-proof-input.mjs /runner-temp/split-proof-input
+              node scripts/prove-split-release-consumer.mjs \
+                --input /runner-temp/split-proof-input \
+                --public-candidate public-candidate \
+                --package-target "$PACKAGE_TARGET" \
+                --output "/runner-temp/consumer-$PACKAGE_TARGET"
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: split-consumer-${{ matrix.package_target }}-0.1.37
+          path: |
+            ${{ runner.temp }}/consumer-${{ matrix.package_target }}/*.json
+            ${{ runner.temp }}/consumer-${{ matrix.package_target }}/*.log
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate-split-proof:
+    if: github.event_name == 'workflow_dispatch' && inputs.proof_mode == 'split'
+    name: aggregate split-authority release proof
+    needs:
+      - stage-sealed-input
+      - public-consumer
+      - public-musl-consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: split-proof-input-0.1.37
+          path: split-proof-input
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: split-consumer-*-0.1.37
+          path: consumer-proofs
+      - name: Aggregate one immutable split-authority release generation
+        run: >-
+          node scripts/aggregate-split-release-proofs.mjs
+          --input split-proof-input
+          --consumers consumer-proofs
+          --output release-candidate
+          --public-proof-tooling-sha ${{ github.sha }}
+          --publication-tooling-sha 5ea6277f4e176861fb12e66ff0cbfd71bca234c6
+      - name: Prove representative corruptions fail closed
+        run: >-
+          node scripts/inject-split-proof-failures.mjs
+          --input split-proof-input
+          --consumers consumer-proofs
+          --output release-candidate/failure-injection-proof.json
+          --public-proof-tooling-sha ${{ github.sha }}
+          --publication-tooling-sha 5ea6277f4e176861fb12e66ff0cbfd71bca234c6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ionify-split-release-0.1.37
+          path: release-candidate
+          if-no-files-found: error
+          retention-days: 7
