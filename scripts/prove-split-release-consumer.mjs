@@ -5,6 +5,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createReceipt, validateNativeConsumption } from "./release-authority.mjs";
+import { probeNativeAbi } from "./native-abi-proof.mjs";
 
 const toolingRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -16,9 +18,22 @@ const inputRoot = path.resolve(arg("--input") ?? "");
 const publicRoot = path.resolve(arg("--public-candidate") ?? "");
 const outputRoot = path.resolve(arg("--output") ?? "");
 const packageTarget = arg("--package-target");
+const phase = arg("--phase");
+const requestedNodeMajor = Number(arg("--node-major"));
+const requestedPackageManager = arg("--package-manager");
+const requestedMode = arg("--mode");
 const browserEnabled = args.includes("--browser");
-if (!arg("--input") || !arg("--public-candidate") || !arg("--output") || !packageTarget) {
-  throw new Error("--input, --public-candidate, --output, and --package-target are required");
+const healthOnly = args.includes("--health");
+if (
+  !arg("--input") || !arg("--public-candidate") || !arg("--output") || !packageTarget || !phase ||
+  !((healthOnly && requestedNodeMajor === 26) || (!healthOnly && [22, 24].includes(requestedNodeMajor))) ||
+  !["npm", "pnpm", "yarn"].includes(requestedPackageManager) ||
+  !["build", "dev"].includes(requestedMode)
+) {
+  throw new Error("blocking proof requires Node22/24; --health permits Node26; all lane identity arguments are required");
+}
+if (Number(process.versions.node.split(".")[0]) !== requestedNodeMajor) {
+  throw new Error(`consumer runs Node ${process.versions.node}, expected major ${requestedNodeMajor}`);
 }
 
 function shouldUseShell(command) {
@@ -70,7 +85,7 @@ async function waitForUrl(url, attempts = 120) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(inputRoot, "split-proof-input.json"), "utf8"));
-if (manifest.kind !== "ionify.split-release-proof-input" || manifest.status !== "VERIFIED") {
+if (manifest.kind !== "ionify.split-release-proof-input" || manifest.schemaVersion !== 2 || manifest.status !== "VERIFIED") {
   throw new Error("split proof input is unknown or unverified");
 }
 if (detectHostTarget() !== packageTarget) {
@@ -89,6 +104,9 @@ const publicPackage = JSON.parse(fs.readFileSync(path.join(publicRoot, "package.
 if (publicPackage.name !== "@ionify/ionify" || publicPackage.version !== manifest.releaseVersion) {
   throw new Error("public package identity disagrees with the sealed input");
 }
+if (publicPackage.engines?.node !== "^22.0.0 || ^24.0.0") {
+  throw new Error(`public Node support policy is ${publicPackage.engines?.node ?? "missing"}`);
+}
 const nativeInput = manifest.natives.find((item) => item.packageTarget === packageTarget);
 if (!nativeInput) throw new Error(`sealed input has no ${packageTarget} native artifact`);
 const mainTarball = path.resolve(inputRoot, manifest.main.tarball);
@@ -105,7 +123,7 @@ const privateProofPath = path.resolve(inputRoot, nativeInput.privateBuildProof);
 if (sha256(privateProofPath) !== nativeInput.privateBuildProofSha256) throw new Error("private build receipt hash mismatch");
 const privateBuildProof = JSON.parse(fs.readFileSync(privateProofPath, "utf8"));
 if (
-  privateBuildProof.status !== "VERIFIED" || privateBuildProof.packageTarget !== packageTarget ||
+  privateBuildProof.schemaVersion !== 2 || privateBuildProof.status !== "VERIFIED" || privateBuildProof.packageTarget !== packageTarget ||
   privateBuildProof.host?.target !== packageTarget || privateBuildProof.native?.sha256 !== nativeInput.sha256 ||
   privateBuildProof.native?.addonSha256 !== nativeInput.addonSha256 ||
   privateBuildProof.native?.isolatedNativeImport !== "VERIFIED"
@@ -217,19 +235,35 @@ async function proveFixture(manager, mode, port) {
   const appRequire = createRequire(path.join(appRoot, "package.json"));
   const mainEntry = appRequire.resolve("@ionify/ionify");
   const fromMain = createRequire(mainEntry);
-  const selected = Object.keys(publicPackage.optionalDependencies).filter((name) => {
+  const installedNativePackages = Object.keys(publicPackage.optionalDependencies).filter((name) => {
     try { fromMain.resolve(name); return true; } catch { return false; }
-  });
+  }).sort();
   const expectedNative = `@ionify/ionify-${packageTarget}`;
-  if (selected.length !== 1 || selected[0] !== expectedNative) throw new Error(`native selection mismatch: ${selected.join(",")}`);
-  const nativeEntry = fromMain.resolve(expectedNative);
-  const binding = fromMain(nativeEntry);
-  if (typeof binding.depsStoreHash !== "function") throw new Error("packed native addon did not load");
+  if (!installedNativePackages.includes(expectedNative)) {
+    throw new Error(`expected native package is absent: ${JSON.stringify(installedNativePackages)}`);
+  }
+  if (manager !== "yarn" && (installedNativePackages.length !== 1 || installedNativePackages[0] !== expectedNative)) {
+    throw new Error(`${manager} manager-specific native installation corroboration failed: ${JSON.stringify(installedNativePackages)}`);
+  }
   const lockfileName = manager === "npm" ? "package-lock.json" : manager === "pnpm" ? "pnpm-lock.yaml" : "yarn.lock";
-  const depsStoreHash = binding.depsStoreHash(
-    "split-release-consumer", fs.readFileSync(path.join(appRoot, lockfileName)),
-    "production", false, true, "auto", 1,
-  );
+  const lockfileContents = fs.readFileSync(path.join(appRoot, lockfileName));
+  const abiProof = probeNativeAbi({
+    loadRequest: mainEntry,
+    expectedNativePackage: expectedNative,
+    admittedAddonSha256: nativeInput.addonSha256,
+    lockfileContents,
+    expectedSurface: privateBuildProof.native.abiProof,
+  });
+  const consumptionContract = validateNativeConsumption({
+    packageManager: manager,
+    installedNativePackages,
+    expectedNativePackage: expectedNative,
+    actualLoadedNativePackage: abiProof.actualLoadedNativePackage,
+    actualLoadedArtifactSha256: abiProof.actualLoadedArtifactSha256,
+    admittedArtifactSha256: nativeInput.addonSha256,
+    incompatibleSiblingLoaded: false,
+  });
+  const depsStoreHash = abiProof.representativeCalls.depsStoreHash.value;
   const cli = path.join(appRoot, "node_modules", "@ionify", "ionify", "dist", "cli", "index.js");
   const version = run(process.execPath, [cli, "--version"], { cwd: appRoot, capture: true }).trim();
   if (version !== manifest.releaseVersion) throw new Error(`installed CLI version is ${version}`);
@@ -246,8 +280,19 @@ async function proveFixture(manager, mode, port) {
   }
   return {
     packageManager: manager, mode, cleanEnvironment: "VERIFIED", generatedProject: "VERIFIED",
-    requestedEngine: "latest", resolvedCandidateVersion: version, selectedNativePackage: selected[0],
+    requestedEngine: "latest", resolvedCandidateVersion: version,
+    installedNativePackages,
+    expectedNativePackage: expectedNative,
+    actualLoadedNativePackage: abiProof.actualLoadedNativePackage,
+    actualLoadedArtifactSha256: abiProof.actualLoadedArtifactSha256,
+    incompatibleSiblingLoaded: false,
+    managerSpecificSingleExpectedPackageInstalled: consumptionContract.managerSpecificSingleExpectedPackageInstalled,
+    unusedSiblingInstallationPermitted: consumptionContract.unusedSiblingInstallationPermitted,
     nativeImport: "VERIFIED", generatedTests: "VERIFIED", depsStoreHash,
+    nativeAbi: { ...abiProof, actualLoadedArtifactPath: path.basename(abiProof.actualLoadedArtifactPath) },
+    nodePatch: process.versions.node,
+    nodeMajor: Number(process.versions.node.split(".")[0]),
+    napi: process.versions.napi ?? null,
     lockfile: lockfileName, firstRun: "VERIFIED", devDependencyGraph,
   };
 }
@@ -395,22 +440,34 @@ async function browserProof() {
     }
     return {
       kind: "ionify.browser-dependency-generation-proof", schemaVersion: 1,
-      status: "VERIFIED", execution: "host Chromium semantic proof", orders,
+      status: "VERIFIED", execution: "host Chromium semantic proof",
+      nodePatch: process.versions.node,
+      nodeMajor: Number(process.versions.node.split(".")[0]),
+      chromiumRevision: browser.version(),
+      orders,
     };
   } finally { await browser.close(); }
 }
 
 let fixtureProofs;
+let browserSupportFixtureProofs = [];
 try {
   await waitForUrl(`${registryUrl}/@ionify%2Fionify`, 80);
   fixtureProofs = [];
   let port = 54100 + (process.pid % 50) * 10;
-  for (const manager of ["npm", "pnpm", "yarn"]) {
-    for (const mode of ["build", "dev"]) fixtureProofs.push(await proveFixture(manager, mode, port++));
+  fixtureProofs.push(await proveFixture(requestedPackageManager, requestedMode, port++));
+  if (browserEnabled) {
+    for (const manager of ["npm", "pnpm"]) {
+      if (requestedPackageManager === manager && requestedMode === "dev") continue;
+      browserSupportFixtureProofs.push(await proveFixture(manager, "dev", port++));
+    }
   }
 } finally { stopProcess(registry); fs.closeSync(registryLog); }
 
-const installedMain = path.join(outputRoot, "fixtures", "npm-build", "npm-build-app", "node_modules", "@ionify", "ionify");
+const installedMain = path.join(
+  outputRoot, "fixtures", `${requestedPackageManager}-${requestedMode}`,
+  `${requestedPackageManager}-${requestedMode}-app`, "node_modules", "@ionify", "ionify",
+);
 const installedMainRequire = createRequire(path.join(installedMain, "package.json"));
 const installedNative = path.dirname(installedMainRequire.resolve(`@ionify/ionify-${packageTarget}`));
 const mainNodeFiles = [];
@@ -432,8 +489,117 @@ collectNodeFiles(installedNative, nativeNodeFiles);
 if (mainNodeFiles.length !== 0 || nativeNodeFiles.length !== 1) throw new Error("installed package surface is invalid");
 
 const browserSemanticProof = browserEnabled ? await browserProof() : null;
+const issuedAt = new Date();
+const laneId = `${phase}-${packageTarget}-node${requestedNodeMajor}-${requestedPackageManager}-${requestedMode}`;
+const authorityInputs = {
+  releaseVersion: manifest.releaseVersion,
+  enginePrivateGitSha: manifest.enginePrivateGitSha,
+  creatorSourceGitSha: manifest.creatorSourceGitSha,
+  candidateProofToolingPrivateGitSha: manifest.candidateProofToolingPrivateGitSha,
+  publicCandidateGitSha: manifest.publicCandidateGitSha,
+  publicReadmeSha256: manifest.publicReadmeSha256,
+  packageTarget,
+  laneId,
+};
+const environment = {
+  platform: process.platform,
+  arch: process.arch,
+  target: detectHostTarget(),
+  nodePatch: process.versions.node,
+  nodeMajor: requestedNodeMajor,
+  napi: process.versions.napi ?? null,
+  packageManager: requestedPackageManager,
+  packageManagerVersion: run(requestedPackageManager, ["--version"], { capture: true }).trim(),
+  mode: requestedMode,
+  runner: process.env.RUNNER_NAME ?? "local",
+};
+const provenance = {
+  repository: process.env.GITHUB_REPOSITORY ?? "ionifyjs/ionify",
+  gitSha: gitSha(toolingRoot),
+  workflow: process.env.GITHUB_WORKFLOW ?? "local-release-authority",
+  runId: process.env.GITHUB_RUN_ID ?? `local-${process.pid}`,
+  runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT ?? "1"),
+  job: process.env.GITHUB_JOB ?? "public-consumer",
+  attestations: [{ kind: "clean-generated-consumer", laneId, target: detectHostTarget() }],
+};
+const privateNbuild = privateBuildProof.receiptIndex.find((item) => item.family === "PF-NBUILD");
+if (!privateNbuild) throw new Error("private build proof does not expose PF-NBUILD parent identity");
+const primaryFixture = fixtureProofs[0];
+const nconsumeReceipt = createReceipt({
+  family: "PF-NCONSUME",
+  factId: `native-consume:${laneId}`,
+  issuedAt: issuedAt.toISOString(),
+  admission: { status: "VALID", exactPerRelease: !healthOnly, healthOnly },
+  corroboration: { required: false, blocking: true, dueAt: null },
+  authorityInputs,
+  environment,
+  outputs: {
+    installedNativePackages: primaryFixture.installedNativePackages,
+    expectedNativePackage: primaryFixture.expectedNativePackage,
+    actualLoadedNativePackage: primaryFixture.actualLoadedNativePackage,
+    actualLoadedArtifactSha256: primaryFixture.actualLoadedArtifactSha256,
+    incompatibleSiblingLoaded: primaryFixture.incompatibleSiblingLoaded,
+    managerSpecificSingleExpectedPackageInstalled: primaryFixture.managerSpecificSingleExpectedPackageInstalled,
+  },
+  parentReceipts: [{ family: privateNbuild.family, factId: privateNbuild.factId, resultHash: privateNbuild.resultHash }],
+  provenance,
+}, issuedAt);
+const compatReceipt = createReceipt({
+  family: "PF-COMPAT",
+  factId: `native-abi:${packageTarget}:node${requestedNodeMajor}:${primaryFixture.actualLoadedArtifactSha256}`,
+  issuedAt: issuedAt.toISOString(),
+  admission: { status: "VALID", exactPerRelease: !healthOnly, healthOnly },
+  corroboration: { required: false, blocking: true, dueAt: null },
+  authorityInputs,
+  environment,
+  outputs: primaryFixture.nativeAbi,
+  parentReceipts: [
+    { family: privateNbuild.family, factId: privateNbuild.factId, resultHash: privateNbuild.resultHash },
+    { family: nconsumeReceipt.family, factId: nconsumeReceipt.factId, resultHash: nconsumeReceipt.resultHash },
+  ],
+  provenance,
+}, issuedAt);
+const startupReceipt = createReceipt({
+  family: "PF-STARTUP",
+  factId: `first-${requestedMode}:${laneId}`,
+  issuedAt: issuedAt.toISOString(),
+  admission: { status: "VALID", exactPerRelease: !healthOnly, healthOnly },
+  corroboration: { required: false, blocking: true, dueAt: null },
+  authorityInputs,
+  environment,
+  outputs: {
+    generatedProject: primaryFixture.generatedProject,
+    generatedTests: primaryFixture.generatedTests,
+    firstRun: primaryFixture.firstRun,
+    devDependencyGraph: primaryFixture.devDependencyGraph,
+  },
+  parentReceipts: [{ family: nconsumeReceipt.family, factId: nconsumeReceipt.factId, resultHash: nconsumeReceipt.resultHash }],
+  provenance,
+}, issuedAt);
+const factReceipts = [nconsumeReceipt, compatReceipt, startupReceipt];
+if (browserSemanticProof) {
+  factReceipts.push(createReceipt({
+    family: "PF-BROWSER",
+    factId: `browser-generation:node${requestedNodeMajor}:${browserSemanticProof.chromiumRevision}`,
+    issuedAt: issuedAt.toISOString(),
+    admission: { status: "VALID", exactPerRelease: true },
+    corroboration: { required: false, blocking: true, dueAt: null },
+    authorityInputs,
+    environment: { ...environment, chromiumRevision: browserSemanticProof.chromiumRevision },
+    outputs: browserSemanticProof,
+    parentReceipts: [{ family: startupReceipt.family, factId: startupReceipt.factId, resultHash: startupReceipt.resultHash }],
+    provenance,
+  }, issuedAt));
+}
+const receiptsRoot = path.join(outputRoot, "receipts");
+fs.mkdirSync(receiptsRoot, { recursive: true });
+const receiptIndex = factReceipts.map((receipt) => {
+  const file = path.join("receipts", `${receipt.family.toLowerCase()}-${laneId}.json`);
+  fs.writeFileSync(path.join(outputRoot, file), `${JSON.stringify(receipt, null, 2)}\n`);
+  return { family: receipt.family, factId: receipt.factId, file, resultHash: receipt.resultHash };
+});
 const proof = {
-  kind: "ionify.public-target-consumer-proof", schemaVersion: 1, status: "VERIFIED",
+  kind: "ionify.public-target-consumer-proof", schemaVersion: 2, status: "VERIFIED",
   topology: "split-private-build-public-consumer",
   releaseVersion: manifest.releaseVersion,
   enginePrivateGitSha: manifest.enginePrivateGitSha,
@@ -443,6 +609,7 @@ const proof = {
   publicCandidateGitSha: manifest.publicCandidateGitSha,
   publicReadmeSha256: manifest.publicReadmeSha256,
   packageTarget,
+  lane: { laneId, phase, nodeMajor: requestedNodeMajor, packageManager: requestedPackageManager, mode: requestedMode, blocking: !healthOnly, feedsReleaseEnvelope: !healthOnly },
   host: { platform: process.platform, arch: process.arch, target: detectHostTarget() },
   artifacts: {
     mainSha256: manifest.main.sha256, creatorSha256: manifest.creator.sha256,
@@ -453,8 +620,10 @@ const proof = {
     status: "VERIFIED", mainContainsNativeAddon: false, nativeContainsExactlyOneAddon: true,
   },
   fixtureProofs,
+  browserSupportFixtureProofs,
   browserSemanticProof,
+  receiptIndex,
 };
-const proofPath = path.join(outputRoot, `consumer-proof-${packageTarget}.json`);
+const proofPath = path.join(outputRoot, `consumer-proof-${laneId}.json`);
 fs.writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`);
 console.log(`[ionify-release] public consumer proof complete: ${proofPath}`);

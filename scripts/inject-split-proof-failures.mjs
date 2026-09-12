@@ -4,6 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { classifyAuthorityChange, createReceipt, evaluateReceiptGate } from "./release-authority.mjs";
 
 const toolingRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -67,9 +68,9 @@ const cases = [
   {
     name: "wrong-native-package",
     mutate(root) {
-      const file = one(path.join(root, "consumers"), /^consumer-proof-darwin-arm64\.json$/);
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-darwin-arm64-node22-npm-build\.json$/);
       const proof = readJson(file);
-      proof.fixtureProofs[0].selectedNativePackage = "@ionify/ionify-darwin-x64";
+      proof.fixtureProofs[0].actualLoadedNativePackage = "@ionify/ionify-darwin-x64";
       writeJson(file, proof);
     },
     run: aggregate,
@@ -134,7 +135,7 @@ const cases = [
   {
     name: "stale-generation-identity",
     mutate(root) {
-      const file = one(path.join(root, "consumers"), /^consumer-proof-linux-x64-gnu\.json$/);
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-linux-x64-gnu-node22-npm-dev\.json$/);
       const proof = readJson(file);
       proof.candidateProofToolingPrivateGitSha = "0".repeat(40);
       writeJson(file, proof);
@@ -144,7 +145,7 @@ const cases = [
   {
     name: "browser-stale-cache-reuse",
     mutate(root) {
-      const file = one(path.join(root, "consumers"), /^consumer-proof-linux-x64-gnu\.json$/);
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-linux-x64-gnu-node22-npm-dev\.json$/);
       const proof = readJson(file);
       proof.browserSemanticProof.orders[0].currentContract.noDiskCacheReuse = false;
       writeJson(file, proof);
@@ -181,6 +182,60 @@ const cases = [
     },
     run: verify,
   },
+  {
+    name: "yarn-libc-sibling-wrong-addon-selection",
+    mutate(root) {
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-linux-x64-gnu-node22-yarn-dev\.json$/);
+      const proof = readJson(file);
+      proof.fixtureProofs[0].installedNativePackages = [
+        "@ionify/ionify-linux-x64-gnu",
+        "@ionify/ionify-linux-x64-musl",
+      ];
+      proof.fixtureProofs[0].actualLoadedNativePackage = "@ionify/ionify-linux-x64-musl";
+      proof.fixtureProofs[0].incompatibleSiblingLoaded = true;
+      writeJson(file, proof);
+    },
+    run: aggregate,
+  },
+  {
+    name: "unsupported-node-major-in-blocking-envelope",
+    mutate(root) {
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-darwin-arm64-node22-npm-build\.json$/);
+      const proof = readJson(file);
+      proof.lane.nodeMajor = 26;
+      proof.fixtureProofs[0].nodeMajor = 26;
+      writeJson(file, proof);
+    },
+    run: aggregate,
+  },
+  {
+    name: "missing-supported-node-causal-coverage",
+    mutate(root) {
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P2-darwin-x64-node24-npm-dev\.json$/);
+      fs.rmSync(file);
+    },
+    run: aggregate,
+  },
+  {
+    name: "node-major-export-surface-mismatch",
+    mutate(root) {
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P2-darwin-arm64-node24-npm-build\.json$/);
+      const proof = readJson(file);
+      proof.fixtureProofs[0].nativeAbi.exportSetDigest = "0".repeat(64);
+      writeJson(file, proof);
+    },
+    run: aggregate,
+  },
+  {
+    name: "loaded-native-artifact-hash-mismatch",
+    mutate(root) {
+      const file = one(path.join(root, "consumers"), /^consumer-proof-P1-darwin-arm64-node22-npm-build\.json$/);
+      const proof = readJson(file);
+      proof.fixtureProofs[0].actualLoadedArtifactSha256 = "0".repeat(64);
+      writeJson(file, proof);
+    },
+    run: aggregate,
+  },
 ];
 
 const results = [];
@@ -203,6 +258,39 @@ const report = {
   schemaVersion: 1,
   status: "VERIFIED",
   injections: results,
+  policyInjections: (() => {
+    const base = (family, corroboration) => createReceipt({
+      family,
+      factId: `${family}:failure-policy`,
+      issuedAt: "2026-09-01T00:00:00.000Z",
+      admission: { status: "VALID" },
+      corroboration,
+      authorityInputs: { releaseVersion: "0.1.37" },
+      environment: { nodePatch: "22.20.0" },
+      outputs: { status: "VERIFIED" },
+      parentReceipts: [],
+      provenance: { repository: "ionifyjs/ionify", gitSha: publicProofToolingSha, workflow: "failure-injection", runId: "policy", runAttempt: 1, job: "policy", attestations: [] },
+    }, new Date("2026-09-01T00:00:00.000Z"));
+    const later = new Date("2026-10-01T00:00:00.000Z");
+    const rebuild = evaluateReceiptGate(base("PF-NREBUILD", { required: true, blocking: false, dueAt: "2026-09-15T00:00:00.000Z" }), { now: later });
+    const goldenCadence = evaluateReceiptGate(base("PF-GOLDEN", { required: true, blocking: false, dueAt: "2026-09-15T00:00:00.000Z" }), { now: later });
+    const customer = evaluateReceiptGate(base("PF-REGISTRY", { required: true, blocking: true, dueAt: "2026-09-15T00:00:00.000Z" }), { now: later });
+    const semanticGolden = evaluateReceiptGate(base("PF-GOLDEN", { required: false, blocking: false, dueAt: null }), { now: later, semanticGoldenDue: true });
+    const unknown = classifyAuthorityChange({
+      inventory: [{ oldPath: "unregistered-authority", newPath: "unregistered-authority" }],
+      components: [],
+    });
+    if (!rebuild.accepted || !goldenCadence.accepted || customer.accepted || semanticGolden.accepted || !unknown.goldenRequired) {
+      throw new Error("corroboration/GOLDEN/unknown-influence policy injection failed");
+    }
+    return [
+      { name: "overdue-pf-nrebuild-does-not-invalidate-pf-nbuild", status: "ACCEPTED_NON_BLOCKING" },
+      { name: "cadence-only-golden-does-not-invalidate-artifacts", status: "ACCEPTED_NON_BLOCKING" },
+      { name: "overdue-customer-facing-corroboration-blocks", status: "REJECTED_AS_REQUIRED" },
+      { name: "semantic-golden-trigger-blocks", status: "REJECTED_AS_REQUIRED" },
+      { name: "unknown-classifier-input-requires-golden", status: "GOLDEN_REQUIRED" },
+    ];
+  })(),
 };
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 writeJson(outputPath, report);
