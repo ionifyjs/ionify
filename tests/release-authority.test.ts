@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   EXACT_RELEASE_FAMILIES,
   FAMILY_CONFIG,
@@ -14,7 +17,7 @@ import {
   validateNativeConsumption,
   verifyReceipt,
 } from "../scripts/release-authority.mjs";
-import { assertNodeMajorAbiParity } from "../scripts/native-abi-proof.mjs";
+import { assertNodeMajorAbiParity, findNativeRuntimeEntry } from "../scripts/native-abi-proof.mjs";
 
 const issuedAt = "2026-09-01T00:00:00.000Z";
 
@@ -147,6 +150,24 @@ describe("Node-major native ABI authority", () => {
     exportCount: 2,
     exportSetDigest: "b".repeat(64),
     behaviorDigest: "c".repeat(64),
+  });
+
+  it("discovers the published runtime loader instead of the native-free package root export", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ionify-native-runtime-"));
+    const dist = path.join(root, "dist");
+    fs.mkdirSync(dist);
+    fs.writeFileSync(path.join(dist, "index.js"), "export const publicApi = true;\n");
+    fs.writeFileSync(path.join(dist, "chunk-native.js"), [
+      "function loadNativeBinding() {}",
+      "const nativeBinding = loadNativeBinding();",
+      "const native = nativeBinding;",
+      "export { native };",
+    ].join("\n"));
+    try {
+      expect(findNativeRuntimeEntry(root)).toBe(path.join(dist, "chunk-native.js"));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("admits the same artifact, export surface, and representative behavior under Node22/24", () => {

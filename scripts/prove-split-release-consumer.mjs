@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createReceipt, validateNativeConsumption } from "./release-authority.mjs";
-import { probeNativeAbi } from "./native-abi-proof.mjs";
+import { findNativeRuntimeEntry, probeNativeAbi } from "./native-abi-proof.mjs";
 
 const toolingRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -248,7 +248,7 @@ async function proveFixture(manager, mode, port) {
   const lockfileName = manager === "npm" ? "package-lock.json" : manager === "pnpm" ? "pnpm-lock.yaml" : "yarn.lock";
   const lockfileContents = fs.readFileSync(path.join(appRoot, lockfileName));
   const abiProof = probeNativeAbi({
-    loadRequest: mainEntry,
+    loadRequest: findNativeRuntimeEntry(path.dirname(path.dirname(mainEntry))),
     expectedNativePackage: expectedNative,
     admittedAddonSha256: nativeInput.addonSha256,
     lockfileContents,

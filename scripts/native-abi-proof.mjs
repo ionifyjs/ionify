@@ -6,15 +6,19 @@ import { spawnSync } from "node:child_process";
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 const PROBE_SOURCE = String.raw`
+  (async () => {
   const crypto = require("crypto");
   const fs = require("fs");
   const path = require("path");
+  const { pathToFileURL } = require("url");
   const loadRequest = process.argv[1];
   const expectedPackage = process.argv[2];
   const expectedArtifactSha = process.argv[3];
   const lockfile = process.argv[4] === "1" ? fs.readFileSync(0) : null;
   const before = new Set(Object.keys(require.cache));
-  const loaded = require(loadRequest);
+  const loaded = loadRequest.endsWith(".node")
+    ? require(loadRequest)
+    : await import(pathToFileURL(loadRequest).href);
   const addedAddons = Object.keys(require.cache).filter((file) => !before.has(file) && file.endsWith(".node"));
   if (addedAddons.length !== 1) throw new Error("runtime load must add exactly one native addon: " + JSON.stringify(addedAddons));
   const addonPath = fs.realpathSync(addedAddons[0]);
@@ -37,7 +41,9 @@ const PROBE_SOURCE = String.raw`
   if (actualPackage !== expectedPackage) {
     throw new Error("actual loaded native package " + actualPackage + " != " + expectedPackage);
   }
-  const binding = addonPath === fs.realpathSync(loadRequest) ? loaded : require(addonPath);
+  const binding = loadRequest.endsWith(".node") && addonPath === fs.realpathSync(loadRequest)
+    ? loaded
+    : (loaded.native || require(addonPath));
   const exportNames = Object.keys(binding).sort();
   const required = [
     "applyDefineReplacements", "cacheHash", "cacheHashPath", "depsOptimizerOutputVersion",
@@ -108,7 +114,25 @@ const PROBE_SOURCE = String.raw`
     },
     behaviorDigest: digest({ imports, metadata, bufferHash, defined, outputVersion, errorPath, abiDepsStoreHash }),
   }));
+  })().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
+
+export function findNativeRuntimeEntry(packageRoot) {
+  const distRoot = path.join(packageRoot, "dist");
+  const candidates = fs.readdirSync(distRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => path.join(distRoot, entry.name))
+    .filter((file) => {
+      const source = fs.readFileSync(file, "utf8");
+      return source.includes("function loadNativeBinding(") &&
+        source.includes("nativeBinding = loadNativeBinding()") &&
+        /export\s*\{[\s\S]*\bnative\b/.test(source);
+    });
+  if (candidates.length !== 1) {
+    throw new Error(`expected one published native runtime entry; received ${candidates.length}: ${candidates.join(", ")}`);
+  }
+  return candidates[0];
+}
 
 export function probeNativeAbi({
   nodeExecutable = process.execPath,
