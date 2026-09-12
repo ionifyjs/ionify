@@ -45,7 +45,7 @@ if (
   manifest.status !== "VERIFIED" ||
   manifest.topology !== "split-private-build-public-consumer" ||
   manifest.releaseVersion !== "0.1.37" ||
-  manifest.enginePrivateGitSha !== "036adaead64d049ae6a616c7962c54baa6d46bb4" ||
+  manifest.enginePrivateGitSha !== "f13e7fb6dbaf08df570f19aa2b4c2f75e33dc153" ||
   manifest.creatorSourceGitSha !== "343112837f8cae510b2dbe9c9a5a4585dc422bdf" ||
   !/^[0-9a-f]{40}$/.test(manifest.goldenProofToolingPrivateGitSha ?? "") ||
   !/^[0-9a-f]{40}$/.test(manifest.publicCandidateGitSha ?? "") ||

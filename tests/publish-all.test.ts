@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const repoRoot = process.cwd();
 const version = "0.1.37";
 const creatorVersion = "0.1.1";
-const enginePrivateGitSha = "036adaead64d049ae6a616c7962c54baa6d46bb4";
+const enginePrivateGitSha = "f13e7fb6dbaf08df570f19aa2b4c2f75e33dc153";
 const creatorSourceGitSha = "343112837f8cae510b2dbe9c9a5a4585dc422bdf";
 const publicCandidateGitSha = "1554c44d54fe37a834c8c6452f35600b1de801aa";
 const publicReadmeSha256 = "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c";
