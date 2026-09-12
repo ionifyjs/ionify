@@ -379,8 +379,9 @@ export function classifyAuthorityChange({ inventory, components, componentDigest
   const required = new Set(EXACT_RELEASE_FAMILIES.filter((family) => publication || family !== "PF-REGISTRY"));
   const reasons = [];
   for (const component of components.filter((item) => changedComponents.has(item.id))) {
-    for (const family of component.families) required.add(family);
-    reasons.push({ code: "CHANGED_AUTHORITY", component: component.id, families: [...component.families] });
+    const selectedFamilies = component.families.filter((family) => publication || family !== "PF-REGISTRY");
+    for (const family of selectedFamilies) required.add(family);
+    reasons.push({ code: "CHANGED_AUTHORITY", component: component.id, families: selectedFamilies });
   }
   let expanded = true;
   while (expanded) {

@@ -263,6 +263,19 @@ describe("component classifier", () => {
     expect(decision.goldenReasons).toContain("BOOTSTRAP_SCHEMA_CLASSIFIER_TOPOLOGY_AND_NODE_MATRIX_CHANGE");
   });
 
+  it("selects PF-REGISTRY only for an actual publication lifecycle", () => {
+    const registryComponent = [
+      { id: "package", roots: ["package.json"], families: ["PF-MAIN", "PF-REGISTRY"], goldenTrigger: false },
+    ];
+    const inventory = [{ oldPath: "package.json", newPath: "package.json" }];
+    const bootstrap = classifyAuthorityChange({ inventory, components: registryComponent, publication: false });
+    const publication = classifyAuthorityChange({ inventory, components: registryComponent, publication: true });
+    expect(bootstrap.requiredFamilies).not.toContain("PF-REGISTRY");
+    expect(bootstrap.reasons[0].families).not.toContain("PF-REGISTRY");
+    expect(publication.requiredFamilies).toContain("PF-REGISTRY");
+    expect(publication.reasons[0].families).toContain("PF-REGISTRY");
+  });
+
   it("rejects receipt families outside the classifier decision", () => {
     const selected = receipt("PF-NBUILD");
     const unselected = receipt("PF-NREBUILD");
