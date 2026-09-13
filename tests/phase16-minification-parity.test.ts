@@ -158,7 +158,7 @@ describe("Phase 16 — Production Minification Parity", () => {
     expect(minBytes).toBeLessThan(unminBytes);
   });
 
-  // ── Gate 2: Determinism ────────────────────────────────────────────────────
+  // ── Determinism ───────────────────────────────────────────────────────────
 
   it("identical inputs and options produce identical chunk output on consecutive calls (determinism gate)", async () => {
     if (!native?.buildChunks) {

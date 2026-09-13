@@ -5,12 +5,6 @@ import fs2 from "fs";
 import path2 from "path";
 import crypto from "crypto";
 
-// src/native/index.ts
-import fs from "fs";
-import path from "path";
-import { createRequire } from "module";
-import { fileURLToPath } from "url";
-
 // src/core/version.ts
 import { createHash } from "crypto";
 function normalizeTreeshake(treeshake) {
@@ -72,14 +66,41 @@ function normalizeResolveAlias(alias) {
   }
   return entries.length > 0 ? entries : null;
 }
+function normalizeBuiltinFallback(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value).filter(
+    (entry) => entry[0].length > 0 && (entry[1] === false || typeof entry[1] === "string" && entry[1].length > 0)
+  ).sort(([left], [right]) => left.localeCompare(right));
+  return entries.length > 0 ? entries : null;
+}
+function normalizeRuntimeGlobals(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = [];
+  for (const [globalName, provider] of Object.entries(value)) {
+    if (globalName.length === 0) continue;
+    if (typeof provider === "string" && provider.length > 0) {
+      entries.push([globalName, provider]);
+      continue;
+    }
+    if (Array.isArray(provider) && provider.length === 2 && typeof provider[0] === "string" && provider[0].length > 0 && typeof provider[1] === "string" && provider[1].length > 0) {
+      entries.push([globalName, [provider[0], provider[1]]]);
+    }
+  }
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  return entries.length > 0 ? entries : null;
+}
 function normalizeResolveOptions(resolveOptions) {
   if (!resolveOptions || typeof resolveOptions !== "object") return null;
   const normalized = {};
   const alias = normalizeResolveAlias(resolveOptions.alias);
+  const builtinFallback = normalizeBuiltinFallback(resolveOptions.builtinFallback);
+  const runtimeGlobals = normalizeRuntimeGlobals(resolveOptions.runtimeGlobals);
   const extensions = normalizeStringArray(resolveOptions.extensions);
   const conditions = normalizeStringArray(resolveOptions.conditions);
   const mainFields = normalizeStringArray(resolveOptions.mainFields);
   if (alias) normalized.alias = alias;
+  if (builtinFallback) normalized.builtinFallback = builtinFallback;
+  if (runtimeGlobals) normalized.runtimeGlobals = runtimeGlobals;
   if (extensions) normalized.extensions = extensions;
   if (conditions) normalized.conditions = conditions;
   if (mainFields) normalized.mainFields = mainFields;
@@ -126,71 +147,142 @@ function computeVersionHash(inputs) {
   return hash.slice(0, 16);
 }
 
-// src/native/index.ts
-function resolveCandidates() {
-  const cwd = process.cwd();
-  const releaseDir = path.resolve(cwd, "target", "release");
-  const debugDir = path.resolve(cwd, "target", "debug");
-  const nativeDir = path.resolve(cwd, "native");
-  const modulePath = fileURLToPath(import.meta.url);
-  const moduleDir = path.dirname(modulePath);
-  const findPackageRoot = (startDir) => {
-    let dir = startDir;
-    for (let i = 0; i < 6; i++) {
-      const pkgPath = path.join(dir, "package.json");
-      try {
-        if (fs.existsSync(pkgPath) && fs.statSync(pkgPath).isFile()) {
-          return dir;
-        }
-      } catch {
-      }
-      const parent = path.dirname(dir);
-      if (!parent || parent === dir) break;
-      dir = parent;
-    }
-    return null;
-  };
-  const packageRoot = findPackageRoot(moduleDir);
-  const packageNativeDir = packageRoot ? path.join(packageRoot, "native") : null;
-  const packageDistDir = packageRoot ? path.join(packageRoot, "dist") : null;
-  const platformFile = process.platform === "win32" ? "ionify_core.dll" : process.platform === "darwin" ? "libionify_core.dylib" : "libionify_core.so";
-  const candidates = [
-    // Installed package location (preferred): dist/ionify_core.node (published via "files": ["dist"]).
-    path.join(moduleDir, "ionify_core.node"),
-    // Alternative installed layouts (fallback):
-    // Prefer `native/` when present (repo/dev layouts) so local rebuilds are picked up even if an old `dist/` exists.
-    ...packageNativeDir ? [path.join(packageNativeDir, "ionify_core.node")] : [],
-    ...packageDistDir ? [path.join(packageDistDir, "ionify_core.node")] : [],
-    ...packageRoot ? [path.join(packageRoot, "ionify_core.node")] : [],
-    // Development locations
-    path.join(nativeDir, "ionify_core.node"),
-    path.join(releaseDir, "ionify_core.node"),
-    path.join(releaseDir, platformFile),
-    path.join(debugDir, "ionify_core.node"),
-    path.join(debugDir, platformFile)
-  ];
-  return candidates.filter((candidate) => {
-    try {
-      return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
-    } catch {
-      return false;
-    }
-  });
+// src/native/native-loader.ts
+import fs from "fs";
+import path from "path";
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
+var NATIVE_PACKAGE_BY_TARGET = Object.freeze({
+  "darwin-arm64": "@ionify/ionify-darwin-arm64",
+  "darwin-x64": "@ionify/ionify-darwin-x64",
+  "win32-arm64-msvc": "@ionify/ionify-win32-arm64-msvc",
+  "win32-x64-msvc": "@ionify/ionify-win32-x64-msvc",
+  "linux-arm64-gnu": "@ionify/ionify-linux-arm64-gnu",
+  "linux-x64-gnu": "@ionify/ionify-linux-x64-gnu",
+  "linux-arm64-musl": "@ionify/ionify-linux-arm64-musl",
+  "linux-x64-musl": "@ionify/ionify-linux-x64-musl"
+});
+function detectLinuxLibc(getReport = process.report?.getReport) {
+  const report = typeof getReport === "function" ? getReport() : void 0;
+  const header = report && typeof report === "object" && "header" in report ? report.header : void 0;
+  const glibcVersionRuntime = header && typeof header === "object" && "glibcVersionRuntime" in header ? header.glibcVersionRuntime : void 0;
+  return typeof glibcVersionRuntime === "string" && glibcVersionRuntime.length > 0 ? "gnu" : "musl";
 }
-var nativeBinding = null;
-(() => {
-  const require2 = createRequire(import.meta.url);
-  for (const candidate of resolveCandidates()) {
+function targetKey(platform, arch, libc) {
+  if (platform === "linux") {
+    return `${platform}-${arch}-${libc ?? detectLinuxLibc()}`;
+  }
+  if (platform === "win32") return `${platform}-${arch}-msvc`;
+  return `${platform}-${arch}`;
+}
+function describeOriginalError(error) {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+function errorCode(error) {
+  return error && typeof error === "object" && "code" in error ? String(error.code ?? "") : void 0;
+}
+function makeError(message, code, cause) {
+  const error = new Error(message);
+  error.name = "IonifyNativeBindingError";
+  error.code = code;
+  if (cause !== void 0) error.cause = cause;
+  return error;
+}
+function selectNativePackage(platform, arch, libc) {
+  const key = targetKey(platform, arch, libc);
+  const selected = NATIVE_PACKAGE_BY_TARGET[key];
+  if (selected) return selected;
+  throw makeError(
+    [
+      `[Ionify] Unsupported native platform: ${key}.`,
+      `Supported platforms: ${Object.keys(NATIVE_PACKAGE_BY_TARGET).join(", ")}.`,
+      "Ionify did not attempt to load a binary for another platform."
+    ].join("\n"),
+    "IONIFY_UNSUPPORTED_NATIVE_PLATFORM"
+  );
+}
+function findPackageRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 8; i++) {
+    const packagePath = path.join(dir, "package.json");
     try {
-      const mod = require2(candidate);
-      if (mod) {
-        nativeBinding = mod;
-        break;
-      }
+      if (fs.statSync(packagePath).isFile()) return dir;
     } catch {
     }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
-})();
+  return null;
+}
+function privateCheckoutBinding(moduleUrl) {
+  const packageRoot = findPackageRoot(path.dirname(fileURLToPath(moduleUrl)));
+  if (!packageRoot) return null;
+  try {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")
+    );
+    if (packageJson.name !== "ionify" || packageJson.private !== true) return null;
+  } catch {
+    return null;
+  }
+  const candidate = path.join(packageRoot, "native", "ionify_core.node");
+  try {
+    return fs.statSync(candidate).isFile() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+function selectedPackageIsMissing(error, packageName) {
+  return errorCode(error) === "MODULE_NOT_FOUND" && describeOriginalError(error).includes(packageName);
+}
+function loadFailure(platform, arch, libc, packageName, error) {
+  const key = targetKey(platform, arch, libc);
+  const missing = selectedPackageIsMissing(error, packageName);
+  const guidance = missing ? [
+    "The platform package was not installed. Optional dependencies may have been omitted or the install may be incomplete.",
+    "Reinstall the main package without --omit=optional / --no-optional:",
+    "  npm install @ionify/ionify",
+    "  pnpm add @ionify/ionify"
+  ] : [
+    "The selected package exists, but Node could not load its native addon.",
+    "Check that the package was not copied from a different OS/CPU and that the downloaded binary is intact."
+  ];
+  return makeError(
+    [
+      `[Ionify] Failed to load the native binding for ${key}.`,
+      `Selected package: ${packageName}`,
+      ...guidance,
+      `Original Node error: ${describeOriginalError(error)}`
+    ].join("\n"),
+    missing ? "IONIFY_NATIVE_PACKAGE_MISSING" : "IONIFY_NATIVE_DLOPEN_FAILED",
+    error
+  );
+}
+function loadNativeBinding(options = {}) {
+  const platform = options.platform ?? process.platform;
+  const arch = options.arch ?? process.arch;
+  const libc = platform === "linux" ? options.libc ?? detectLinuxLibc() : void 0;
+  const packageName = selectNativePackage(platform, arch, libc);
+  const requireFn = options.requireFn ?? createRequire(options.moduleUrl ?? import.meta.url);
+  try {
+    return requireFn(packageName);
+  } catch (selectedError) {
+    const checkoutPath = options.privateCheckoutBindingPath === void 0 ? privateCheckoutBinding(options.moduleUrl ?? import.meta.url) : options.privateCheckoutBindingPath;
+    if (checkoutPath && selectedPackageIsMissing(selectedError, packageName)) {
+      try {
+        return requireFn(checkoutPath);
+      } catch (checkoutError) {
+        throw loadFailure(platform, arch, libc, checkoutPath, checkoutError);
+      }
+    }
+    throw loadFailure(platform, arch, libc, packageName, selectedError);
+  }
+}
+
+// src/native/index.ts
+var nativeBinding = loadNativeBinding();
 var native = nativeBinding;
 function getDepsOptimizerOutputVersion() {
   return nativeBinding?.depsOptimizerOutputVersion?.() ?? 0;
