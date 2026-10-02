@@ -1,155 +1,230 @@
-# ⚡ Ionify
+<p align="center">
+  <a href="https://ionify.cloud">
+    <picture>
+      <source media="(prefers-reduced-motion: reduce)" srcset="https://raw.githubusercontent.com/ionifyjs/ionify/main/.github/readme/continuum-still.png">
+      <img src="https://raw.githubusercontent.com/ionifyjs/ionify/main/.github/readme/continuum.gif" width="1200" alt="Ionify. Keep the work. Keep the flow. Three rotating, separated engine rings surround the Continuum mark: establish, verify, reuse.">
+    </picture>
+  </a>
+</p>
 
-**The build engine that doesn't start over.**
+<p align="center">
+  <a href="https://ionify.cloud/getting-started"><strong>Get started ↗</strong></a> &nbsp; · &nbsp;
+  <a href="https://ionify.cloud/guide">Read the guide</a> &nbsp; · &nbsp;
+  <a href="https://ionify.cloud/compare">Compare workflows</a> &nbsp; · &nbsp;
+  <a href="https://github.com/ionifyjs/ionify/issues">Report a finding</a>
+</p>
 
-One Graph. One CAS. One Authority.
+<p align="center"><sub>Rust-powered · Persistent build knowledge · MIT licensed<br>3D artwork, not a live build trace. <a href="https://raw.githubusercontent.com/ionifyjs/ionify/main/.github/readme/continuum-still.png">View the still</a> · <a href="https://ionify.cloud/#layers">Explore the interactive engine ↗</a></sub></p>
+
+# Ionify
+
+### Your next edit deserves a shorter wait.
+
+You change a component. Build. Check it. Find one more thing. Build again.
+
+**Ionify helps reduce the repeated work between your idea and checking the result.** It is a Rust-powered frontend build engine that keeps valid build knowledge across local runs, so the next build can benefit from the last—even after the process exits.
+
+The first build establishes that knowledge. Later builds verify what still holds, reuse it, and rebuild what needs to change. Less time repeating work. More time working through your feature.
+
+[See the reported results](#01--the-next-build) · [Run it](#02--make-your-first-build) · [Try one edit](#03--make-one-change) · [Open the engine](#04--why-the-work-can-survive) · [Current limits](#05--know-the-boundaries)
 
 ---
 
-Every layer of computing learned to stop redoing work it had already done — CPUs got caches, databases got indexes, compilers got incremental compilation. The build never learned it. Every run rediscovers your dependencies, re-transforms your modules, and rebuilds the same artifacts from zero.
+## 01 / The next build
 
-Ionify is a build engine that **remembers**: a persistent dependency graph, a content-addressable store, and a single published authority over every dependency — shared by dev, build, and CI so they can never disagree.
+<img src="https://raw.githubusercontent.com/ionifyjs/ionify/main/.github/readme/reported-builds.png" width="1200" alt="Developer-reported Ionify production builds on one project: about 30 ms with no changes, about 120 ms after one file changed, and 5–6 seconds for the first build. Full comparison and limitations follow.">
 
-## Quick Start
+On a private project with roughly **15,000 React components** and **25,000 dependencies**, the project’s developer reported these production-build times:
+
+| What you do | Ionify | Vite 8 |
+| :--- | ---: | ---: |
+| Build for the first time | **~5–6 s** | ~2.7 s |
+| Change nothing and build again | **~30 ms** | ~2.7 s |
+| Change one file and build again | **~120 ms** | ~2.7 s |
+
+The useful result is the shorter pause before checking your next change. **The first Ionify build was slower.** These measurements describe production invocations—not HMR latency, dev-server startup or a remote-cache hit.
+
+> **Scope of this report:** developer-reported observations from one private project, not independently reproduced here. Hardware, exact tool revisions, configuration and a public reproduction harness were not supplied with the figures. The source project is not public. Treat these as a reason to try your own workflow, not a universal speed guarantee.
+
+[Read the full Vite comparison →](https://ionify.cloud/compare/vite-vs-ionify)
+
+## 02 / Make your first build
+
+**Before you start:** this repository’s `0.1.37` package declares native packages for macOS (`darwin-arm64`, `darwin-x64`), Linux (arm64 and x64, GNU and musl), and Windows (arm64 and x64, MSVC). The loader selects the matching runtime. Keep optional dependencies enabled; they carry the native engine. A declared target is not itself evidence that every release-validation check has passed.
+
+The package requires **Node.js 22.x or 24.x** (`^22.0.0 || ^24.0.0`). Check the version requirements of your chosen template too.
+
+### Keep the frontend tools you use
+
+Built-in support covers React and Fast Refresh; JavaScript, TypeScript, JSX and TSX; ES modules and CommonJS dependency interop; CSS and CSS Modules; static assets; dynamic imports and code splitting; HMR; environment files and `import.meta.env`; and workspace discovery. Sass and Less require their corresponding compiler packages. Tailwind CSS and PostCSS use their normal project packages and configuration. Validate your app’s specific integrations before switching its build command.
+
+### Start a new app
+
+```bash
+pnpm create ionify@latest
+```
+
+Follow the scaffolder prompts and the generated project’s instructions. Prefer npm? Use `npm create ionify@latest`.
+
+### Bring an existing app
+
+Start in a branch or separate checkout. Keep your current build command while checking compatibility.
 
 ```bash
 pnpm add -D @ionify/ionify
 ```
 
-Create `ionify.config.ts`:
+Create `ionify.config.ts`, pointing at your app’s actual entry:
 
 ```typescript
-export default {
-  entry: "/src/main.ts",
-  outDir: "dist",
-  productionArtifactPublishing: "auto",
-};
+import { defineConfig } from "@ionify/ionify";
+
+export default defineConfig({
+  entry: "/src/main.tsx",
+});
+```
+
+Keep your HTML entry and required framework configuration. This example configures a build entry; it does not create the application or guarantee compatibility with every framework or plugin.
+
+```bash
+# Develop the app.
+pnpm exec ionify dev
+
+# In a separate terminal, or after stopping dev:
+pnpm exec ionify build
+```
+
+[Setup guide →](https://ionify.cloud/getting-started) · [Configuration →](https://ionify.cloud/configs) · [CLI →](https://ionify.cloud/cli)
+
+## 03 / Make one change
+
+Choose a visible component—a button label is enough. The question is simple: **how soon can you check the correct production result after an edit?**
+
+```bash
+# 1. Establish the initial build.
+pnpm exec ionify build
+
+# 2. Keep .ionify and the output directory. Change nothing.
+pnpm exec ionify build
+
+# 3. Edit a visible string in an imported component, then:
+pnpm exec ionify build
+
+# 4. Check the built app. Run again without another edit.
+pnpm exec ionify build
+```
+
+Keep the inputs and output requirements comparable. Record first-build and repeat-build times separately. Check the emitted app, not only the timer. Repeat with a stylesheet, dependency and configuration change before adopting a new engine.
+
+**Changing one file does not promise a one-file rebuild.** Shared consumers, CSS demand, chunk relationships or incomplete reuse proofs can require wider work. Correct output comes before a cache hit.
+
+<details>
+<summary><strong>Use the environment your app actually runs in</strong></summary>
+
+Ionify loads these files for the selected mode:
+
+```text
+.env
+.env.local
+.env.<mode>
+.env.<mode>.local
 ```
 
 ```bash
-pnpm ionify dev     # development server
-pnpm ionify build   # production build
+pnpm exec ionify dev --mode staging
+pnpm exec ionify build --mode staging
 ```
 
-## What Ionify Is
-
-Ionify is not a faster bundler — it's a different category. It runs the entire lifecycle through one persistent engine: file watching, resolution, transformation, caching, and bundling. Because the engine *owns* the pipeline, it can persist what it learns:
-
-- **One Graph** — a long-lived dependency graph that survives restarts. The engine understands how your project evolves over time, not just how it builds once.
-- **One CAS** — a content-addressable store (`.ionify/cas/versionHash/moduleHash/…`). If content hasn't changed, its work is never done again. Deterministic, version-isolated, automatically invalidated by configuration hash.
-- **One Authority** — each dependency's export surface is published once as a content-hashed contract. The dev server, the production bundler, and federation all consume the *same* contract. There is a single, enforced answer to "what does this dependency expose" — so dev and production cannot quietly drift.
-
-That last part kills a whole class of bugs by construction, not by detection: *"works in dev, breaks in build"*, duplicate singletons, phantom exports — they're all the same disease (no single source of truth about a dependency), and they become structurally impossible when the truth has one owner.
-
-## Architecture
-
-```
-Source Files
-    ↓
-  Resolver
-    ↓
-Persistent Dependency Graph (native)
-    ↓
-Transform Engine (OXC)
-    ↓
-Content-Addressable Store (.ionify/cas/versionHash/moduleHash/...)
-    ↓
-Dev Server / Bundler
-```
-
-### Hybrid Transformation Engine
-
-Ionify uses a hybrid transformation strategy by design: **OXC** as the primary engine for parsing and transformation (performance, modern syntax), with **SWC** as a fallback layer for robustness across edge cases and evolving ecosystems. This keeps the engine framework-agnostic while balancing speed, correctness, and long-term maintainability.
-
-### Storage
-
-- **Graph persistence** — native Rust implementation
-- **Transformed outputs** — stored in version-isolated CAS
-- **Automatic invalidation** — via configuration hash
-
-### Unified Dev + Production
-
-Development and production share the same resolver, the same dependency semantics, the same transforms, and the same caching strategy. Unifying the pipeline eliminates the entire class of inconsistencies that appears when dev and build pipelines diverge.
-
-## Environment Modes
-
-Ionify loads `.env`, `.env.local`, `.env.<mode>`, and `.env.<mode>.local`.
-Use `--mode` to select the app mode while keeping production build semantics:
-
-```bash
-pnpm ionify dev --mode staging
-pnpm ionify build --mode staging
-```
-
-Config functions receive the selected mode and loaded env values:
+A configuration function receives `mode` and `env`:
 
 ```typescript
-import { defineConfig } from "ionify";
+import { defineConfig } from "@ionify/ionify";
 
-export default defineConfig(({ mode, env }) => ({
-  cloud: {
-    apiUrl: env.IONIFY_CLOUD_API_URL,
-    namespace: mode,
+export default defineConfig(({ mode }) => ({
+  entry: "/src/main.tsx",
+  server: {
+    port: mode === "staging" ? 5174 : 5173,
   },
+  productionArtifactPublishing: "auto",
 }));
 ```
 
-## Project Status
+Selecting `staging` changes the environment mode; `build` still uses production-build semantics. Do not put secrets in client-exposed environment variables.
 
-| Capability                            | Status         |
-| --------------------------------------| -------------- |
-| Persistent Graph                      | ✅ Stable       |
-| Content Addressable Storage           | ✅ Stable       |
-| Native Dependency Resolver            | ✅ Stable       |
-| Unified Dev + Build Pipeline          | ✅ Stable       |
-| Dependency Publication Layer (DPL)    | ✅ Stable       |
-| One Dependency Authority (ODA)        | ✅ Stable       |
-| Production Artifact Publishing (PAP)  | ✅ Stable       |
-| One CSS Authority (CSSA)              | ✅ Stable       |
-| Federation Foundation                 | ✅ Stable       |
-| Workspace Engine                      | ✅ Stable       |
-| Ionify Analyze                        | ✅ Stable       |
-| Cloud CAS                             | 🚧 In Progress |
+</details>
 
-## What's New
+<details>
+<summary><strong>Already using Nx or Turborepo? Keep the team’s workflow.</strong></summary>
 
-### 0.1.36 — Cross-platform native runtime
+Try Ionify as one supported application’s build command. Keep your existing test runner, linting, task orchestration and remote-cache service.
 
-Fixed #6: Ionify could fail to load its native engine on environments that
-didn't match the binary distributed with the package.
+```json
+{
+  "scripts": {
+    "dev:ionify": "ionify dev",
+    "build:ionify": "ionify build"
+  }
+}
+```
 
-Ionify now automatically selects the correct native runtime for supported
-macOS, Windows, and Linux environments, with no platform configuration
-required.
+These are pilot scripts, not a complete task-runner integration. Configure task inputs, outputs and environment for your repository. A whole-task cache hit can skip the engine entirely; check a real source edit that causes the build command to run, too.
 
-## Built-in Support
+[Nx example →](https://ionify.cloud/compare/nx-vs-ionify) · [Turborepo example →](https://ionify.cloud/compare/turborepo-vs-ionify)
 
-Ionify handles common frontend capabilities directly, without requiring
-Ionify-specific plugins:
+</details>
 
-- React and Fast Refresh
-- JavaScript, TypeScript, JSX, and TSX
-- ES modules and CommonJS dependency interop
-- CSS and CSS Modules
-- Static assets
-- Dynamic imports and code splitting
-- Hot Module Replacement
-- Environment files and `import.meta.env`
-- Workspace and monorepo discovery
-- Sass and Less when the corresponding compiler package is installed
+## 04 / Why the work can survive
 
-### Integrated Tooling
+<img src="https://raw.githubusercontent.com/ionifyjs/ionify/main/.github/readme/memory-stack.png" width="1200" alt="Conceptual exploded 3D stack: a persistent graph remembers relationships, a content-addressed store retains artifacts, and Build Authority defines the owners and validity checks for reuse.">
 
-Ionify also integrates directly with project-level tooling such as Tailwind CSS
-and PostCSS when their normal project packages and configuration are present.
+**One Graph. One CAS. One Authority.** The architecture explains the feedback-loop benefit; it is not a substitute for measuring it.
 
-## Links
+| What you keep | How Ionify approaches it | Where the promise stops |
+| :--- | :--- | :--- |
+| **Project knowledge after a restart** | A persistent graph records module identities, content hashes and dependency edges. | A graph must be complete and valid for the decision consuming it. |
+| **Useful work from the previous build** | A content-addressable store (CAS) retains artifacts by content-derived identity. | A matching hash alone does not prove that all relevant inputs were included. |
+| **A shared interpretation across dev and build** | Authoritative producers publish dependency, styling and production contracts for later consumers. | Shared ownership reduces a source of disagreement; it does not guarantee zero bugs or identical work in every stage. |
 
-Website: https://ionify.cloud
-GitHub: https://github.com/ionifyjs/ionify
-Issues: https://github.com/ionifyjs/ionify/issues
-Contact: [khaledsalem@ionify.cloud](mailto:khaledsalem@ionify.cloud)
+Build Authority means giving each category of build knowledge an explicit owner, then checking identity and validity before reuse. When a proof is missing or stale, the safe path is to re-establish the work—not trust a file merely because it exists.
 
-## License
+<details>
+<summary><strong>Inside the authority layers: DPL, CSSA, PAP and PRA</strong></summary>
 
-MIT © Khaled Salem
+| Layer | Responsibility |
+| :--- | :--- |
+| **DPL · Dependency Publication Layer** | Publishes dependency identities, artifacts and export contracts for consumers. |
+| **CSSA · CSS Authority** | Owns styling artifacts and the input/completeness proofs needed to reuse them. |
+| **PAP · Production Artifact Publishing** | Publishes production contracts and, when requested, artifacts into `.ionify`. It is not deployment. |
+| **PRA · Production Readiness Authority** | Verifies output readiness against the current build identity. It does not create the artifacts it verifies. |
+
+The configured hybrid transformation path tries OXC first, with SWC as a compatibility fallback. Transformation speed is one part of the engine; ownership, persistence and validity determine whether that work needs repeating.
+
+[Explore the architecture →](https://ionify.cloud/architecture) · [Build Authority →](https://ionify.cloud/build-authority)
+
+</details>
+
+## 05 / Know the boundaries
+
+| Area | Current position |
+| :--- | :--- |
+| **Local warm reuse** | Validated in the project’s reported work, including local process restarts and dev-to-build consumption. Results depend on inputs and configuration. |
+| **First-build cost** | Still improving. Fast First Build is planned, not a completed capability. |
+| **Remote / cross-machine reuse** | Cloud CAS is in progress. Local timings are not evidence of equivalent CI or team-wide reuse. |
+| **Framework and plugin fit** | Check your app’s required behavior. Ionify is not presented as a drop-in replacement for every Vite, webpack or Next.js integration. |
+| **Correctness and trust** | Validity checks and conservative fallback matter. Persistent state and hashes are not a blanket guarantee of invalidation completeness or supply-chain security. |
+
+Other engines and task runners also provide incremental work and caching. Choose Ionify for the improvement you can demonstrate in your own edit–build–check loop—not a claim that other tools remember nothing.
+
+[Development status →](https://ionify.cloud/status) · [Choose by workflow →](https://ionify.cloud/compare)
+
+---
+
+### Make your next build count.
+
+Try one app. Keep your existing build available. Tell us what got faster, what did not, and whether the output behaved correctly.
+
+For a useful issue, include the Ionify version, OS/CPU, command, cache state, a minimal reproduction when possible, and expected versus actual output. Remove credentials and private source before sharing.
+
+**[Get started ↗](https://ionify.cloud/getting-started)** · [Open an issue](https://github.com/ionifyjs/ionify/issues) · [Contact](mailto:khaledsalem@ionify.cloud)
+
+<sub>MIT · [License](LICENSE) · [Website](https://ionify.cloud) · [Visual asset sources](.github/readme/README.md)</sub>
