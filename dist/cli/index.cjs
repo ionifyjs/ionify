@@ -30,10 +30,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// tsup/assets/cjs_shims.js
+// node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js
 var getImportMetaUrl, importMetaUrl;
 var init_cjs_shims = __esm({
-  "tsup/assets/cjs_shims.js"() {
+  "node_modules/.pnpm/tsup@8.5.0_@swc+core@1.13.5_jiti@1.21.7_postcss@8.5.6_tsx@4.20.6_typescript@5.9.3_yaml@2.8.1/node_modules/tsup/assets/cjs_shims.js"() {
     "use strict";
     getImportMetaUrl = () => typeof document === "undefined" ? new URL(`file:${__filename}`).href : document.currentScript && document.currentScript.src || new URL("main.js", document.baseURI).href;
     importMetaUrl = /* @__PURE__ */ getImportMetaUrl();
@@ -17720,6 +17720,7 @@ var IonifyWatcher = class extends import_events.EventEmitter {
 // src/core/transform.ts
 init_cjs_shims();
 init_registry();
+init_module_id();
 var TransformCache = class {
   store = /* @__PURE__ */ new Map();
   hits = 0;
@@ -17774,7 +17775,7 @@ var TransformEngine = class {
   cacheEnabled;
   // Bump when the on-disk transform output format or semantics change.
   // Included in CAS paths so restarts never serve stale transformed output.
-  cacheVersion = "v6";
+  cacheVersion = "v7";
   casRoot;
   versionHash;
   constructor(options) {
@@ -17791,14 +17792,17 @@ var TransformEngine = class {
     const path48 = await import("path");
     const fs44 = await import("fs");
     const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
+    const workspaceRoot = resolveWorkspaceRoot(ctx.config?.root);
+    const importerPath = fs44.existsSync(ctx.path) ? fs44.realpathSync(ctx.path) : path48.resolve(ctx.path);
+    const importerId = toWsModuleId(importerPath, workspaceRoot) ?? importerPath;
+    const transformHash = getCacheKey2(JSON.stringify([moduleHash, importerId, ctx.ext]));
     const loaderSig = `${this.cacheVersion}|${this.loaders.map((l) => l.name || "loader").join("|")}`;
     const loaderHash = getCacheKey2(loaderSig);
-    const memKey = `${moduleHash}-${loaderHash}`;
-    const casDir = this.casRoot && this.versionHash ? path48.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash) : null;
+    const memKey = `${workspaceRoot}-${this.versionHash ?? ""}-${transformHash}-${loaderHash}`;
+    const casDir = this.casRoot && this.versionHash ? path48.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, transformHash) : null;
     const casFile = casDir ? path48.join(casDir, "transformed.js") : null;
     const casMapFile = casDir ? path48.join(casDir, "transformed.js.map") : null;
     const casMetaFile = casDir ? path48.join(casDir, "transform.meta.json") : null;
-    const workspaceRoot = ctx.config?.root ? path48.resolve(ctx.config.root) : process.cwd();
     const debug = process.env.IONIFY_DEV_TRANSFORM_CACHE_DEBUG === "1";
     if (this.cacheEnabled) {
       const memHit = transformCache.get(memKey);
@@ -17817,7 +17821,7 @@ var TransformEngine = class {
         try {
           const code = fs44.readFileSync(casFile, "utf8");
           const meta = JSON.parse(fs44.readFileSync(casMetaFile, "utf8"));
-          if (meta.version !== 2 || meta.codeHash !== getCacheKey2(code) || typeof meta.hasMap !== "boolean" || !Array.isArray(meta.dependencyEntries) || !Array.isArray(meta.runtimeDependencies) || !meta.runtimeDependencies.every(
+          if (meta.version !== 3 || meta.importerId !== importerId || meta.codeHash !== getCacheKey2(code) || typeof meta.hasMap !== "boolean" || !Array.isArray(meta.dependencyEntries) || !Array.isArray(meta.runtimeDependencies) || !meta.runtimeDependencies.every(
             (dependency) => dependency !== null && typeof dependency === "object" && typeof dependency.specifier === "string" && dependency.specifier.length > 0 && (dependency.kind === "static" || dependency.kind === "dynamic")
           )) {
             throw new Error("incomplete transform metadata");
@@ -17916,7 +17920,8 @@ var TransformEngine = class {
           fs44.writeFileSync(
             metaTmp,
             JSON.stringify({
-              version: 2,
+              version: 3,
+              importerId,
               codeHash: getCacheKey2(result.code),
               hasMap: Boolean(result.map),
               dependencyEntries: result.dependencyEntries ?? [],

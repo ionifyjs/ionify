@@ -1,0 +1,36 @@
+{
+  "name": "create-ionify",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Create a new Ionify project (templates + monorepo support)",
+  "bin": {
+    "create-ionify": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "ionify",
+    "create",
+    "scaffold",
+    "react",
+    "template"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ionifyjs/ionify.git",
+    "directory": "packages/create-ionify"
+  },
+  "bugs": {
+    "url": "https://github.com/ionifyjs/ionify/issues"
+  },
+  "homepage": "https://ionify.cloud",
+  "publishConfig": {
+    "access": "public"
+  }
+}

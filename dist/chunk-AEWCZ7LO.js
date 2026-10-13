@@ -16,7 +16,7 @@ import {
 } from "./chunk-SNACSSNX.js";
 import {
   __filename
-} from "./chunk-F84D9131.js";
+} from "./chunk-FHXXO743.js";
 
 // src/cli/commands/build.ts
 import fs23 from "fs";
@@ -15221,6 +15221,7 @@ export {
   vendorPackV2MemberKey,
   VendorPackV2IndexManager,
   WS_MODULE_PREFIX,
+  resolveWorkspaceRoot,
   toWsModuleId,
   fromWsModuleId,
   localSourceExtensions,

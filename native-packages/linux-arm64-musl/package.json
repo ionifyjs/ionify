@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify-linux-arm64-musl",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "description": "Ionify native binding for Linux ARM64 (musl)",
   "license": "MIT",
   "main": "./ionify_core.node",

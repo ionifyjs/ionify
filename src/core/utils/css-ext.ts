@@ -5,8 +5,8 @@
  * compiled to CSS by the TS pipeline before PostCSS, so they classify as CSS everywhere
  * `.css` does. Emitted output is always `.css`.
  *
- * Must mirror the Rust `CSS_EXTENSIONS` set in `src/rust/bundler/mod.rs` (module-kind-classifier
- * contract: TS and Rust must agree on kind).
+ * Must agree with the native CSS extension classifier (module-kind-classifier
+ * contract: both implementations must agree on kind).
  */
 export const CSS_LIKE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"] as const;
 

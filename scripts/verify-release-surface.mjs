@@ -1,9 +1,12 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertPublicRepositorySurface } from "./hybrid-release-boundary.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+assertPublicRepositorySurface(root);
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const expectedTargets = [
   "darwin-arm64",
@@ -42,126 +45,16 @@ if (Object.keys(pkg.optionalDependencies ?? {}).length !== expectedTargets.lengt
   throw new Error("main package must declare exactly eight native optional dependencies");
 }
 
-const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-const expectedWhatsNew = `## What's New
-
-### 0.1.36 — Cross-platform native runtime
-
-Fixed #6: Ionify could fail to load its native engine on environments that
-didn't match the binary distributed with the package.
-
-Ionify now automatically selects the correct native runtime for supported
-macOS, Windows, and Linux environments, with no platform configuration
-required.
-
-`;
-const expectedBuiltIn = `## Built-in Support
-
-Ionify handles common frontend capabilities directly, without requiring
-Ionify-specific plugins:
-
-- React and Fast Refresh
-- JavaScript, TypeScript, JSX, and TSX
-- ES modules and CommonJS dependency interop
-- CSS and CSS Modules
-- Static assets
-- Dynamic imports and code splitting
-- Hot Module Replacement
-- Environment files and \`import.meta.env\`
-- Workspace and monorepo discovery
-- Sass and Less when the corresponding compiler package is installed
-
-### Integrated Tooling
-
-Ionify also integrates directly with project-level tooling such as Tailwind CSS
-and PostCSS when their normal project packages and configuration are present.
-
-`;
-
-function sectionRange(text, heading) {
-  const marker = `${heading}\n`;
-  const start = text.indexOf(marker);
-  if (start < 0 || text.indexOf(marker, start + marker.length) >= 0) {
-    throw new Error(`README must contain exactly one ${heading} section`);
-  }
-  const next = text.indexOf("\n## ", start + marker.length);
-  return { start, end: next < 0 ? text.length : next + 1 };
-}
-
-function readSection(text, heading) {
-  const { start, end } = sectionRange(text, heading);
-  return text.slice(start, end);
-}
-
-function removeSection(text, heading, required = true) {
-  if (!text.includes(`${heading}\n`)) {
-    if (required) throw new Error(`README is missing ${heading}`);
-    return text;
-  }
-  const { start, end } = sectionRange(text, heading);
-  return text.slice(0, start) + text.slice(end);
-}
-
-function replaceSection(text, heading, replacement) {
-  const { start, end } = sectionRange(text, heading);
-  return text.slice(0, start) + replacement + text.slice(end);
-}
-
-if (readSection(readme, "## What's New") !== expectedWhatsNew) {
-  throw new Error("README What's New must contain only the exact 0.1.36 release note");
-}
-if (readSection(readme, "## Built-in Support") !== expectedBuiltIn) {
-  throw new Error("README Built-in Support differs from the audited built-in capability section");
-}
-if (/^### 0\.1\.37\b/m.test(readme)) {
-  throw new Error("README must not contain a 0.1.37 release note");
-}
-
-const readmeBaseRef = process.env.IONIFY_README_BASE_REF || "origin/main";
-const baselineResult = spawnSync("git", ["show", `${readmeBaseRef}:README.md`], {
-  cwd: root,
-  encoding: "utf8",
-});
-if (baselineResult.status !== 0) {
-  throw new Error(
-    `unable to read authoritative README baseline ${readmeBaseRef}: ${baselineResult.stderr.trim()}`,
-  );
-}
+const readmePolicy = JSON.parse(fs.readFileSync(new URL('./public-readme-policy.json', import.meta.url), 'utf8'));
+const baselineResult = spawnSync('git', ['show', `${readmePolicy.baseCommit}:README.md`], {cwd: root, encoding: 'utf8'});
+if (baselineResult.status !== 0) throw new Error('Unable to read the reviewed public README baseline');
 const baselineReadme = baselineResult.stdout;
-const quickStart = readSection(readme, "## Quick Start");
-const baselineQuickStart = readSection(baselineReadme, "## Quick Start");
-const baselinePackageCommand = "pnpm add -D ionify";
-const packageCommandOccurrences = baselineQuickStart.split(baselinePackageCommand).length - 1;
-if (packageCommandOccurrences !== 1) {
-  throw new Error(
-    `authoritative README baseline must contain exactly one '${baselinePackageCommand}' in Quick Start`,
-  );
-}
-const expectedQuickStart = baselineQuickStart.replace(
-  baselinePackageCommand,
-  "pnpm add -D @ionify/ionify",
-);
-if (quickStart !== expectedQuickStart) {
-  throw new Error(
-    `README Quick Start must differ from ${readmeBaseRef} only by the @ionify/ionify package-name correction`,
-  );
-}
-const candidateOutsideAuthorizedSections = removeSection(
-  removeSection(
-    replaceSection(readme, "## Quick Start", baselineQuickStart),
-    "## Built-in Support",
-  ),
-  "## What's New",
-);
-const baselineOutsideAuthorizedSections = removeSection(
-  removeSection(baselineReadme, "## Built-in Support", false),
-  "## What's New",
-);
-if (candidateOutsideAuthorizedSections !== baselineOutsideAuthorizedSections) {
-  throw new Error(
-    `README contains byte changes outside What's New, Built-in Support, and the Quick Start package name relative to ${readmeBaseRef}`,
-  );
-}
+const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+const hash = text => crypto.createHash('sha256').update(text).digest('hex');
+if (hash(baselineReadme) !== readmePolicy.baseSha256 || baselineReadme.split('`0.1.37`').length !== 2) throw new Error('Public README baseline identity conflict');
+if (readme !== baselineReadme.replace('`0.1.37`', '`0.1.38`') || hash(readme) !== readmePolicy.repositorySha256) throw new Error('Unreviewed public README change');
+// Package README remains pinned in hybrid-release-files.json. This source check
+// never authorizes repacking or claiming equivalence for the Git README variant.
 for (const script of ["publish-all.mjs", "real-registry-smoke.mjs", "release-local-registry.mjs"]) {
   if (!fs.existsSync(path.join(root, "scripts", script))) throw new Error(`missing release script: ${script}`);
 }

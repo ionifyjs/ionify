@@ -3,7 +3,7 @@ import {
   logError,
   logInfo
 } from "./chunk-SNACSSNX.js";
-import "./chunk-F84D9131.js";
+import "./chunk-FHXXO743.js";
 
 // src/cli/commands/optimize-all.ts
 async function runOptimizeAllCommand(options = {}) {
@@ -14,7 +14,7 @@ async function runOptimizeAllCommand(options = {}) {
   process.env.IONIFY_NODE_ENV = requestedEnv;
   try {
     logInfo(`[optimize-all] Optimizing every dep for env=${requestedEnv}\u2026`);
-    const { runBuildCommand } = await import("./build-JVXFO3RN.js");
+    const { runBuildCommand } = await import("./build-FL3SFMBF.js");
     await runBuildCommand({ depsOnly: true });
     logInfo(`[optimize-all] Done. .verified snapshot written for env=${requestedEnv}.`);
   } catch (err) {

@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertPublicSurface } from "./hybrid-release-boundary.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+assertPublicSurface(root, { preSanitize: true });
 const distRoot = path.join(root, "dist");
 const nativeRoot = path.join(root, "native-packages");
 const internalPrefixes = [`[G${"2-R1"}] `, `G${"2-C3"} `];
@@ -111,6 +113,7 @@ if (process.platform === "darwin") {
   }
 }
 
+assertPublicSurface(root);
 console.log(
   `[release-sanitize] removed ${replacements} internal marker${replacements === 1 ? "" : "s"}; ` +
     `renamed ${changedChunks.length} content chunk${changedChunks.length === 1 ? "" : "s"}; ` +
