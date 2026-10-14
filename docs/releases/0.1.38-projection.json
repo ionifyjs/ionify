@@ -586,5 +586,54 @@
     "paidExposureUSD": 0,
     "publication": false,
     "promotion": false
+  },
+  "projectionScope": "Original PR #10 projection and package comparison are retained below as historical snapshots. The postMergeReadmeCorrection section records the subsequent Git-only version correction and verification metadata; immutable npm payloads are unchanged.",
+  "postMergeReadmeCorrection": {
+    "baseCommit": "c83fd9f244ea44f4a2554edce2f5e37e7a449e90",
+    "baseReadmeGitBlob": "f3846d3c01d6960f66508b7b2b2ee509829cdd39",
+    "baseReadmeSHA256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+    "repositoryReadmeGitBlob": "cd6656a09a889904ba1d6c415a5bf73f941e0f5b",
+    "repositoryReadmeSHA256": "efa94058ad33cecfe2fbff8f636452ef11d4d35d7565ee69e00fafa9cd84349e",
+    "byteDifferences": 1,
+    "versionToken": {
+      "from": "0.1.37",
+      "to": "0.1.38"
+    },
+    "allOtherOwnerBytesPreserved": true,
+    "immutableNpmReadmeSHA256": "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c",
+    "immutablePublicationPolicySHA256": "5d65495ed1ca5ed6385d83b2ed08853141781278707d09a8682e8ba9ec62e908",
+    "changes": [
+      {
+        "path": "README.md",
+        "sha256": "efa94058ad33cecfe2fbff8f636452ef11d4d35d7565ee69e00fafa9cd84349e",
+        "classification": "PUBLIC_DOCS"
+      },
+      {
+        "path": "scripts/public-readme-policy.json",
+        "sha256": "a1e50561954cff632817656923957f1c826e1662b4af54e0484cad38f4db820c",
+        "classification": "PUBLIC_VERIFICATION_CONTRACT"
+      },
+      {
+        "path": "scripts/hybrid-release-boundary.mjs",
+        "sha256": "1acd78ef14f4a67c7499c6c17cef3aada872f67fd10c6ec1cad8da6a63d706d2",
+        "classification": "PUBLIC_VERIFICATION_CONTRACT"
+      },
+      {
+        "path": "scripts/verify-release-surface.mjs",
+        "sha256": "e9f93c1f61f69bef644605f72d310e69f3166c42ee97742615a10c8a192d5c26",
+        "classification": "PUBLIC_VERIFICATION_CONTRACT"
+      },
+      {
+        "path": "tests/public-readme-projection.test.ts",
+        "sha256": "4c48586d3ef7986cd7d6dd5b4ba5828a66bf14df6923e711164bacff45cb4fbf",
+        "classification": "PUBLIC_VERIFICATION_CONTRACT"
+      },
+      {
+        "path": "docs/releases/0.1.38.md",
+        "sha256": "f3ce058938a451880307284698853c6b51864e7bf1262413032c8ca04abf503f",
+        "classification": "PUBLIC_DOCS"
+      }
+    ],
+    "manifestSelfClassification": "This manifest amendment is Git-only metadata; its byte identity is recorded by the reviewed Git commit."
   }
 }
