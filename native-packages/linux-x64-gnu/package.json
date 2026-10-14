@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify-linux-x64-gnu",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "description": "Ionify native binding for Linux x64 (glibc)",
   "license": "MIT",
   "main": "./ionify_core.node",

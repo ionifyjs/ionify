@@ -81,6 +81,7 @@ import {
   resolveScopeHoist,
   resolveTreeshake,
   resolveWorkspace,
+  resolveWorkspaceRoot,
   restoreCachedDepRegistrations,
   rewriteCssUrls,
   rewriteFederationGraphEdgeIds,
@@ -95,7 +96,7 @@ import {
   writeProductionPublicationReadinessRecord,
   writeProductionPublicationState,
   writeTransformArtifact
-} from "../chunk-43E0FF1D.js";
+} from "../chunk-AEWCZ7LO.js";
 import {
   computeGraphVersion,
   ensureNativeGraph,
@@ -118,7 +119,7 @@ import {
   logInfo,
   logWarn
 } from "../chunk-SNACSSNX.js";
-import "../chunk-F84D9131.js";
+import "../chunk-FHXXO743.js";
 
 // src/cli/index.ts
 import { readFileSync } from "fs";
@@ -1465,7 +1466,7 @@ var TransformEngine = class {
   cacheEnabled;
   // Bump when the on-disk transform output format or semantics change.
   // Included in CAS paths so restarts never serve stale transformed output.
-  cacheVersion = "v6";
+  cacheVersion = "v7";
   casRoot;
   versionHash;
   constructor(options) {
@@ -1478,18 +1479,21 @@ var TransformEngine = class {
     this.loaders.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
   async run(ctx) {
-    const { getCacheKey: getCacheKey2 } = await import("../cache-GE7HHBPC.js");
+    const { getCacheKey: getCacheKey2 } = await import("../cache-IXXFJLZC.js");
     const path19 = await import("path");
     const fs18 = await import("fs");
     const moduleHash = ctx.moduleHash || getCacheKey2(ctx.code);
+    const workspaceRoot = resolveWorkspaceRoot(ctx.config?.root);
+    const importerPath = fs18.existsSync(ctx.path) ? fs18.realpathSync(ctx.path) : path19.resolve(ctx.path);
+    const importerId = toWsModuleId(importerPath, workspaceRoot) ?? importerPath;
+    const transformHash = getCacheKey2(JSON.stringify([moduleHash, importerId, ctx.ext]));
     const loaderSig = `${this.cacheVersion}|${this.loaders.map((l) => l.name || "loader").join("|")}`;
     const loaderHash = getCacheKey2(loaderSig);
-    const memKey = `${moduleHash}-${loaderHash}`;
-    const casDir = this.casRoot && this.versionHash ? path19.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, moduleHash) : null;
+    const memKey = `${workspaceRoot}-${this.versionHash ?? ""}-${transformHash}-${loaderHash}`;
+    const casDir = this.casRoot && this.versionHash ? path19.join(this.casRoot, this.versionHash, this.cacheVersion, loaderHash, transformHash) : null;
     const casFile = casDir ? path19.join(casDir, "transformed.js") : null;
     const casMapFile = casDir ? path19.join(casDir, "transformed.js.map") : null;
     const casMetaFile = casDir ? path19.join(casDir, "transform.meta.json") : null;
-    const workspaceRoot = ctx.config?.root ? path19.resolve(ctx.config.root) : process.cwd();
     const debug = process.env.IONIFY_DEV_TRANSFORM_CACHE_DEBUG === "1";
     if (this.cacheEnabled) {
       const memHit = transformCache.get(memKey);
@@ -1508,7 +1512,7 @@ var TransformEngine = class {
         try {
           const code = fs18.readFileSync(casFile, "utf8");
           const meta = JSON.parse(fs18.readFileSync(casMetaFile, "utf8"));
-          if (meta.version !== 2 || meta.codeHash !== getCacheKey2(code) || typeof meta.hasMap !== "boolean" || !Array.isArray(meta.dependencyEntries) || !Array.isArray(meta.runtimeDependencies) || !meta.runtimeDependencies.every(
+          if (meta.version !== 3 || meta.importerId !== importerId || meta.codeHash !== getCacheKey2(code) || typeof meta.hasMap !== "boolean" || !Array.isArray(meta.dependencyEntries) || !Array.isArray(meta.runtimeDependencies) || !meta.runtimeDependencies.every(
             (dependency) => dependency !== null && typeof dependency === "object" && typeof dependency.specifier === "string" && dependency.specifier.length > 0 && (dependency.kind === "static" || dependency.kind === "dynamic")
           )) {
             throw new Error("incomplete transform metadata");
@@ -1607,7 +1611,8 @@ var TransformEngine = class {
           fs18.writeFileSync(
             metaTmp,
             JSON.stringify({
-              version: 2,
+              version: 3,
+              importerId,
               codeHash: getCacheKey2(result.code),
               hasMap: Boolean(result.map),
               dependencyEntries: result.dependencyEntries ?? [],
@@ -11627,7 +11632,7 @@ async function runPushCommand(options = {}) {
         logInfo(chalk2.dim("[push] Cancelled \u2014 no token."));
         return;
       }
-      const { runLoginCommand: runLoginCommand2 } = await import("../login-N4CZT6CR.js");
+      const { runLoginCommand: runLoginCommand2 } = await import("../login-BSPQELJH.js");
       await runLoginCommand2();
       logInfo(chalk2.dim("[push] Login complete. Re-run `ionify bind --project <project-id>` if this folder is not bound yet."));
       token = resolveCloudToken();
@@ -11698,7 +11703,7 @@ async function runPushCommand(options = {}) {
             return;
           }
           if (followup === "optimize-all") {
-            const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
+            const { runOptimizeAllCommand } = await import("../optimize-all-GIMWSYDM.js");
             await runOptimizeAllCommand({ env: options.env });
             targetProbes = await loadTargetProbes();
             targets = selectPreparedPushTargets(targetProbes);
@@ -11719,7 +11724,7 @@ async function runPushCommand(options = {}) {
           }
         }
       } else if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-GIMWSYDM.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -11737,7 +11742,7 @@ async function runPushCommand(options = {}) {
         return;
       }
       if (choice === "optimize-all") {
-        const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
+        const { runOptimizeAllCommand } = await import("../optimize-all-GIMWSYDM.js");
         await runOptimizeAllCommand({ env: options.env });
         targetProbes = await loadTargetProbes();
         targets = selectPreparedPushTargets(targetProbes);
@@ -13563,7 +13568,7 @@ program.command("push").description("Push build artifacts to Ionify Cloud (Tier-
 program.command("optimize-all").description("Fully optimize every dependency without starting dev or pushing").option("--env <env>", "Env to optimize (development|production); default: NODE_ENV or development").action(async (options) => {
   try {
     const env = options.env ? validateEnvFlag("optimize-all", options.env) : void 0;
-    const { runOptimizeAllCommand } = await import("../optimize-all-TUAX2TC6.js");
+    const { runOptimizeAllCommand } = await import("../optimize-all-GIMWSYDM.js");
     await runOptimizeAllCommand({ env });
   } catch (err) {
     logError("optimize-all failed", err);

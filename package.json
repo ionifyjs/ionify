@@ -1,6 +1,6 @@
 {
   "name": "@ionify/ionify",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "type": "module",
   "description": "Ionify — Instant, Intelligent, Unified Build Engine",
   "bin": {
@@ -63,7 +63,6 @@
     "chalk": "^5.6.2",
     "commander": "^12.1.0",
     "es-module-lexer": "^1.5.2",
-    "esbuild": "^0.25.11",
     "postcss": "^8.4.47",
     "postcss-load-config": "^4.0.2",
     "postcss-modules": "^4.3.1",
@@ -71,14 +70,14 @@
     "selfsigned": "^3.0.1"
   },
   "optionalDependencies": {
-    "@ionify/ionify-darwin-arm64": "0.1.37",
-    "@ionify/ionify-darwin-x64": "0.1.37",
-    "@ionify/ionify-linux-arm64-gnu": "0.1.37",
-    "@ionify/ionify-linux-arm64-musl": "0.1.37",
-    "@ionify/ionify-linux-x64-gnu": "0.1.37",
-    "@ionify/ionify-linux-x64-musl": "0.1.37",
-    "@ionify/ionify-win32-arm64-msvc": "0.1.37",
-    "@ionify/ionify-win32-x64-msvc": "0.1.37"
+    "@ionify/ionify-darwin-arm64": "0.1.38",
+    "@ionify/ionify-darwin-x64": "0.1.38",
+    "@ionify/ionify-linux-arm64-gnu": "0.1.38",
+    "@ionify/ionify-linux-arm64-musl": "0.1.38",
+    "@ionify/ionify-linux-x64-gnu": "0.1.38",
+    "@ionify/ionify-linux-x64-musl": "0.1.38",
+    "@ionify/ionify-win32-arm64-msvc": "0.1.38",
+    "@ionify/ionify-win32-x64-msvc": "0.1.38"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

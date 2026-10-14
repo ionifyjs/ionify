@@ -7,7 +7,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = process.cwd();
-const version = "0.1.37";
+const version = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 const targets = [
   "darwin-arm64", "darwin-x64", "win32-arm64-msvc", "win32-x64-msvc",
   "linux-arm64-gnu", "linux-x64-gnu", "linux-arm64-musl", "linux-x64-musl",
@@ -198,7 +198,7 @@ describe("publish:all immutable admission transaction", () => {
       const result = await runPublish(value.proofPath, registry.registry, { dryRun: true });
       expect(result.status).toBe(0);
       expect(result.output).toContain(`admit existing ${value.artifacts[0].packageName}@${version}`);
-      expect(result.output.lastIndexOf("@ionify/ionify@0.1.37")).toBeGreaterThan(result.output.indexOf(targets.at(-1)!));
+      expect(result.output.lastIndexOf(`@ionify/ionify@${version}`)).toBeGreaterThan(result.output.indexOf(targets.at(-1)!));
     } finally { registry.server.close(); }
   });
 

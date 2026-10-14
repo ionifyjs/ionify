@@ -1,0 +1,590 @@
+{
+  "publicMainReadme": {
+    "main": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
+    "blob": "f3846d3c01d6960f66508b7b2b2ee509829cdd39",
+    "sha256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+    "bytes": 12350,
+    "preservedByteForByte": true,
+    "effectiveReadmeDiff": false,
+    "mergeBoundary": "Fetch then-current public main and recheck README bytes/blob before any separately approved merge; a changed head requires renewed approval."
+  },
+  "kind": "ionify.public-0.1.38-projection",
+  "baseCommit": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
+  "release": "0.1.38",
+  "privateHistoryIncluded": false,
+  "newReleaseReceipts": 0,
+  "sourceDefinitions": {
+    "admitted-public-input": "Previously reviewed public-only projection inputs for the immutable published distribution. No private source history is imported.",
+    "public-main": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
+    "reviewed-integration": "Git-only documentation and checks reviewed in this PR."
+  },
+  "changes": [
+    {
+      "sourcePath": "reviewed-integration/.github/workflows/release-contracts.yml",
+      "destinationPath": ".github/workflows/release-contracts.yml",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "7d2766e62ed3dc13dd118dd13ef698a538615b08a2cdc13ccb69fac898ba3953",
+      "projectedSHA256": "7d2766e62ed3dc13dd118dd13ef698a538615b08a2cdc13ccb69fac898ba3953",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/build-FL3SFMBF.js",
+      "destinationPath": "dist/build-FL3SFMBF.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "3c05c2feb1500695d9b56c817e8118ecb206b37621592f949170ca98bc364378",
+      "projectedSHA256": "3c05c2feb1500695d9b56c817e8118ecb206b37621592f949170ca98bc364378",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "public-main/dist/build-JVXFO3RN.js",
+      "destinationPath": "dist/build-JVXFO3RN.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "a9a6f89d7139b24212be61180bfadeb398c9948151c69669412fc143b746d98c",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "public-main/dist/cache-GE7HHBPC.js",
+      "destinationPath": "dist/cache-GE7HHBPC.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "8c6475e09036273097196c12e08ce7779a2f96f4391de116dca4fda66a67b366",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/cache-IXXFJLZC.js",
+      "destinationPath": "dist/cache-IXXFJLZC.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "0a0ebe912cee28127041181dc9c0b7829a5da8fcb82c1f063b412df7ee78da3d",
+      "projectedSHA256": "0a0ebe912cee28127041181dc9c0b7829a5da8fcb82c1f063b412df7ee78da3d",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "public-main/dist/chunk-43E0FF1D.js",
+      "destinationPath": "dist/chunk-43E0FF1D.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "829d0170192bc466dfbc5d8ff5fd4f6bb381ee974ab90af3f6f74a4f745541c7",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/chunk-AEWCZ7LO.js",
+      "destinationPath": "dist/chunk-AEWCZ7LO.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "267fdd8708936eb3195abc9d2011da9025e7f6a818ca79b5c2bd3916b116e977",
+      "projectedSHA256": "267fdd8708936eb3195abc9d2011da9025e7f6a818ca79b5c2bd3916b116e977",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "public-main/dist/chunk-F84D9131.js",
+      "destinationPath": "dist/chunk-F84D9131.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "f84d9131b886cd1c468ce036a0a1508040257ebec54926064e43248daeb49e54",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/chunk-FHXXO743.js",
+      "destinationPath": "dist/chunk-FHXXO743.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "2de7bdb1f7cb318f5caacf91df752227ef1b91ee3067fe56c99403e6af8d3d3c",
+      "projectedSHA256": "2de7bdb1f7cb318f5caacf91df752227ef1b91ee3067fe56c99403e6af8d3d3c",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/cli/index.cjs",
+      "destinationPath": "dist/cli/index.cjs",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "35f9663f5950203b5a668550109435d47a91a18fddd0e55b8aaf873a6a9b0f98",
+      "projectedSHA256": "35f9663f5950203b5a668550109435d47a91a18fddd0e55b8aaf873a6a9b0f98",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/cli/index.js",
+      "destinationPath": "dist/cli/index.js",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "a03190baa3848017094e15c779e6608e8e651f50599ddda41c56f4ea9b11ac17",
+      "projectedSHA256": "a03190baa3848017094e15c779e6608e8e651f50599ddda41c56f4ea9b11ac17",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/index.js",
+      "destinationPath": "dist/index.js",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "9dbec8bbec49dbcb90a11bf0d87fbb3003887051a541b9146eba27dd451b11d6",
+      "projectedSHA256": "9dbec8bbec49dbcb90a11bf0d87fbb3003887051a541b9146eba27dd451b11d6",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/login-BSPQELJH.js",
+      "destinationPath": "dist/login-BSPQELJH.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "9f5f17b572ada2bcea1df8af054d989ced214a906cc24105452a6ace4d0a429c",
+      "projectedSHA256": "9f5f17b572ada2bcea1df8af054d989ced214a906cc24105452a6ace4d0a429c",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "public-main/dist/login-N4CZT6CR.js",
+      "destinationPath": "dist/login-N4CZT6CR.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "9bd0bcfd5a8561d944e08199ef6d72dc781bf552ca7c179a710e4258bd71551d",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "admitted-public-input/dist/optimize-all-GIMWSYDM.js",
+      "destinationPath": "dist/optimize-all-GIMWSYDM.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "934b2ce1b60457dd00090e658c35a56d2be41f6883142a1c00d07d4c3fd2055f",
+      "projectedSHA256": "934b2ce1b60457dd00090e658c35a56d2be41f6883142a1c00d07d4c3fd2055f",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "public-main/dist/optimize-all-TUAX2TC6.js",
+      "destinationPath": "dist/optimize-all-TUAX2TC6.js",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "e78b9eb027b246b6028746c01cd3e509d564960ffc8d66284d860bbf74365328",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "reviewed-integration/docs/releases/0.1.38.md",
+      "destinationPath": "docs/releases/0.1.38.md",
+      "changeType": "ADD",
+      "classification": "PUBLIC_DOCS",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "491b4095a558ec08389128e2a5c26e88fc3d6ca8ddadeb9018f14e9819c0cdf2",
+      "projectedSHA256": "491b4095a558ec08389128e2a5c26e88fc3d6ca8ddadeb9018f14e9819c0cdf2",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "public-main/native-packages/darwin-arm64/ionify_core.node",
+      "destinationPath": "native-packages/darwin-arm64/ionify_core.node",
+      "changeType": "DELETE",
+      "classification": "OBSOLETE_PUBLIC_DISTRIBUTION_REMOVAL",
+      "reason": "Remove the superseded distribution chunk or host-only native binary; exact current native artifacts remain distributed through npm.",
+      "sourceSHA256": "de3fbfda9efdfb4f6b5356cb385edede309d0ddaeea1d470ab7c0a83048905b9",
+      "projectedSHA256": null,
+      "expectedPublicConsumerBehavior": "Consumers use the current distribution imports and platform-specific optional package."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/darwin-arm64/package.json",
+      "destinationPath": "native-packages/darwin-arm64/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "0225c09de1c8757c0a332c775730976a1c195a9a4ed064bc22865e1af16ec813",
+      "projectedSHA256": "0225c09de1c8757c0a332c775730976a1c195a9a4ed064bc22865e1af16ec813",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/darwin-x64/package.json",
+      "destinationPath": "native-packages/darwin-x64/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "ea728a0d0db58e67cccab238e348c01d361ed13d9a38401599c10b9677fdb30e",
+      "projectedSHA256": "ea728a0d0db58e67cccab238e348c01d361ed13d9a38401599c10b9677fdb30e",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/linux-arm64-gnu/package.json",
+      "destinationPath": "native-packages/linux-arm64-gnu/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "d5568e84004c65abe462bf237d57fa600f678203902d363ca8e0e53bc6b670a7",
+      "projectedSHA256": "d5568e84004c65abe462bf237d57fa600f678203902d363ca8e0e53bc6b670a7",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/linux-arm64-musl/package.json",
+      "destinationPath": "native-packages/linux-arm64-musl/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "c351d833607f90505bf09c0598f92506f56dacfbd6b4b462f335e2be6cbc19f0",
+      "projectedSHA256": "c351d833607f90505bf09c0598f92506f56dacfbd6b4b462f335e2be6cbc19f0",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/linux-x64-gnu/package.json",
+      "destinationPath": "native-packages/linux-x64-gnu/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "8ec3eeb6f96e41422ba1d5e004e87837e1d83f78c8d14b16a4ccea15c3100ce9",
+      "projectedSHA256": "8ec3eeb6f96e41422ba1d5e004e87837e1d83f78c8d14b16a4ccea15c3100ce9",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/linux-x64-musl/package.json",
+      "destinationPath": "native-packages/linux-x64-musl/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "9ac65d4ab6157e5039b3fa9b76edce265516c075f980007479d226cc2c4f69fe",
+      "projectedSHA256": "9ac65d4ab6157e5039b3fa9b76edce265516c075f980007479d226cc2c4f69fe",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/win32-arm64-msvc/package.json",
+      "destinationPath": "native-packages/win32-arm64-msvc/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "d8a48686e1a1cd2a404b15658f8d2dcab6a659501c90359fc2edd070ff5c12d1",
+      "projectedSHA256": "d8a48686e1a1cd2a404b15658f8d2dcab6a659501c90359fc2edd070ff5c12d1",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/native-packages/win32-x64-msvc/package.json",
+      "destinationPath": "native-packages/win32-x64-msvc/package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "add5c29ebb153cbb7c914fbc58bb02613dda68c3a21ba58167b85561116d4b31",
+      "projectedSHA256": "add5c29ebb153cbb7c914fbc58bb02613dda68c3a21ba58167b85561116d4b31",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/package.json",
+      "destinationPath": "package.json",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_SAFE_DERIVED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "f5d1f9d607f0d2c62dba6f97b222701f3410ed516bf172e475f0d2555aefdacd",
+      "projectedSHA256": "f5d1f9d607f0d2c62dba6f97b222701f3410ed516bf172e475f0d2555aefdacd",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/packages/create-ionify/README.md",
+      "destinationPath": "packages/create-ionify/README.md",
+      "changeType": "ADD",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "52c5f058183a34404e7f09b4bf44af5b16c4fddb61d6324f6202eaa3fd99a1b1",
+      "projectedSHA256": "52c5f058183a34404e7f09b4bf44af5b16c4fddb61d6324f6202eaa3fd99a1b1",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/packages/create-ionify/index.js",
+      "destinationPath": "packages/create-ionify/index.js",
+      "changeType": "ADD",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "0e9d915f19405fd433b4941f7a54e399bab1c2b0bed6f378a30a9d82e174af4d",
+      "projectedSHA256": "0e9d915f19405fd433b4941f7a54e399bab1c2b0bed6f378a30a9d82e174af4d",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/packages/create-ionify/package.json",
+      "destinationPath": "packages/create-ionify/package.json",
+      "changeType": "ADD",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "4e8874cf57d59ef385ac53aba5326b70c0fb52a7bd41f13a2c9c439b7c2e6948",
+      "projectedSHA256": "4e8874cf57d59ef385ac53aba5326b70c0fb52a7bd41f13a2c9c439b7c2e6948",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/pnpm-lock.yaml",
+      "destinationPath": "pnpm-lock.yaml",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "cfa6155dedc4b8fc5604a394990788bb1d21990a052356fb671641de2a3ccf73",
+      "projectedSHA256": "cfa6155dedc4b8fc5604a394990788bb1d21990a052356fb671641de2a3ccf73",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "reviewed-integration/scripts/hybrid-release-boundary.mjs",
+      "destinationPath": "scripts/hybrid-release-boundary.mjs",
+      "changeType": "ADD",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "d39070a505b289be67183f10388d62b5ec4b64d111a8521b12edc3a03722c581",
+      "projectedSHA256": "d39070a505b289be67183f10388d62b5ec4b64d111a8521b12edc3a03722c581",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "admitted-public-input/scripts/hybrid-release-files.json",
+      "destinationPath": "scripts/hybrid-release-files.json",
+      "changeType": "ADD",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "5d65495ed1ca5ed6385d83b2ed08853141781278707d09a8682e8ba9ec62e908",
+      "projectedSHA256": "5d65495ed1ca5ed6385d83b2ed08853141781278707d09a8682e8ba9ec62e908",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "reviewed-integration/scripts/public-readme-policy.json",
+      "destinationPath": "scripts/public-readme-policy.json",
+      "changeType": "ADD",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "f9f397d96286806ee47c1270dba5048106e45890a802c05e9e8fa90e5e1e8dfb",
+      "projectedSHA256": "f9f397d96286806ee47c1270dba5048106e45890a802c05e9e8fa90e5e1e8dfb",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "admitted-public-input/scripts/sanitize-release-surface.mjs",
+      "destinationPath": "scripts/sanitize-release-surface.mjs",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_DISTRIBUTION_CONTRACT",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "f11151a9113f9813c10a546a1b579a1ef6189f2b416ec1f333ce413cf8e79b3f",
+      "projectedSHA256": "f11151a9113f9813c10a546a1b579a1ef6189f2b416ec1f333ce413cf8e79b3f",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "reviewed-integration/scripts/verify-release-surface.mjs",
+      "destinationPath": "scripts/verify-release-surface.mjs",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "0273af308e9b41e155addac145b211dcfe38ea4ca303d311342fb2d48f93f5a9",
+      "projectedSHA256": "0273af308e9b41e155addac145b211dcfe38ea4ca303d311342fb2d48f93f5a9",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "admitted-public-input/src/core/transform.ts",
+      "destinationPath": "src/core/transform.ts",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_RUNTIME_REQUIRED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "be01c924e0438adc788f63b0e12ccdcb3aea65d07fe247eed391280576bc4dbc",
+      "projectedSHA256": "be01c924e0438adc788f63b0e12ccdcb3aea65d07fe247eed391280576bc4dbc",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "admitted-public-input/src/core/utils/css-ext.ts",
+      "destinationPath": "src/core/utils/css-ext.ts",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_RUNTIME_REQUIRED",
+      "reason": "Align the permitted public surface with the admitted 0.1.38 distribution without rebuilding.",
+      "sourceSHA256": "b24a379449625cd4a19ec61511dfb57da751e456e9b2dce9861a9d997db288c1",
+      "projectedSHA256": "b24a379449625cd4a19ec61511dfb57da751e456e9b2dce9861a9d997db288c1",
+      "expectedPublicConsumerBehavior": "Exact published payload, platform metadata, creator payload or reviewed public adapter behavior."
+    },
+    {
+      "sourcePath": "reviewed-integration/tests/public-readme-projection.test.ts",
+      "destinationPath": "tests/public-readme-projection.test.ts",
+      "changeType": "ADD",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "1f28a3264d71f18fd482eaf6a5bec6fbf0a4cd2fb338c29f49f1930694fe6d45",
+      "projectedSHA256": "1f28a3264d71f18fd482eaf6a5bec6fbf0a4cd2fb338c29f49f1930694fe6d45",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    },
+    {
+      "sourcePath": "reviewed-integration/tests/publish-all.test.ts",
+      "destinationPath": "tests/publish-all.test.ts",
+      "changeType": "UPDATE",
+      "classification": "PUBLIC_VERIFICATION_CONTRACT",
+      "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
+      "sourceSHA256": "e9512791488f7a04e61ee5a5b9e11867083e8975d53599a6befa914663cd1787",
+      "projectedSHA256": "e9512791488f7a04e61ee5a5b9e11867083e8975d53599a6befa914663cd1787",
+      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
+    }
+  ],
+  "packageComparison": [
+    {
+      "package": "@ionify/ionify-darwin-arm64",
+      "version": "0.1.38",
+      "tarballSHA256": "03a96ddeead8608c9c11d79db109936c8f3586586adde3983f2f25160915a589",
+      "matchedFiles": [
+        "native-packages/darwin-arm64/LICENSE",
+        "native-packages/darwin-arm64/package.json",
+        "native-packages/darwin-arm64/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-darwin-x64",
+      "version": "0.1.38",
+      "tarballSHA256": "89af00c90cc33337197900419ec573857fe8f67139869946894a7556322a2336",
+      "matchedFiles": [
+        "native-packages/darwin-x64/LICENSE",
+        "native-packages/darwin-x64/package.json",
+        "native-packages/darwin-x64/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-win32-arm64-msvc",
+      "version": "0.1.38",
+      "tarballSHA256": "a4c899852a85e33622703467d7d875b632907d412aa0a5261cb1ae162f0dcb17",
+      "matchedFiles": [
+        "native-packages/win32-arm64-msvc/LICENSE",
+        "native-packages/win32-arm64-msvc/package.json",
+        "native-packages/win32-arm64-msvc/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-win32-x64-msvc",
+      "version": "0.1.38",
+      "tarballSHA256": "7e6f860db72063b40ef19ac19c556d86a199206412c9561cc30b5f2be2a47e70",
+      "matchedFiles": [
+        "native-packages/win32-x64-msvc/LICENSE",
+        "native-packages/win32-x64-msvc/package.json",
+        "native-packages/win32-x64-msvc/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-linux-arm64-gnu",
+      "version": "0.1.38",
+      "tarballSHA256": "ec905ea270bc74a27fa5730e6941f07724f2481c964109a1ae166e08fc27ae3b",
+      "matchedFiles": [
+        "native-packages/linux-arm64-gnu/LICENSE",
+        "native-packages/linux-arm64-gnu/package.json",
+        "native-packages/linux-arm64-gnu/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-linux-x64-gnu",
+      "version": "0.1.38",
+      "tarballSHA256": "c6669040b8d592eab7232a9c8f018cca965a11757d61d9adbaf09bf6b69f8c13",
+      "matchedFiles": [
+        "native-packages/linux-x64-gnu/LICENSE",
+        "native-packages/linux-x64-gnu/package.json",
+        "native-packages/linux-x64-gnu/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-linux-arm64-musl",
+      "version": "0.1.38",
+      "tarballSHA256": "654d49a3a7c4b86a5b40fd1642c55457ed73bf387e86f1b8202f20f5701f23f5",
+      "matchedFiles": [
+        "native-packages/linux-arm64-musl/LICENSE",
+        "native-packages/linux-arm64-musl/package.json",
+        "native-packages/linux-arm64-musl/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify-linux-x64-musl",
+      "version": "0.1.38",
+      "tarballSHA256": "183f663d6abc9b98c8989b7d5e7c3db40ef41b4697289b1271ed8a6432a6fd29",
+      "matchedFiles": [
+        "native-packages/linux-x64-musl/LICENSE",
+        "native-packages/linux-x64-musl/package.json",
+        "native-packages/linux-x64-musl/README.md"
+      ],
+      "intentionalDifferences": [],
+      "nativeBinaryInGit": false
+    },
+    {
+      "package": "@ionify/ionify",
+      "version": "0.1.38",
+      "tarballSHA256": "35eeeec9b29b1f62b70292f9b211b996e90ee92ed5e46a212ea5f7fb336b8cde",
+      "matchedFiles": [
+        "LICENSE",
+        "dist/cli/index.cjs",
+        "dist/index.cjs",
+        "dist/cli/worker.cjs",
+        "dist/core/worker/worker.cjs",
+        "dist/worker.cjs",
+        "dist/cli/index.d.cts",
+        "dist/index.d.cts",
+        "dist/build-FL3SFMBF.js",
+        "dist/cache-IXXFJLZC.js",
+        "dist/chunk-AEWCZ7LO.js",
+        "dist/chunk-FHXXO743.js",
+        "dist/chunk-M5MAIMAN.js",
+        "dist/chunk-PQP3Y562.js",
+        "dist/chunk-SNACSSNX.js",
+        "dist/client/hmr.js",
+        "dist/cli/index.js",
+        "dist/index.js",
+        "dist/login-BSPQELJH.js",
+        "dist/optimize-all-GIMWSYDM.js",
+        "dist/client/overlay.js",
+        "dist/client/react-refresh-runtime.js",
+        "package.json",
+        "dist/cli/index.d.ts",
+        "dist/index.d.ts"
+      ],
+      "intentionalDifferences": [
+        {
+          "path": "README.md",
+          "publishedSHA256": "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c",
+          "repositorySHA256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+          "reason": "Owner-controlled public main README is preserved byte-for-byte; immutable npm README is unchanged."
+        }
+      ],
+      "nativeBinaryInGit": false
+    }
+  ],
+  "creator": {
+    "version": "0.1.1",
+    "tarballSHA256": "885c497705b858753db045812c24b208ab31fab51e09437529c763b23b04704c",
+    "matchedFiles": [
+      "index.js",
+      "package.json",
+      "README.md"
+    ],
+    "engineDependency": "latest"
+  },
+  "excluded": [
+    "private engine implementation and Rust/Cargo sources",
+    "release evidence capsules and receipts",
+    "private ledgers and authority indexes",
+    "credentials",
+    "internal branch/worktree metadata",
+    "native binaries in Git"
+  ],
+  "manifestSelfClassification": "This file is public verification metadata outside package files. Its complete byte digest is recorded by the private integration audit and Git commit; no self-referential hash is claimed.",
+  "ci": {
+    "repositoryVisibility": "public",
+    "runner": "ubuntu-24.04",
+    "jobs": 1,
+    "timeoutMinutes": 15,
+    "paidExposureUSD": 0,
+    "publication": false,
+    "promotion": false
+  }
+}
