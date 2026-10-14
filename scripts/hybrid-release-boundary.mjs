@@ -173,7 +173,7 @@ export function assertPublicRepositorySurface(root) {
   const readmePolicy = JSON.parse(fs.readFileSync(new URL('./public-readme-policy.json', import.meta.url), 'utf8'));
   const admitted = policy().main;
   const original = admitted.find(row => row.file === 'README.md');
-  if (readmePolicy.frozenPackageSha256 !== original.sha256 || !/^[a-f0-9]{64}$/.test(readmePolicy.repositorySha256)) fail('invalid public README projection policy');
+  if (readmePolicy.frozenPackageSha256 !== original.sha256 || !/^[a-f0-9]{64}$/.test(readmePolicy.repositorySha256) || readmePolicy.repositorySha256 !== readmePolicy.baseSha256 || !/^[a-f0-9]{40}$/.test(readmePolicy.baseReadmeGitBlob || '')) fail('invalid public README projection policy');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assertHybridAllowlist(pkg, ['dist', 'README.md', 'LICENSE'], 'main');
   const rootDocuments = fs.readdirSync(root).filter(file => /^(?:readme|copying|licen[cs]e)(?:$|\.)/i.test(file));

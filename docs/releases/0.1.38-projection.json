@@ -1,4 +1,13 @@
 {
+  "publicMainReadme": {
+    "main": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
+    "blob": "f3846d3c01d6960f66508b7b2b2ee509829cdd39",
+    "sha256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+    "bytes": 12350,
+    "preservedByteForByte": true,
+    "effectiveReadmeDiff": false,
+    "mergeBoundary": "Fetch then-current public main and recheck README bytes/blob before any separately approved merge; a changed head requires renewed approval."
+  },
   "kind": "ionify.public-0.1.38-projection",
   "baseCommit": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
   "release": "0.1.38",
@@ -18,16 +27,6 @@
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
       "sourceSHA256": "7d2766e62ed3dc13dd118dd13ef698a538615b08a2cdc13ccb69fac898ba3953",
       "projectedSHA256": "7d2766e62ed3dc13dd118dd13ef698a538615b08a2cdc13ccb69fac898ba3953",
-      "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
-    },
-    {
-      "sourcePath": "public-main/README.md",
-      "destinationPath": "README.md",
-      "changeType": "UPDATE",
-      "classification": "PUBLIC_DOCS",
-      "reason": "Preserve current public README with only version alignment.",
-      "sourceSHA256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
-      "projectedSHA256": "efa94058ad33cecfe2fbff8f636452ef11d4d35d7565ee69e00fafa9cd84349e",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -186,8 +185,8 @@
       "changeType": "ADD",
       "classification": "PUBLIC_DOCS",
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
-      "sourceSHA256": "310294c551cea7302042e30bf671158b4646fe6e1370abe80d221c0e69d48cc2",
-      "projectedSHA256": "310294c551cea7302042e30bf671158b4646fe6e1370abe80d221c0e69d48cc2",
+      "sourceSHA256": "491b4095a558ec08389128e2a5c26e88fc3d6ca8ddadeb9018f14e9819c0cdf2",
+      "projectedSHA256": "491b4095a558ec08389128e2a5c26e88fc3d6ca8ddadeb9018f14e9819c0cdf2",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -336,8 +335,8 @@
       "changeType": "ADD",
       "classification": "PUBLIC_VERIFICATION_CONTRACT",
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
-      "sourceSHA256": "f764f0b4b73163027f8ef5c8d15f8667963064f4033d97ac7c5a15fb77ca5c78",
-      "projectedSHA256": "f764f0b4b73163027f8ef5c8d15f8667963064f4033d97ac7c5a15fb77ca5c78",
+      "sourceSHA256": "d39070a505b289be67183f10388d62b5ec4b64d111a8521b12edc3a03722c581",
+      "projectedSHA256": "d39070a505b289be67183f10388d62b5ec4b64d111a8521b12edc3a03722c581",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -356,8 +355,8 @@
       "changeType": "ADD",
       "classification": "PUBLIC_VERIFICATION_CONTRACT",
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
-      "sourceSHA256": "e86f447182a086ee702e3ac4999904ab55ec6f745c78c53c143f11017a161f23",
-      "projectedSHA256": "e86f447182a086ee702e3ac4999904ab55ec6f745c78c53c143f11017a161f23",
+      "sourceSHA256": "f9f397d96286806ee47c1270dba5048106e45890a802c05e9e8fa90e5e1e8dfb",
+      "projectedSHA256": "f9f397d96286806ee47c1270dba5048106e45890a802c05e9e8fa90e5e1e8dfb",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -376,8 +375,8 @@
       "changeType": "UPDATE",
       "classification": "PUBLIC_VERIFICATION_CONTRACT",
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
-      "sourceSHA256": "f386a959ffd6d995bddf928b9a9eb6a65a4c8a4db4c5076b6012c002a8e5c23d",
-      "projectedSHA256": "f386a959ffd6d995bddf928b9a9eb6a65a4c8a4db4c5076b6012c002a8e5c23d",
+      "sourceSHA256": "0273af308e9b41e155addac145b211dcfe38ea4ca303d311342fb2d48f93f5a9",
+      "projectedSHA256": "0273af308e9b41e155addac145b211dcfe38ea4ca303d311342fb2d48f93f5a9",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -406,8 +405,8 @@
       "changeType": "ADD",
       "classification": "PUBLIC_VERIFICATION_CONTRACT",
       "reason": "Resolve the demonstrated README-layout/test-version integration conflicts or document the reviewed projection.",
-      "sourceSHA256": "849d58a4e811b4e5b28cbdf8df6560e245e0d6a98b7034aa1e575ab0653bdd5b",
-      "projectedSHA256": "849d58a4e811b4e5b28cbdf8df6560e245e0d6a98b7034aa1e575ab0653bdd5b",
+      "sourceSHA256": "1f28a3264d71f18fd482eaf6a5bec6fbf0a4cd2fb338c29f49f1930694fe6d45",
+      "projectedSHA256": "1f28a3264d71f18fd482eaf6a5bec6fbf0a4cd2fb338c29f49f1930694fe6d45",
       "expectedPublicConsumerBehavior": "Public Git documentation and checks; excluded from immutable npm payload equivalence and no publication authorization."
     },
     {
@@ -553,8 +552,8 @@
         {
           "path": "README.md",
           "publishedSHA256": "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c",
-          "repositorySHA256": "efa94058ad33cecfe2fbff8f636452ef11d4d35d7565ee69e00fafa9cd84349e",
-          "reason": "Reviewed public Git README preserves current layout/artwork; npm bytes are immutable."
+          "repositorySHA256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+          "reason": "Owner-controlled public main README is preserved byte-for-byte; immutable npm README is unchanged."
         }
       ],
       "nativeBinaryInGit": false

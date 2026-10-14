@@ -51,8 +51,17 @@ if (baselineResult.status !== 0) throw new Error('Unable to read the reviewed pu
 const baselineReadme = baselineResult.stdout;
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
-if (hash(baselineReadme) !== readmePolicy.baseSha256 || baselineReadme.split('`0.1.37`').length !== 2) throw new Error('Public README baseline identity conflict');
-if (readme !== baselineReadme.replace('`0.1.37`', '`0.1.38`') || hash(readme) !== readmePolicy.repositorySha256) throw new Error('Unreviewed public README change');
+const git = args => {
+  const result = spawnSync('git', args, {cwd: root, encoding: 'utf8'});
+  if (result.status !== 0) throw new Error('Unable to read the public README Git authority');
+  return result.stdout;
+};
+if (hash(baselineReadme) !== readmePolicy.baseSha256 || readmePolicy.repositorySha256 !== readmePolicy.baseSha256) throw new Error('Owner README baseline identity conflict');
+if (git(['rev-parse', `${readmePolicy.baseCommit}:README.md`]).trim() !== readmePolicy.baseReadmeGitBlob) throw new Error('Owner README Git blob conflict');
+if (readme !== baselineReadme || hash(readme) !== readmePolicy.repositorySha256) throw new Error('Public main README must remain byte-identical');
+// Fetch origin/main immediately before owner approval/merge. A newer owner edit
+// fails closed here and requires a revised projection and renewed head approval.
+if (git(['show', 'origin/main:README.md']) !== readme || git(['rev-parse', 'origin/main:README.md']).trim() !== readmePolicy.baseReadmeGitBlob) throw new Error('Current public main README moved; preserve latest owner bytes before merge');
 // Package README remains pinned in hybrid-release-files.json. This source check
 // never authorizes repacking or claiming equivalence for the Git README variant.
 for (const script of ["publish-all.mjs", "real-registry-smoke.mjs", "release-local-registry.mjs"]) {
