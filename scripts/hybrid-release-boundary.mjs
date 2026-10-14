@@ -169,11 +169,32 @@ export function assertPublicSurface(root, options = {}) {
 
 // Public Git documentation is reviewed independently of immutable npm inputs.
 // Publication callers above continue to require the original package README.
+export function assertPublicReadmeProjection(baseline, candidate, readmePolicy, currentMain = baseline) {
+  const gitBlob = bytes => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  const correction = readmePolicy.versionCorrection;
+  if (readmePolicy.kind !== 'ionify.public-git-readme-projection' ||
+      correction?.from !== '0.1.37' || correction?.to !== '0.1.38' ||
+      typeof correction.before !== 'string' || typeof correction.after !== 'string' ||
+      correction.before.split('`0.1.37`').length !== 2 ||
+      correction.after !== correction.before.replace('`0.1.37`', '`0.1.38`')) fail('invalid public README version correction');
+  if (sha(baseline) !== readmePolicy.baseSha256 || gitBlob(baseline) !== readmePolicy.baseReadmeGitBlob) fail('owner README baseline identity conflict');
+  const before = Buffer.from(correction.before);
+  const start = baseline.indexOf(before);
+  if (start < 0 || baseline.indexOf(before, start + before.length) !== -1) fail('README version anchor must occur exactly once');
+  const expected = Buffer.concat([baseline.subarray(0, start), Buffer.from(correction.after), baseline.subarray(start + before.length)]);
+  if (!candidate.equals(expected)) fail('README permits only the reviewed version token correction');
+  if (sha(candidate) !== readmePolicy.repositorySha256 || gitBlob(candidate) !== readmePolicy.repositoryReadmeGitBlob) fail('repository README identity conflict');
+  // During the PR main is the baseline; after merge it is the exact successor.
+  // A separate owner edit in either state requires a newly reviewed baseline.
+  if (!currentMain.equals(baseline) && !currentMain.equals(candidate)) fail('current public main README moved; preserve latest owner bytes');
+  return {status: 'VERIFIED', change: 'SINGLE_VERSION_TOKEN'};
+}
+
 export function assertPublicRepositorySurface(root) {
   const readmePolicy = JSON.parse(fs.readFileSync(new URL('./public-readme-policy.json', import.meta.url), 'utf8'));
   const admitted = policy().main;
   const original = admitted.find(row => row.file === 'README.md');
-  if (readmePolicy.frozenPackageSha256 !== original.sha256 || !/^[a-f0-9]{64}$/.test(readmePolicy.repositorySha256) || readmePolicy.repositorySha256 !== readmePolicy.baseSha256 || !/^[a-f0-9]{40}$/.test(readmePolicy.baseReadmeGitBlob || '')) fail('invalid public README projection policy');
+  if (readmePolicy.frozenPackageSha256 !== original.sha256 || !/^[a-f0-9]{64}$/.test(readmePolicy.repositorySha256) || !/^[a-f0-9]{64}$/.test(readmePolicy.baseSha256) || !/^[a-f0-9]{40}$/.test(readmePolicy.baseReadmeGitBlob || '') || !/^[a-f0-9]{40}$/.test(readmePolicy.repositoryReadmeGitBlob || '') || readmePolicy.versionCorrection?.from !== '0.1.37' || readmePolicy.versionCorrection?.to !== '0.1.38') fail('invalid public README projection policy');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assertHybridAllowlist(pkg, ['dist', 'README.md', 'LICENSE'], 'main');
   const rootDocuments = fs.readdirSync(root).filter(file => /^(?:readme|copying|licen[cs]e)(?:$|\.)/i.test(file));

@@ -1,9 +1,16 @@
 {
   "kind": "ionify.public-git-readme-projection",
-  "baseCommit": "0f535fe2ac6fde707231ccf114f2bb018d08557f",
+  "baseCommit": "c83fd9f244ea44f4a2554edce2f5e37e7a449e90",
   "baseSha256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
-  "repositorySha256": "298df04143b8630f3e9212bc9adf07373ed99647a9ace7082beb87ed9c3bcafe",
+  "repositorySha256": "efa94058ad33cecfe2fbff8f636452ef11d4d35d7565ee69e00fafa9cd84349e",
   "frozenPackageSha256": "2dafbded98cbdd308c871e4427f46fff9219304361558020eac432864bc8b36c",
-  "change": "Owner-controlled public main README is preserved byte for byte. No wording, version, formatting, artwork, link or whitespace changes are authorized. Repository README intentionally differs from immutable npm README.",
-  "baseReadmeGitBlob": "f3846d3c01d6960f66508b7b2b2ee509829cdd39"
+  "change": "Only the current-version token in Before you start changes from 0.1.37 to 0.1.38. All other owner README bytes and historical attribution are preserved. Immutable npm README and publication policy remain unchanged.",
+  "baseReadmeGitBlob": "f3846d3c01d6960f66508b7b2b2ee509829cdd39",
+  "repositoryReadmeGitBlob": "cd6656a09a889904ba1d6c415a5bf73f941e0f5b",
+  "versionCorrection": {
+    "from": "0.1.37",
+    "to": "0.1.38",
+    "before": "**Before you start:** this repository’s `0.1.37` package declares",
+    "after": "**Before you start:** this repository’s `0.1.38` package declares"
+  }
 }

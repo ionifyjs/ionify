@@ -50,7 +50,7 @@ The useful result is the shorter pause before checking your next change. **The f
 
 ## 02 / Make your first build
 
-**Before you start:** this repository’s `0.1.37` package declares native packages for macOS (`darwin-arm64`, `darwin-x64`), Linux (arm64 and x64, GNU and musl), and Windows (arm64 and x64, MSVC). The loader selects the matching runtime. Keep optional dependencies enabled; they carry the native engine. A declared target is not itself evidence that every release-validation check has passed.
+**Before you start:** this repository’s `0.1.38` package declares native packages for macOS (`darwin-arm64`, `darwin-x64`), Linux (arm64 and x64, GNU and musl), and Windows (arm64 and x64, MSVC). The loader selects the matching runtime. Keep optional dependencies enabled; they carry the native engine. A declared target is not itself evidence that every release-validation check has passed.
 
 The package requires **Node.js 22.x or 24.x** (`^22.0.0 || ^24.0.0`). Check the version requirements of your chosen template too.
 
